@@ -1,6 +1,4 @@
 // config.ts
-// This file converts the Python configuration to TypeScript.
-// It exports constants and regular expressions used throughout the conversion code.
 
 export const UNICODE_SNOB = false;
 

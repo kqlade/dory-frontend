@@ -13,6 +13,7 @@
       "isolatedModules": true,
       "noEmit": true,
       "types": ["chrome", "node"],
+      "typeRoots": ["./node_modules/@types", "./src/types", "./src/html2text"],
       "lib": ["DOM", "DOM.Iterable", "ESNext"],
       "baseUrl": ".",
       "paths": {
