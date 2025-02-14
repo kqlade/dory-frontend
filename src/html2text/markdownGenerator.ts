@@ -190,14 +190,15 @@ export class DefaultMarkdownGenerator extends MarkdownGenerationStrategy {
     try {
       // Merge default + user-supplied HTML2Text options
       const defaultOptions: Record<string, any> = {
-        body_width: 0,         // match Python default for no text-wrapping
+        body_width: 0,         
         ignore_emphasis: false,
-        ignore_links: false,
+        ignore_links: true,
         ignore_images: false,
         protect_links: true,
         single_line_break: true,
         mark_code: true,
         escape_snob: false,
+        inline_links: false,   // Force reference-style links
       };
 
       if (html2textOptions) {
