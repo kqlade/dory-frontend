@@ -15,12 +15,18 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     }
   },
+  envPrefix: 'VITE_',
   build: {
     outDir: 'dist',
+    emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
+      input: {
+        background: 'src/background/serviceWorker.ts',
+        content: 'src/services/contentExtractor.ts',
+      },
       output: {
-        entryFileNames: 'assets/[name].[hash].js',
+        entryFileNames: '[name].js',
         chunkFileNames: 'assets/[name].[hash].js',
         assetFileNames: 'assets/[name].[hash].[ext]'
       }

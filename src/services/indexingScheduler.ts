@@ -1,6 +1,6 @@
 // src/services/indexingScheduler.ts
 
-import { WINDOW_CONFIG } from '../background/serviceWorker';
+import { WINDOW_CONFIG } from '../background/config';
 import queueManager from './queueManager';
 
 // Global variables to track the processing window and its tab.

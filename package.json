@@ -1,5 +1,5 @@
 {
-  "name": "dory_mvp",
+  "name": "dory-extension",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -22,8 +22,10 @@
     "vite": "^5.0.12"
   },
   "dependencies": {
+    "@types/dotenv": "^6.1.1",
     "@types/natural": "^5.1.5",
     "@types/turndown": "^5.0.5",
+    "dotenv": "^16.4.7",
     "html-entities": "^2.5.2",
     "idb": "^8.0.2",
     "langchain": "^0.3.15",

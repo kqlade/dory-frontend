@@ -191,7 +191,7 @@ export class DefaultMarkdownGenerator extends MarkdownGenerationStrategy {
       // Merge default + user-supplied HTML2Text options
       const defaultOptions: Record<string, any> = {
         body_width: 0,         
-        ignore_emphasis: false,
+        ignore_emphasis: true,
         ignore_links: true,
         ignore_images: false,
         protect_links: true,

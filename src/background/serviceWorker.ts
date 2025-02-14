@@ -1,33 +1,24 @@
 // src/background/serviceWorker.ts
 
-// History-related configuration
-export const HISTORY_CONFIG = {
-  DAYS_OF_HISTORY: 1,
-  POLLING_INTERVAL_MIN: 60,
-  MAX_HISTORY_RESULTS: 20
-} as const;
+import {
+  HISTORY_CONFIG,
+  WINDOW_CONFIG,
+  QUEUE_CONFIG,
+  LOGGING_CONFIG
+} from './config';
 
-// Window-related configuration
-export const WINDOW_CONFIG = {
-  REOPEN_DELAY_MS: 5000,
-  PROCESSING_WINDOW_CONFIG: {
-    type: 'normal' as const,
-    state: 'normal' as const,
-    focused: false,
-    width: 1024,
-    height: 768,
-  }
-} as const;
+console.log(`${LOGGING_CONFIG.PREFIX} Starting initialization...`);
 
-console.log('[ServiceWorker] Starting initialization...');
-
-console.log('[ServiceWorker] About to import queueManager...');
+console.log(`${LOGGING_CONFIG.PREFIX} About to import queueManager...`);
 import queueManager from '../services/queueManager';
-console.log('[ServiceWorker] queueManager imported successfully');
+console.log(`${LOGGING_CONFIG.PREFIX} queueManager imported successfully`);
 
-console.log('[ServiceWorker] About to import indexingScheduler...');
+console.log(`${LOGGING_CONFIG.PREFIX} About to import indexingScheduler...`);
 import { processQueue, currentQueueUrl } from '../services/indexingScheduler';
-console.log('[ServiceWorker] indexingScheduler imported successfully');
+console.log(`${LOGGING_CONFIG.PREFIX} indexingScheduler imported successfully`);
+
+// Import only what we need from the API client
+import { apiRequest } from '../api/client';
 
 console.log('Service Worker loaded');
 
@@ -53,12 +44,12 @@ function fetchHistoryAndQueue(startTime: number): void {
       queueManager.addUrls(urls)
         .then(() => {
           queueManager.getQueueSize().then(size => {
-            console.log(`Queue size after adding history items: ${size}`);
+            console.log(`${LOGGING_CONFIG.PREFIX} Queue size after adding history items: ${size}`);
           });
           processQueue();
         })
         .catch(error => {
-          console.error('Error adding URLs to the queue:', error);
+          console.error(`${LOGGING_CONFIG.PREFIX} Error adding URLs to the queue:`, error);
         });
 
       lastCheckedTime = now;
@@ -68,40 +59,49 @@ function fetchHistoryAndQueue(startTime: number): void {
 
 // Listen for messages from content scripts.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[ServiceWorker] Received message:', message.type, message);
+  console.log(`${LOGGING_CONFIG.PREFIX} Received message:`, message.type, message);
+  
   if (message.type === 'EXTRACTION_COMPLETE') {
-    console.log('[ServiceWorker] Processing extraction complete for content URL:', message.data.url);
+    console.log(`${LOGGING_CONFIG.PREFIX} Processing extraction complete for content URL:`, message.data.url);
     
     if (!currentQueueUrl) {
-      console.error('[ServiceWorker] No currentQueueUrl found. This should not happen.');
+      console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found. This should not happen.`);
       return true;
     }
     
-    console.log('[ServiceWorker] Will mark queued URL as processed:', currentQueueUrl);
+    console.log(`${LOGGING_CONFIG.PREFIX} Will mark queued URL as processed:`, currentQueueUrl);
     queueManager.markIndexed(currentQueueUrl)
       .then(() => {
-        console.log('[ServiceWorker] Successfully marked queued URL as processed:', currentQueueUrl);
+        console.log(`${LOGGING_CONFIG.PREFIX} Successfully marked queued URL as processed:`, currentQueueUrl);
         // Get and log queue size before processing next URL
         queueManager.getQueueSize().then(size => {
-          console.log('[ServiceWorker] URLs remaining in queue:', size);
-          console.log('[ServiceWorker] Calling processQueue to handle next URL');
+          console.log(`${LOGGING_CONFIG.PREFIX} URLs remaining in queue:`, size);
+          console.log(`${LOGGING_CONFIG.PREFIX} Calling processQueue to handle next URL`);
           processQueue();
         });
       })
       .catch(error => {
-        console.error('[ServiceWorker] Error marking URL as processed:', error);
+        console.error(`${LOGGING_CONFIG.PREFIX} Error marking URL as processed:`, error);
         // Don't call processQueue here as it might cause race conditions
       });
+
   } else if (message.type === 'EXTRACTION_ERROR') {
-    console.error('[ServiceWorker] Extraction error:', message.error);
-    // Don't call processQueue here, let the current URL be retried
+    console.error(`${LOGGING_CONFIG.PREFIX} Extraction error:`, message.error);
+    // The current URL might be retried or removed. Not calling processQueue here to avoid collisions.
+  } else if (message.type === 'API_REQUEST') {
+    // Generic API forwarding
+    apiRequest(message.endpoint, message.options)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
   }
+
   return true;
 });
 
 // On installation, fetch initial history.
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Service Worker installed. Fetching initial history...');
+  console.log(`${LOGGING_CONFIG.PREFIX} Service Worker installed. Fetching initial history...`);
   fetchHistoryAndQueue(lastCheckedTime);
 });
 
@@ -109,7 +109,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.alarms.create('refreshHistory', { periodInMinutes: HISTORY_CONFIG.POLLING_INTERVAL_MIN });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'refreshHistory') {
-    console.log('Alarm triggered. Fetching new history items...');
+    console.log(`${LOGGING_CONFIG.PREFIX} Alarm triggered. Fetching new history items...`);
     fetchHistoryAndQueue(lastCheckedTime);
   }
 });

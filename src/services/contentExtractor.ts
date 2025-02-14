@@ -1,10 +1,13 @@
-// contentExtractor.ts
+// src/services/contentExtractor.ts
 
-import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
+import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator"; 
 import { PruningContentFilter } from "../html2text/content_filter_strategy";
 
-// Import the chunker of your choice from chunkingStrategies
+// 1) chunking
 import { LangChainMarkdownChunking } from "../chunking/chunkingStrategy";
+
+// 2) embedding via new backend
+import { getEmbeddings } from "../api/client"; 
 
 console.log("DORY: Content script loaded successfully");
 
@@ -19,53 +22,48 @@ async function extractAndSendContent(): Promise<void> {
       throw new Error("No document body or empty innerHTML");
     }
 
-    // 2) Create a content filter if desired. For example, a pruning filter:
-    const filter = new PruningContentFilter(/* userQuery= */ undefined, 5, "dynamic", 0.5, "english");
+    // 2) Create a content filter
+    const filter = new PruningContentFilter(undefined, 5, "dynamic", 0.5, "english");
 
-    // 3) Create a DefaultMarkdownGenerator, passing the filter
+    // 3) Create DefaultMarkdownGenerator for 'fitMarkdown'
     const mdGenerator = new DefaultMarkdownGenerator(filter, {
       body_width: 80,
-      // e.g. ignore_images: false, protect_links: true, etc.
     });
 
-    // 4) Generate the Markdown
+    // 4) Generate the Markdown 
     const result = mdGenerator.generateMarkdown(
       rawHTMLString,
-      window.location.href, // baseUrl
-      { body_width: 80 },   // optional HTML2Text options
-      undefined,            // optional content filter
-      true                  // citations = true
+      window.location.href,
+      { body_width: 80 },
+      undefined,
+      true
     );
 
-    // result is a MarkdownGenerationResult with:
-    // rawMarkdown, markdownWithCitations, referencesMarkdown, fitMarkdown, fitHtml
-
     console.log("DORY: Markdown generated successfully");
-    console.log("DORY: rawMarkdown is:", result.rawMarkdown);
-    console.log("DORY: referencesMarkdown is:", result.referencesMarkdown);
-    console.log("DORY: fitMarkdown is:", result.fitMarkdown);
 
-    // 5) Decide which field to send back
+    // 5) We'll use the 'fitMarkdown' for chunking
     const regularMarkdown = result.markdownWithCitations || result.rawMarkdown;
     const fitMarkdown = result.fitMarkdown || "";
 
-    // 6) Optionally chunk the fitMarkdown further
-    //    For example, using LangChainMarkdownChunking to produce structured chunks
+    // 6) Further chunk that 'fitMarkdown' with a Markdown chunker
     let fitMarkdownChunks: string[] = [];
     if (fitMarkdown) {
-      // Create your chunker
       const chunker = new LangChainMarkdownChunking(1000, 200);
-      // Because .chunk(...) is async, we await it
       fitMarkdownChunks = await chunker.chunk(fitMarkdown);
       console.log("DORY: fitMarkdown chunked into", fitMarkdownChunks.length, "chunks");
     }
 
-    // 7) Send results back to the extension
-    console.log("DORY: Sending results via chrome.runtime.sendMessage");
-    console.log("DORY: Regular markdown is:", regularMarkdown);
-    console.log("DORY: Fit markdown is:", fitMarkdown);
-    console.log("DORY: Fit markdown chunks are:", fitMarkdownChunks);
+    // 7) EMBED the chunks using your backend
+    //    Instead of calling OpenAI directly, use your new getEmbeddings() from client.ts
+    let fitMarkdownEmbeddings: number[][] = [];
+    if (fitMarkdownChunks.length > 0) {
+      fitMarkdownEmbeddings = await getEmbeddings(fitMarkdownChunks);
+      console.log("DORY: Created embeddings for fitMarkdownChunks", fitMarkdownEmbeddings.length);
+    }
 
+    // 8) Now you have the chunks & embeddings from the backend
+    //    Send them to the service worker or store them in your vector DB, etc.
+    console.log("DORY: Sending results via chrome.runtime.sendMessage");
     chrome.runtime.sendMessage({
       type: "EXTRACTION_COMPLETE",
       data: {
@@ -73,6 +71,7 @@ async function extractAndSendContent(): Promise<void> {
         regularMarkdown,
         fitMarkdown,
         fitMarkdownChunks,
+        fitMarkdownEmbeddings,
         metadata: {
           title: document.title,
           url: window.location.href,
