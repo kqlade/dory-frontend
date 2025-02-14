@@ -73,10 +73,19 @@ npm run build
 
 ### Backend Setup
 
-1. Ensure the backend server is running on `http://localhost:3000`
-2. Available endpoints:
+1. Clone and set up the backend repository:
+```bash
+git clone https://github.com/kqlade/dory-backend.git
+cd dory-backend
+npm install
+npm run dev
+```
+
+2. The backend server should be running on `http://localhost:3000` with the following endpoints:
    - `/api/health`: Health check endpoint
    - `/api/embeddings`: Embeddings generation endpoint
+
+For more details about the backend setup and configuration, visit the [backend repository](https://github.com/kqlade/dory-backend).
 
 ## Development
 
@@ -134,10 +143,16 @@ Key configuration files:
 
 ## License
 
-[Add your license here]
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+The GPL-3.0 license ensures that:
+- The source code must be made available when the software is distributed
+- Modifications must be released under the same license
+- Changes made to the code must be documented
+- Users have the right to run, study, share, and modify the software
 
 ## Acknowledgments
 
 - Built with [Vite](https://vitejs.dev/)
 - Uses [LangChain](https://js.langchain.com/) for text processing
-- Markdown conversion inspired by html2text 
+- Markdown conversion inspired by [Crawl4AI](https://github.com/unclecode/crawl4ai)
