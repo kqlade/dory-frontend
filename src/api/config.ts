@@ -9,6 +9,9 @@ export const API_BASE_URL = 'http://localhost:3000/api';
 // Available backend endpoints
 export const ENDPOINTS = {
   EMBEDDINGS: '/embeddings',
+  EMBEDDINGS_SEARCH: '/embeddings/search',
+  DOCUMENTS: '/documents',
+  DOCUMENTS_BATCH: '/documents/batch',
   HEALTH: '/health'
 };
 

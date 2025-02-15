@@ -2,19 +2,27 @@
 
 import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator"; 
 import { PruningContentFilter } from "../html2text/content_filter_strategy";
-
-// 1) chunking
 import { LangChainMarkdownChunking } from "../chunking/chunkingStrategy";
-
-// 2) embedding via new backend
-import { getEmbeddings } from "../api/client"; 
+import { sendFullDocument } from "../api/client"; 
 
 console.log("DORY: Content script loaded successfully");
+
+async function getLastVisitTime(url: string): Promise<number> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "GET_VISIT_TIME", url }, (response) => {
+      resolve(response?.visitTime || Date.now());
+    });
+  });
+}
 
 async function extractAndSendContent(): Promise<void> {
   try {
     console.log("DORY: Starting content extraction");
-    console.log("DORY: Current URL:", window.location.href);
+    const currentUrl = window.location.href;
+    console.log("DORY: Current URL:", currentUrl);
+
+    // Get the actual last visit time from service worker
+    const lastVisitTime = await getLastVisitTime(currentUrl);
 
     // 1) Get the raw HTML
     const rawHTMLString = document.body?.innerHTML;
@@ -53,30 +61,33 @@ async function extractAndSendContent(): Promise<void> {
       console.log("DORY: fitMarkdown chunked into", fitMarkdownChunks.length, "chunks");
     }
 
-    // 7) EMBED the chunks using your backend
-    //    Instead of calling OpenAI directly, use your new getEmbeddings() from client.ts
-    let fitMarkdownEmbeddings: number[][] = [];
-    if (fitMarkdownChunks.length > 0) {
-      fitMarkdownEmbeddings = await getEmbeddings(fitMarkdownChunks);
-      console.log("DORY: Created embeddings for fitMarkdownChunks", fitMarkdownEmbeddings.length);
-    }
+    // 7) Prepare metadata
+    const metadata = {
+      title: document.title,
+      url: currentUrl,
+      extractionTimestamp: new Date().toISOString(),
+      visitedAt: lastVisitTime
+    };
 
-    // 8) Now you have the chunks & embeddings from the backend
-    //    Send them to the service worker or store them in your vector DB, etc.
-    console.log("DORY: Sending results via chrome.runtime.sendMessage");
+    // 8) Send full document to backend
+    const docId = await sendFullDocument(
+      document.title,
+      currentUrl,
+      regularMarkdown,
+      fitMarkdownChunks,
+      metadata
+    );
+
+    console.log("DORY: Document stored successfully, docId:", docId);
+
+    // 9) Notify service worker of completion
     chrome.runtime.sendMessage({
       type: "EXTRACTION_COMPLETE",
       data: {
-        url: window.location.href,
-        regularMarkdown,
-        fitMarkdown,
-        fitMarkdownChunks,
-        fitMarkdownEmbeddings,
-        metadata: {
-          title: document.title,
-          url: window.location.href,
-          extractionTimestamp: new Date().toISOString(),
-        },
+        url: currentUrl,
+        docId,
+        metadata,
+        chunkCount: fitMarkdownChunks.length
       },
     });
 

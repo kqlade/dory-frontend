@@ -22,6 +22,7 @@
     "vite": "^5.0.12"
   },
   "dependencies": {
+    "@pinecone-database/pinecone": "^5.0.0",
     "@types/dotenv": "^6.1.1",
     "@types/natural": "^5.1.5",
     "@types/turndown": "^5.0.5",

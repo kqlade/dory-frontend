@@ -15,7 +15,11 @@ import {
   import {
     ApiError,
     EmbeddingRequest,
-    EmbeddingResponse
+    EmbeddingResponse,
+    DocumentIngestionRequest,
+    DocumentResponse,
+    DocumentRecord,
+    SearchResult
   } from './types';
   
   /**
@@ -110,6 +114,59 @@ import {
     const payload: EmbeddingRequest = { texts };
     const response = await apiPost<EmbeddingResponse>(ENDPOINTS.EMBEDDINGS, payload);
     return response.embeddings;
+  }
+  
+  /**
+   * Store a full document with optional chunks
+   */
+  export async function sendFullDocument(
+    title: string | undefined,
+    url: string | undefined,
+    fullText: string,
+    chunks: string[],
+    metadata: any
+  ): Promise<string> {
+    const payload: DocumentIngestionRequest = {
+      title,
+      url,
+      fullText,
+      chunks,
+      metadata
+    };
+  
+    const response = await apiPost<DocumentResponse>(ENDPOINTS.DOCUMENTS, payload);
+    return response.docId;
+  }
+  
+  /**
+   * Batch store multiple documents
+   */
+  export async function sendDocumentsBatch(
+    documents: DocumentIngestionRequest[]
+  ): Promise<Array<{ docId: string; success: boolean; error?: string }>> {
+    const response = await apiPost<{ results: Array<{ docId: string; success: boolean; error?: string }> }>(
+      ENDPOINTS.DOCUMENTS_BATCH,
+      { documents }
+    );
+    return response.results;
+  }
+  
+  /**
+   * Retrieve a stored document by ID
+   */
+  export async function getDocument(docId: string): Promise<DocumentRecord> {
+    return apiGet<DocumentRecord>(`${ENDPOINTS.DOCUMENTS}/${docId}`);
+  }
+  
+  /**
+   * Perform semantic search
+   */
+  export async function semanticSearch(query: string, topK: number = 5): Promise<SearchResult[]> {
+    const response = await apiPost<{ results: SearchResult[] }>(
+      ENDPOINTS.EMBEDDINGS_SEARCH,
+      { query, topK }
+    );
+    return response.results;
   }
   
   /**

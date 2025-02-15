@@ -18,7 +18,7 @@ import { processQueue, currentQueueUrl } from '../services/indexingScheduler';
 console.log(`${LOGGING_CONFIG.PREFIX} indexingScheduler imported successfully`);
 
 // Import only what we need from the API client
-import { apiRequest } from '../api/client';
+import { apiRequest, getDocument } from '../api/client';
 
 console.log('Service Worker loaded');
 
@@ -61,6 +61,14 @@ function fetchHistoryAndQueue(startTime: number): void {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log(`${LOGGING_CONFIG.PREFIX} Received message:`, message.type, message);
   
+  if (message.type === 'GET_VISIT_TIME') {
+    chrome.history.getVisits({ url: message.url }, (historyItems) => {
+      const visitTime = historyItems.length > 0 ? historyItems[historyItems.length - 1].visitTime : Date.now();
+      sendResponse({ visitTime });
+    });
+    return true; // Keep the message channel open for async response
+  }
+  
   if (message.type === 'EXTRACTION_COMPLETE') {
     console.log(`${LOGGING_CONFIG.PREFIX} Processing extraction complete for content URL:`, message.data.url);
     
@@ -70,6 +78,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     
     console.log(`${LOGGING_CONFIG.PREFIX} Will mark queued URL as processed:`, currentQueueUrl);
+    console.log(`${LOGGING_CONFIG.PREFIX} Document stored with ID:`, message.data.docId);
+    
     queueManager.markIndexed(currentQueueUrl)
       .then(() => {
         console.log(`${LOGGING_CONFIG.PREFIX} Successfully marked queued URL as processed:`, currentQueueUrl);
