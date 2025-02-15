@@ -4,7 +4,7 @@ import { WINDOW_CONFIG } from '../background/config';
 import queueManager from './queueManager';
 
 // Global variables to track the processing window and its tab.
-let currentProcessingWindowId: number | null = null;
+export let currentProcessingWindowId: number | null = null;
 let currentProcessingTabId: number | null = null;
 export let currentQueueUrl: string | null = null; // Track the exact URL from queue
 

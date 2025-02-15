@@ -28,6 +28,8 @@ export const WINDOW_CONFIG = {
     focused: false,
     width: 1024,
     height: 768,
+    setSelfAsOpener: false,
+    muted: true,
   }
 } as const;
 

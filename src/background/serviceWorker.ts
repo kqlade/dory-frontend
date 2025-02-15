@@ -14,13 +14,24 @@ import queueManager from '../services/queueManager';
 console.log(`${LOGGING_CONFIG.PREFIX} queueManager imported successfully`);
 
 console.log(`${LOGGING_CONFIG.PREFIX} About to import indexingScheduler...`);
-import { processQueue, currentQueueUrl } from '../services/indexingScheduler';
+import { processQueue, currentQueueUrl, currentProcessingWindowId } from '../services/indexingScheduler';
 console.log(`${LOGGING_CONFIG.PREFIX} indexingScheduler imported successfully`);
 
 // Import only what we need from the API client
 import { apiRequest, getDocument } from '../api/client';
 
 console.log('Service Worker loaded');
+
+// Ensure processing window stays muted
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.mutedInfo?.muted === false) {
+    chrome.tabs.get(tabId, (tab) => {
+      if (tab.windowId === currentProcessingWindowId) {
+        chrome.tabs.update(tabId, { muted: true });
+      }
+    });
+  }
+});
 
 let lastCheckedTime: number = Date.now() - HISTORY_CONFIG.DAYS_OF_HISTORY * 24 * 60 * 60 * 1000;
 
