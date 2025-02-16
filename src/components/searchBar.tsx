@@ -1,12 +1,14 @@
 import React, { useState, ChangeEvent, KeyboardEvent } from 'react';
 import SearchIcon from '@/components/searchIcon';
+import { RefinementIcon } from './icons';
 
 interface SearchBarProps {
   onSearch: (query: string) => Promise<void>;
   isLoading?: boolean;
+  variant?: 'search' | 'refinement';
 }
 
-const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false }) => {
+const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false, variant = 'search' }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -27,7 +29,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false }) =>
       width: '100%',
       opacity: isLoading ? 0.7 : 1,
     }}>
-      <SearchIcon />
+      {variant === 'search' ? <SearchIcon /> : <RefinementIcon />}
       <input
         type="text"
         value={searchQuery}
@@ -40,9 +42,9 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false }) =>
           border: 'none',
           color: 'white',
           fontSize: '14px',
-          fontWeight: 'normal',
+          fontWeight: 400,
           opacity: 0.9,
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+          fontFamily: 'Cabinet Grotesk, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
           lineHeight: '18px',
           width: '100%',
           padding: 0,

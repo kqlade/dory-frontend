@@ -1,9 +1,20 @@
 // src/components/App.tsx
-import React from 'react';
+import React, { useState } from 'react';
 import Header from '@/components/header';
 import Content from '@/components/content';
+import type { SearchResult } from '../types/search';
 
 const App: React.FC = () => {
+  const [searchState, setSearchState] = useState<{
+    results: SearchResult[] | null;
+    isLoading: boolean;
+    error: string | null;
+  }>({
+    results: null,
+    isLoading: false,
+    error: null,
+  });
+
   return (
     <div style={{
       backgroundColor: '#1E1E1E',
@@ -15,8 +26,12 @@ const App: React.FC = () => {
       borderRadius: '12px',
       overflow: 'hidden'
     }}>
-      <Header />
-      <Content />
+      <Header onSearchStateChange={setSearchState} />
+      <Content
+        searchResults={searchState.results}
+        isLoading={searchState.isLoading}
+        error={searchState.error}
+      />
     </div>
   );
 };

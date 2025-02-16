@@ -2,8 +2,17 @@
 import React, { useState } from 'react';
 import SearchBar from '@/components/searchBar';
 import { semanticSearch } from '@/api/client';
+import type { SearchResult } from '../types/search';
 
-const Header: React.FC = () => {
+interface HeaderProps {
+  onSearchStateChange: (state: {
+    results: SearchResult[] | null;
+    isLoading: boolean;
+    error: string | null;
+  }) => void;
+}
+
+const Header: React.FC<HeaderProps> = ({ onSearchStateChange }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -12,13 +21,15 @@ const Header: React.FC = () => {
     
     setIsLoading(true);
     setError(null);
+    onSearchStateChange({ results: null, isLoading: true, error: null });
 
     try {
       const results = await semanticSearch(query);
-      // TODO: Handle search results
-      console.log('Search results:', results);
+      onSearchStateChange({ results, isLoading: false, error: null });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred while searching');
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred while searching';
+      setError(errorMessage);
+      onSearchStateChange({ results: null, isLoading: false, error: errorMessage });
       console.error('Search error:', err);
     } finally {
       setIsLoading(false);
@@ -29,7 +40,7 @@ const Header: React.FC = () => {
     <header
       style={{ 
         paddingTop: '12px',
-        paddingBottom: '12px',
+        paddingBottom: '6px',
         boxSizing: 'border-box',
         position: 'relative'
       }}

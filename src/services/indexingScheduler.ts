@@ -26,6 +26,16 @@ function openProcessingWindow(url: string): Promise<{ windowId: number; tabId: n
           } else if (newWindow && newWindow.id !== undefined && newWindow.tabs && newWindow.tabs.length > 0) {
             const windowId = newWindow.id;
             const tabId = newWindow.tabs[0].id!;
+            
+            // Mute the tab
+            try {
+              await chrome.tabs.update(tabId, { muted: true });
+              console.log(`[Scheduler] Successfully muted tab ${tabId}`);
+            } catch (error) {
+              console.error(`[Scheduler] Error muting tab:`, error);
+              // Don't reject here, as the window was created successfully
+            }
+            
             resolve({ windowId, tabId });
           } else {
             reject(new Error('Failed to create processing window: window or tab ID undefined'));
@@ -60,7 +70,7 @@ export async function processQueue(): Promise<void> {
   if (currentProcessingWindowId !== null && currentProcessingTabId !== null) {
     console.log('[Scheduler] Existing processing window found. Window ID:', currentProcessingWindowId, 'Tab ID:', currentProcessingTabId);
     // Update the current processing tab with the new URL.
-    chrome.tabs.update(currentProcessingTabId, { url }, async (tab) => {
+    chrome.tabs.update(currentProcessingTabId, { url, muted: true }, async (tab) => {
       if (chrome.runtime.lastError) {
         console.error("[Scheduler] Error updating tab:", chrome.runtime.lastError.message);
       } else {
