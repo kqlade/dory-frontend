@@ -57,12 +57,48 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false, vari
         <div style={{
           width: '16px',
           height: '16px',
-          border: '2px solid rgba(255, 255, 255, 0.3)',
-          borderTop: '2px solid white',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           marginRight: '8px',
-        }} />
+          position: 'relative'
+        }}>
+          <style>
+            {`
+              @keyframes dotRotate {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+              .loading-dots {
+                width: 16px;
+                height: 16px;
+                position: relative;
+                animation: dotRotate 1s linear infinite;
+              }
+              .loading-dots::before {
+                content: '';
+                width: 3px;
+                height: 3px;
+                border-radius: 50%;
+                background-color: white;
+                position: absolute;
+                left: 50%;
+                top: 0;
+                transform: translateX(-50%);
+                box-shadow: 
+                  0px 7px 0 white,
+                  0px 14px 0 white,
+                  7px 7px 0 rgba(255,255,255,0.75),
+                  -7px 7px 0 rgba(255,255,255,0.75),
+                  7px 0 0 rgba(255,255,255,0.5),
+                  -7px 0 0 rgba(255,255,255,0.5),
+                  7px 14px 0 rgba(255,255,255,0.25),
+                  -7px 14px 0 rgba(255,255,255,0.25);
+              }
+            `}
+          </style>
+          <div className="loading-dots" />
+        </div>
       )}
     </div>
   );
