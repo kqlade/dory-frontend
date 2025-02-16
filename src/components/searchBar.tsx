@@ -55,49 +55,30 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false, vari
       />
       {isLoading && (
         <div style={{
-          width: '16px',
-          height: '16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
           marginRight: '8px',
-          position: 'relative'
+          display: 'flex',
+          alignItems: 'flex-end'
         }}>
           <style>
             {`
-              @keyframes dotRotate {
+              @keyframes spin {
                 0% { transform: rotate(0deg); }
                 100% { transform: rotate(360deg); }
               }
-              .loading-dots {
+              .spinner {
+                box-sizing: border-box;
                 width: 16px;
                 height: 16px;
-                position: relative;
-                animation: dotRotate 1s linear infinite;
-              }
-              .loading-dots::before {
-                content: '';
-                width: 3px;
-                height: 3px;
                 border-radius: 50%;
-                background-color: white;
-                position: absolute;
-                left: 50%;
-                top: 0;
-                transform: translateX(-50%);
-                box-shadow: 
-                  0px 7px 0 white,
-                  0px 14px 0 white,
-                  7px 7px 0 rgba(255,255,255,0.75),
-                  -7px 7px 0 rgba(255,255,255,0.75),
-                  7px 0 0 rgba(255,255,255,0.5),
-                  -7px 0 0 rgba(255,255,255,0.5),
-                  7px 14px 0 rgba(255,255,255,0.25),
-                  -7px 14px 0 rgba(255,255,255,0.25);
+                border: 2px solid transparent;
+                border-top-color: white;
+                border-left-color: white;
+                border-right-color: white;
+                animation: spin 0.8s linear infinite;
               }
             `}
           </style>
-          <div className="loading-dots" />
+          <div className="spinner" />
         </div>
       )}
     </div>

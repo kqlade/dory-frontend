@@ -9,10 +9,12 @@ const App: React.FC = () => {
     results: SearchResult[] | null;
     isLoading: boolean;
     error: string | null;
+    hasSearched: boolean;
   }>({
     results: null,
     isLoading: false,
     error: null,
+    hasSearched: false
   });
 
   return (
@@ -31,6 +33,7 @@ const App: React.FC = () => {
         searchResults={searchState.results}
         isLoading={searchState.isLoading}
         error={searchState.error}
+        hasSearched={searchState.hasSearched}
       />
     </div>
   );

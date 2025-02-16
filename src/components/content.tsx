@@ -4,18 +4,18 @@ import DoryMessage from './DoryMessage';
 import SearchResultCard from './SearchResultCard';
 import SearchBar from './searchBar';
 import { ChevronIcon } from './icons';
-import ExpandableSection from './ExpandableSection';
 import type { SearchResult } from '../types/search';
 
 interface ContentProps {
   searchResults: SearchResult[] | null;
   isLoading: boolean;
   error: string | null;
+  hasSearched?: boolean;  // New prop to track if a search has been performed
 }
 
 type ActiveSection = 'search' | 'results' | null;
 
-const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error }) => {
+const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error, hasSearched = false }) => {
   const [activeSection, setActiveSection] = useState<ActiveSection>(null);
 
   if (isLoading) {
@@ -54,19 +54,23 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error }) =>
         flex: 1,
         backgroundColor: '#1E1E1E',
         position: 'relative',
-      }} />
+        paddingLeft: '16px',
+        paddingRight: '16px',
+        paddingTop: '18px',
+      }}>
+        {hasSearched && (
+          <DoryMessage type="suggestion">
+            Hmm, I'm having trouble finding what you're looking for, what else do you remember about it?
+          </DoryMessage>
+        )}
+      </main>
     );
   }
 
   const bestResult = searchResults.find(result => result.isHighlighted) || searchResults[0];
   
-  // First filter out any results with the same URL as the best result
-  // Then from remaining results, keep only one result per unique URL
-  const alternativeResults = searchResults
-    .filter(result => !result.isHighlighted && result.metadata.url !== bestResult.metadata.url)
-    .filter((result, index, self) => 
-      index === self.findIndex(r => r.metadata.url === result.metadata.url)
-    );
+  // Only show non-highlighted results as alternatives
+  const alternativeResults = searchResults.filter(result => !result.isHighlighted);
 
   const handleSectionToggle = (section: ActiveSection) => {
     setActiveSection(current => current === section ? null : section);
