@@ -12,7 +12,8 @@ export const ENDPOINTS = {
   EMBEDDINGS_SEARCH: '/embeddings/search',
   DOCUMENTS: '/documents',
   DOCUMENTS_BATCH: '/documents/batch',
-  HEALTH: '/health'
+  HEALTH: '/health',
+  ADVANCED_SEARCH: '/search/advanced'
 };
 
 // Typical request timeout (ms)

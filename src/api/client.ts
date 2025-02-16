@@ -162,11 +162,11 @@ import {
    * Perform semantic search
    */
   export async function semanticSearch(query: string, topK: number = 5): Promise<SearchResult[]> {
-    const response = await apiPost<{ results: SearchResult[] }>(
-      ENDPOINTS.EMBEDDINGS_SEARCH,
-      { query, topK }
+    const response = await apiPost<{ result: { topResults: SearchResult[] } }>(
+      ENDPOINTS.ADVANCED_SEARCH,
+      { userQuery: query, topK }
     );
-    return response.results;
+    return response.result.topResults;
   }
   
   /**
