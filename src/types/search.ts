@@ -1,6 +1,7 @@
 export interface SearchResult {
   score: number;
   chunkId: string;
+  isHighlighted?: boolean;
   metadata: {
     chunkText: string;
     title?: string;

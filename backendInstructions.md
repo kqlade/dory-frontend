@@ -30,24 +30,40 @@ POST /api/search/advanced
 Request:
 {
   "userQuery": "Your natural language query",
-  "topK": 5  // optional, defaults to 5
+  "topK": 5  // optional, defaults to 5 (but response will always return top 3)
 }
 Response:
 {
   "result": {
-    "bestChunk": {
-      "score": 0.89,
-      "chunkId": "doc123-chunk-0",
-      "metadata": {
-        "chunkText": "The matched text",
-        "url": "source url",
-        "title": "document title",
-        "visitedAt": "timestamp",
-        "lastModified": "timestamp",
-        "docId": "associated document id"
+    "topResults": [
+      {
+        "score": 0.89,
+        "chunkId": "doc123-chunk-0",
+        "metadata": {
+          "chunkText": "The matched text",
+          "url": "source url",
+          "title": "document title",
+          "visitedAt": "timestamp",
+          "lastModified": "timestamp",
+          "docId": "associated document id",
+          "isGoogleSearch": false
+        },
+        "isHighlighted": true  // Indicates this is the best result
+      },
+      {
+        // Second best result
+        "score": 0.85,
+        "isHighlighted": false,
+        // ... same metadata structure
+      },
+      {
+        // Third best result
+        "score": 0.82,
+        "isHighlighted": false,
+        // ... same metadata structure
       }
-    },
-    "reasoning": "Why this chunk was chosen"
+    ],
+    "reasoning": "Explanation of why the highlighted result was chosen as best"
   },
   "debug": {
     "parsedQuery": {
@@ -126,12 +142,35 @@ The advanced search supports natural language queries with various patterns:
 
 3. Vector Search:
    - Semantic search on filtered document set
+   - Two-pass search for Google results:
+     - First pass: Get non-Google results
+     - Second pass: Get Google results with 75% score penalty
    - Returns top K results (default: 5)
 
 4. LLM Re-check:
    - Final validation of results
    - Selection of best matching chunk
    - Generation of reasoning explanation
+   - Returns top 3 results with best one highlighted
+
+## Result Ranking and Scoring
+
+1. Google Search Results:
+   - Automatically detected and flagged (isGoogleSearch: true)
+   - 75% score penalty applied
+   - Limited to maximum of 2 results
+   - Only included if highly relevant after penalty
+
+2. Regular Results:
+   - No score penalty
+   - Preferred over Google search results
+   - Must be significantly less relevant to be outranked by Google results
+
+3. Final Results:
+   - Top 3 results always returned
+   - Best result marked with isHighlighted: true
+   - Includes explanation of selection
+   - Sorted by final score (after penalties)
 
 ## Performance Characteristics
 
@@ -147,6 +186,7 @@ Performance optimizations:
 - Complexity-based model selection
 - Efficient metadata filtering
 - Optimized vector search
+- Two-pass search for Google results
 
 ## Error Handling
 
@@ -170,9 +210,11 @@ Common error responses:
 - Consider adding query suggestions based on common patterns
 
 ### 2. Results Display
-- Show the best matching chunk prominently
+- Show all three results in a list/grid
+- Highlight the best result visually (using isHighlighted flag)
 - Display the reasoning for why it was chosen
 - Show metadata (source, date, etc.)
+- Indicate Google search results differently
 - Optionally show debug info in a developer mode
 
 ### 3. Progressive Enhancement
@@ -210,8 +252,8 @@ async function performAdvancedSearch(query: string) {
 
     const data = await response.json();
     
-    // Update UI with results
-    displaySearchResult(data.result.bestChunk);
+    // Display all results
+    displaySearchResults(data.result.topResults);
     
     // Show applied filters
     if (data.debug?.parsedQuery?.metadata_filters) {
@@ -232,19 +274,19 @@ async function performAdvancedSearch(query: string) {
   }
 }
 
-function displaySearchResult(chunk: any) {
-  // Example UI update
-  const resultElement = document.getElementById('search-result');
-  resultElement.innerHTML = `
-    <div class="result-card">
-      <div class="content">${chunk.metadata.chunkText}</div>
+function displaySearchResults(results: any[]) {
+  const resultsContainer = document.getElementById('search-results');
+  resultsContainer.innerHTML = results.map(result => `
+    <div class="result-card ${result.isHighlighted ? 'highlighted' : ''} ${result.metadata.isGoogleSearch ? 'google-result' : ''}">
+      <div class="content">${result.metadata.chunkText}</div>
       <div class="metadata">
-        <span>Source: ${chunk.metadata.url || 'Unknown'}</span>
-        <span>Relevance: ${(chunk.score * 100).toFixed(1)}%</span>
-        <span>Visited: ${new Date(chunk.metadata.visitedAt).toLocaleString()}</span>
+        <span>Source: ${result.metadata.url || 'Unknown'}</span>
+        <span>Relevance: ${(result.score * 100).toFixed(1)}%</span>
+        <span>Visited: ${new Date(result.metadata.visitedAt).toLocaleString()}</span>
+        ${result.metadata.isGoogleSearch ? '<span class="google-badge">Google Search Result</span>' : ''}
       </div>
     </div>
-  `;
+  `).join('');
 }
 
 function displayPerformanceMetrics(performance: any) {
@@ -289,11 +331,11 @@ async function cachedSearch(query: string) {
 ```typescript
 function displayResults(data: any) {
   // Show immediate results
-  displaySearchResult(data.result.bestChunk);
+  displaySearchResults(data.result.topResults);
   
   // Then load additional UI elements
   requestAnimationFrame(() => {
-    displayMetadata(data.result.bestChunk.metadata);
+    displayMetadata(data.result.topResults);
     displayReasoning(data.result.reasoning);
     displayDebugInfo(data.debug);
     displayPerformanceMetrics(data.debug.performance);

@@ -58,8 +58,15 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error }) =>
     );
   }
 
-  const bestResult = searchResults[0];
-  const alternativeResults = searchResults.slice(1, 3); // Only take 2 alternative results
+  const bestResult = searchResults.find(result => result.isHighlighted) || searchResults[0];
+  
+  // First filter out any results with the same URL as the best result
+  // Then from remaining results, keep only one result per unique URL
+  const alternativeResults = searchResults
+    .filter(result => !result.isHighlighted && result.metadata.url !== bestResult.metadata.url)
+    .filter((result, index, self) => 
+      index === self.findIndex(r => r.metadata.url === result.metadata.url)
+    );
 
   const handleSectionToggle = (section: ActiveSection) => {
     setActiveSection(current => current === section ? null : section);
@@ -119,33 +126,35 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error }) =>
           </button>
         </div>
 
-        <div style={{ flex: 1 }}>
-          <button
-            onClick={() => handleSectionToggle('results')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              background: 'transparent',
-              border: 'none',
-              padding: '0 0 8px 0',
-              color: 'white',
-              opacity: activeSection === 'results' ? 0.9 : 0.7,
-              cursor: 'pointer',
-              width: '100%',
-              textAlign: 'left',
-              fontFamily: 'Cabinet Grotesk, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-              fontSize: '13px',
-              fontWeight: 400,
-              transition: 'opacity 0.1s ease',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = activeSection === 'results' ? '0.9' : '0.7'}
-          >
-            <ChevronIcon direction={activeSection === 'results' ? 'up' : 'down'} />
-            See other results
-          </button>
-        </div>
+        {alternativeResults.length > 0 && (
+          <div style={{ flex: 1 }}>
+            <button
+              onClick={() => handleSectionToggle('results')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: 'transparent',
+                border: 'none',
+                padding: '0 0 8px 0',
+                color: 'white',
+                opacity: activeSection === 'results' ? 0.9 : 0.7,
+                cursor: 'pointer',
+                width: '100%',
+                textAlign: 'left',
+                fontFamily: 'Cabinet Grotesk, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+                fontSize: '13px',
+                fontWeight: 400,
+                transition: 'opacity 0.1s ease',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = activeSection === 'results' ? '0.9' : '0.7'}
+            >
+              <ChevronIcon direction={activeSection === 'results' ? 'up' : 'down'} />
+              See other results
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Expanded Content */}
