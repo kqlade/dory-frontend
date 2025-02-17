@@ -16,10 +16,8 @@ interface QueueDB extends DBSchema {
     key: string; // Using the URL as the key
     value: {
       url: string;
-      addedAt: number;
-      visitTimestamps: number[];
       processed: boolean;
-      lastProcessed?: number;  // Timestamp of last index
+      lastProcessed?: number;  // Timestamp of last processing
       metadata?: DocumentMetadata;  // Document metadata when processed
     };
   };
@@ -35,23 +33,12 @@ export function getDB() {
   if (!dbPromise) {
     console.log("[QueueDB] Initializing database...");
 
-    // Bump to version 2 (or higher) to reflect new fields in the schema
-    dbPromise = openDB<QueueDB>("QueueDatabase", 2, {
+    dbPromise = openDB<QueueDB>("QueueDatabase", 3, {
       upgrade(db, oldVersion, newVersion, tx) {
         console.log("[QueueDB] Running upgrade function...", { oldVersion, newVersion });
         if (!db.objectStoreNames.contains("queue")) {
           console.log("[QueueDB] Creating queue store...");
           db.createObjectStore("queue", { keyPath: "url" });
-        } else {
-          // If we had to do something for existing records, we'd do it here.
-          // For optional fields, no change is strictly necessary.
-          console.log("[QueueDB] queue store already exists. Checking for migrations...");
-          if (oldVersion < 2) {
-            // If needed, you could do data migration logic:
-            // e.g., read all items, add default lastProcessed
-            // But if optional, you can skip.
-            console.log("[QueueDB] Migrating to version 2 - optional fields added.");
-          }
         }
       },
     });

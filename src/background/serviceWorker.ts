@@ -22,6 +22,9 @@ import { apiRequest, getDocument } from '../api/client';
 
 console.log('Service Worker loaded');
 
+// Track whether we're doing initial indexing
+let isInitialIndexing = false;
+
 // Ensure processing window stays muted
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.mutedInfo?.muted === false) {
@@ -41,34 +44,39 @@ const extractionRetryCounts = new Map<string, number>();
 /**
  * Fetches browser history starting from a given time and adds the URLs to the queue.
  */
-function fetchHistoryAndQueue(startTime: number): void {
-  const now = Date.now();
+async function loadHistory() {
+  console.log('[ServiceWorker] Loading history...');
+  isInitialIndexing = true;
 
-  chrome.history.search(
-    {
-      text: '', // Match all history items.
+  const startTime = new Date(
+    Date.now() - HISTORY_CONFIG.DAYS_OF_HISTORY * 24 * 60 * 60 * 1000
+  ).getTime();
+
+  try {
+    const historyItems = await chrome.history.search({
+      text: '',
       startTime,
-      maxResults: HISTORY_CONFIG.MAX_HISTORY_RESULTS
-    },
-    (historyItems) => {
-      const urls = historyItems
-        .map(item => item.url)
-        .filter((url): url is string => Boolean(url));
+      maxResults: HISTORY_CONFIG.MAX_HISTORY_RESULTS,
+    });
 
-      queueManager.addUrls(urls)
-        .then(() => {
-          queueManager.getQueueSize().then(size => {
-            console.log(`${LOGGING_CONFIG.PREFIX} Queue size after adding history items: ${size}`);
-          });
-          processQueue();
-        })
-        .catch(error => {
-          console.error(`${LOGGING_CONFIG.PREFIX} Error adding URLs to the queue:`, error);
-        });
+    console.log(
+      `[ServiceWorker] Found ${historyItems.length} history items since ${new Date(
+        startTime
+      ).toLocaleString()}`
+    );
 
-      lastCheckedTime = now;
-    }
-  );
+    const urls = historyItems
+      .map((item) => item.url)
+      .filter((url): url is string => Boolean(url));
+    await queueManager.addUrls(urls, true);
+    console.log('[ServiceWorker] Successfully queued history items');
+    
+    // Start processing the queue
+    processQueue();
+  } catch (error) {
+    console.error('[ServiceWorker] Error loading history:', error);
+    isInitialIndexing = false;
+  }
 }
 
 // Listen for messages from content scripts.
@@ -80,34 +88,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const visitTime = historyItems.length > 0 ? historyItems[historyItems.length - 1].visitTime : Date.now();
       sendResponse({ visitTime });
     });
-    return true; // Keep the message channel open for async response
+    return true;
   }
   
   if (message.type === 'EXTRACTION_COMPLETE') {
-    console.log(`${LOGGING_CONFIG.PREFIX} Processing extraction complete for content URL:`, message.data.url);
+    console.log(`${LOGGING_CONFIG.PREFIX} Extraction complete for URL:`, message.data.url);
     
     if (!currentQueueUrl) {
       console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found. This should not happen.`);
       return true;
     }
     
-    console.log(`${LOGGING_CONFIG.PREFIX} Will mark queued URL as processed:`, currentQueueUrl);
-    console.log(`${LOGGING_CONFIG.PREFIX} Document stored with ID:`, message.data.docId);
-    
-    // Update queue with metadata
+    // Mark as processed and move to next URL
     queueManager.markIndexed(currentQueueUrl, message.data.metadata)
-      .then(() => {
-        console.log(`${LOGGING_CONFIG.PREFIX} Successfully marked queued URL as processed:`, currentQueueUrl);
-        // Get and log queue size before processing next URL
-        queueManager.getQueueSize().then(size => {
-          console.log(`${LOGGING_CONFIG.PREFIX} URLs remaining in queue:`, size);
-          console.log(`${LOGGING_CONFIG.PREFIX} Calling processQueue to handle next URL`);
-          processQueue();
-        });
+      .then(async () => {
+        // Check if we have more URLs to process
+        const queueSize = await queueManager.getQueueSize();
+        if (queueSize === 0 && isInitialIndexing) {
+          // Initial indexing is complete
+          console.log(`${LOGGING_CONFIG.PREFIX} Initial indexing complete`);
+          isInitialIndexing = false;
+        }
+        processQueue();
       })
       .catch(error => {
         console.error(`${LOGGING_CONFIG.PREFIX} Error marking URL as processed:`, error);
-        // Don't call processQueue here as it might cause race conditions
+        processQueue();
       });
   }
   
@@ -115,35 +121,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.error(`${LOGGING_CONFIG.PREFIX} Extraction error:`, message.error);
 
     if (!currentQueueUrl) {
-      console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found. Cannot track retries.`);
+      console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found for error handling`);
       return true;
     }
 
-    // Get the current retry count from the map, defaulting to 0
-    const currentCount = extractionRetryCounts.get(currentQueueUrl) || 0;
-    const newCount = currentCount + 1;
-    extractionRetryCounts.set(currentQueueUrl, newCount);
+    // On error, mark as processed with failed status and move on
+    const failedMetadata = {
+      ...message.metadata,
+      status: 'failed' as const
+    };
 
-    console.log(`${LOGGING_CONFIG.PREFIX} Retry count for ${currentQueueUrl} is now ${newCount}`);
-
-    if (newCount >= QUEUE_CONFIG.MAX_RETRIES) {
-      console.warn(`${LOGGING_CONFIG.PREFIX} Exceeded max retries for ${currentQueueUrl}. Skipping it.`);
-      // Mark as failed in the queue
-      queueManager.markIndexed(currentQueueUrl, message.metadata)
-        .then(() => {
-          processQueue();
-        })
-        .catch(error => {
-          console.error(`${LOGGING_CONFIG.PREFIX} Error marking URL as failed:`, error);
-          processQueue();
-        });
-    } else {
-      // We'll try this URL again after a short delay
-      console.log(`${LOGGING_CONFIG.PREFIX} Will retry ${currentQueueUrl} in ${QUEUE_CONFIG.RETRY_DELAY_MS} ms`);
-      setTimeout(() => {
+    queueManager.markIndexed(currentQueueUrl, failedMetadata)
+      .then(async () => {
+        // Check if we have more URLs to process
+        const queueSize = await queueManager.getQueueSize();
+        if (queueSize === 0 && isInitialIndexing) {
+          // Initial indexing is complete
+          console.log(`${LOGGING_CONFIG.PREFIX} Initial indexing complete`);
+          isInitialIndexing = false;
+        }
         processQueue();
-      }, QUEUE_CONFIG.RETRY_DELAY_MS);
-    }
+      })
+      .catch(error => {
+        console.error(`${LOGGING_CONFIG.PREFIX} Error marking failed URL:`, error);
+        processQueue();
+      });
   }
   
   return true;
@@ -152,15 +154,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // On installation, fetch initial history.
 chrome.runtime.onInstalled.addListener(() => {
   console.log(`${LOGGING_CONFIG.PREFIX} Service Worker installed. Fetching initial history...`);
-  fetchHistoryAndQueue(lastCheckedTime);
+  loadHistory();
 });
 
 // Set up periodic history refresh.
 chrome.alarms.create('refreshHistory', { periodInMinutes: HISTORY_CONFIG.POLLING_INTERVAL_MIN });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'refreshHistory') {
+  if (alarm.name === 'refreshHistory' && !isInitialIndexing) {
     console.log(`${LOGGING_CONFIG.PREFIX} Alarm triggered. Fetching new history items...`);
-    fetchHistoryAndQueue(lastCheckedTime);
+    loadHistory();
   }
 });
 
@@ -168,5 +170,26 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.action.onClicked.addListener((tab) => {
   if (tab.windowId) {
     chrome.sidePanel.open({ windowId: tab.windowId });
+  }
+});
+
+// Handle history updates - only after initial indexing is complete
+chrome.history.onVisited.addListener(async (historyItem) => {
+  if (isInitialIndexing) {
+    return; // Skip during initial indexing
+  }
+
+  console.log('[ServiceWorker] History item visited:', historyItem);
+  if (!historyItem.url) {
+    console.warn('[ServiceWorker] Visited history item has no URL');
+    return;
+  }
+
+  try {
+    await queueManager.addUrl(historyItem.url, false);
+    console.log('[ServiceWorker] Successfully queued visited URL');
+    processQueue(); // Start processing if not already running
+  } catch (error) {
+    console.error('[ServiceWorker] Error queueing visited URL:', error);
   }
 });
