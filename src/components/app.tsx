@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import Header from '@/components/header';
 import Content from '@/components/content';
-import type { SearchResult } from '../types/search';
+import type { SearchResult } from '../api/types';
 
 const App: React.FC = () => {
   const [searchState, setSearchState] = useState<{

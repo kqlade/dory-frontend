@@ -19,7 +19,9 @@ import {
     DocumentIngestionRequest,
     DocumentResponse,
     DocumentRecord,
-    SearchResult
+    SearchResult,
+    DocumentMetadata,
+    SearchResponse
   } from './types';
   
   /**
@@ -120,15 +122,11 @@ import {
    * Store a full document with optional chunks
    */
   export async function sendFullDocument(
-    title: string | undefined,
-    url: string | undefined,
     fullText: string,
     chunks: string[],
-    metadata: any
+    metadata: DocumentMetadata
   ): Promise<string> {
     const payload: DocumentIngestionRequest = {
-      title,
-      url,
       fullText,
       chunks,
       metadata
@@ -161,12 +159,19 @@ import {
   /**
    * Perform semantic search
    */
-  export async function semanticSearch(query: string, topK: number = 5): Promise<SearchResult[]> {
-    const response = await apiPost<{ result: { topResults: SearchResult[] } }>(
+  export async function semanticSearch(
+    query: string, 
+    topK: number = 5,
+    options?: { enableTwoPassSystem?: boolean }
+  ): Promise<SearchResponse> {
+    const response = await apiPost<SearchResponse>(
       ENDPOINTS.ADVANCED_SEARCH,
-      { userQuery: query, topK }
+      { 
+        userQuery: query, 
+        options
+      }
     );
-    return response.result.topResults;
+    return response;
   }
   
   /**

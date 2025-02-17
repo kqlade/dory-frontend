@@ -35,6 +35,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 let lastCheckedTime: number = Date.now() - HISTORY_CONFIG.DAYS_OF_HISTORY * 24 * 60 * 60 * 1000;
 
+// Track retry counts for URLs
+const extractionRetryCounts = new Map<string, number>();
+
 /**
  * Fetches browser history starting from a given time and adds the URLs to the queue.
  */
@@ -91,7 +94,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log(`${LOGGING_CONFIG.PREFIX} Will mark queued URL as processed:`, currentQueueUrl);
     console.log(`${LOGGING_CONFIG.PREFIX} Document stored with ID:`, message.data.docId);
     
-    queueManager.markIndexed(currentQueueUrl)
+    // Update queue with metadata
+    queueManager.markIndexed(currentQueueUrl, message.data.metadata)
       .then(() => {
         console.log(`${LOGGING_CONFIG.PREFIX} Successfully marked queued URL as processed:`, currentQueueUrl);
         // Get and log queue size before processing next URL
@@ -105,18 +109,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error(`${LOGGING_CONFIG.PREFIX} Error marking URL as processed:`, error);
         // Don't call processQueue here as it might cause race conditions
       });
-
-  } else if (message.type === 'EXTRACTION_ERROR') {
-    console.error(`${LOGGING_CONFIG.PREFIX} Extraction error:`, message.error);
-    // The current URL might be retried or removed. Not calling processQueue here to avoid collisions.
-  } else if (message.type === 'API_REQUEST') {
-    // Generic API forwarding
-    apiRequest(message.endpoint, message.options)
-      .then((data) => sendResponse({ success: true, data }))
-      .catch((error) => sendResponse({ success: false, error: error.message }));
-    return true;
   }
+  
+  if (message.type === 'EXTRACTION_ERROR') {
+    console.error(`${LOGGING_CONFIG.PREFIX} Extraction error:`, message.error);
 
+    if (!currentQueueUrl) {
+      console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found. Cannot track retries.`);
+      return true;
+    }
+
+    // Get the current retry count from the map, defaulting to 0
+    const currentCount = extractionRetryCounts.get(currentQueueUrl) || 0;
+    const newCount = currentCount + 1;
+    extractionRetryCounts.set(currentQueueUrl, newCount);
+
+    console.log(`${LOGGING_CONFIG.PREFIX} Retry count for ${currentQueueUrl} is now ${newCount}`);
+
+    if (newCount >= QUEUE_CONFIG.MAX_RETRIES) {
+      console.warn(`${LOGGING_CONFIG.PREFIX} Exceeded max retries for ${currentQueueUrl}. Skipping it.`);
+      // Mark as failed in the queue
+      queueManager.markIndexed(currentQueueUrl, message.metadata)
+        .then(() => {
+          processQueue();
+        })
+        .catch(error => {
+          console.error(`${LOGGING_CONFIG.PREFIX} Error marking URL as failed:`, error);
+          processQueue();
+        });
+    } else {
+      // We'll try this URL again after a short delay
+      console.log(`${LOGGING_CONFIG.PREFIX} Will retry ${currentQueueUrl} in ${QUEUE_CONFIG.RETRY_DELAY_MS} ms`);
+      setTimeout(() => {
+        processQueue();
+      }, QUEUE_CONFIG.RETRY_DELAY_MS);
+    }
+  }
+  
   return true;
 });
 

@@ -35,7 +35,7 @@ export const WINDOW_CONFIG = {
 // Queue processing configuration
 export const QUEUE_CONFIG = {
   // Maximum number of retries for processing a URL
-  MAX_RETRIES: 3,
+  MAX_RETRIES: 1,
   
   // Delay between retries (in milliseconds)
   RETRY_DELAY_MS: 1000,

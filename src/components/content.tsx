@@ -4,7 +4,7 @@ import DoryMessage from './DoryMessage';
 import SearchResultCard from './SearchResultCard';
 import SearchBar from './searchBar';
 import { ChevronIcon } from './icons';
-import type { SearchResult } from '../types/search';
+import type { SearchResult } from '../api/types';
 
 interface ContentProps {
   searchResults: SearchResult[] | null;
@@ -59,9 +59,30 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error, hasS
         paddingTop: '18px',
       }}>
         {hasSearched && (
-          <DoryMessage type="suggestion">
-            Hmm, I'm having trouble finding what you're looking for, what else do you remember about it?
-          </DoryMessage>
+          <>
+            <DoryMessage type="suggestion">
+              Hmm, I'm having trouble finding what you're looking for, what else do you remember about it?
+            </DoryMessage>
+            <div style={{ paddingBottom: '6px', position: 'relative', marginTop: '12px' }}>
+              <SearchBar 
+                variant="refinement"
+                onSearch={async (query) => {
+                  // TODO: Implement search functionality
+                  console.log('Search query:', query);
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: '1px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)'
+                }}
+              />
+            </div>
+          </>
         )}
       </main>
     );

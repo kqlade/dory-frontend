@@ -4,7 +4,11 @@
  * Central configuration for your backend URLs and settings.
  */
 
-export const API_BASE_URL = 'http://localhost:3000/api';
+// API Configuration
+export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
+
+// Whether to use fitMarkdown (true) or regular markdown (false) for document processing
+export const USE_FIT_MARKDOWN = true;
 
 // Available backend endpoints
 export const ENDPOINTS = {
@@ -13,7 +17,7 @@ export const ENDPOINTS = {
   DOCUMENTS: '/documents',
   DOCUMENTS_BATCH: '/documents/batch',
   HEALTH: '/health',
-  ADVANCED_SEARCH: '/search/advanced'
+  ADVANCED_SEARCH: '/search'
 };
 
 // Typical request timeout (ms)

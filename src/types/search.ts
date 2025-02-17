@@ -1,17 +1,4 @@
-export interface SearchResult {
-  score: number;
-  chunkId: string;
-  isHighlighted?: boolean;
-  metadata: {
-    chunkText: string;
-    title?: string;
-    url?: string;
-    visitedAt?: string;
-    lastModified?: string;
-    docId: string;
-    [key: string]: any;
-  };
-}
+import { SearchResult } from '../api/types';
 
 export interface DoryMessageProps {
   type: 'suggestion' | 'alternative' | 'error';

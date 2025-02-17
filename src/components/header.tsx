@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import SearchBar from '@/components/searchBar';
 import { semanticSearch } from '@/api/client';
-import type { SearchResult } from '../types/search';
+import type { SearchResult } from '../api/types';
 
 interface HeaderProps {
   onSearchStateChange: (state: {
@@ -25,8 +25,13 @@ const Header: React.FC<HeaderProps> = ({ onSearchStateChange }) => {
     onSearchStateChange({ results: null, isLoading: true, error: null, hasSearched: true });
 
     try {
-      const results = await semanticSearch(query);
-      onSearchStateChange({ results, isLoading: false, error: null, hasSearched: true });
+      const searchResponse = await semanticSearch(query);
+      onSearchStateChange({ 
+        results: searchResponse.result.topResults, 
+        isLoading: false, 
+        error: null, 
+        hasSearched: true 
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred while searching';
       setError(errorMessage);

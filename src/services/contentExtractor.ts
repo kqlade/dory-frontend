@@ -4,13 +4,15 @@ import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
 import { PruningContentFilter } from "../html2text/content_filter_strategy";
 import { LangChainMarkdownChunking } from "../chunking/chunkingStrategy";
 import { sendFullDocument } from "../api/client"; 
+import { DocumentMetadata } from "../api/types";
+import { USE_FIT_MARKDOWN } from "../api/config";
 
 console.log("DORY: Content script loaded successfully");
 
 async function getLastVisitTime(url: string): Promise<number> {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "GET_VISIT_TIME", url }, (response) => {
-      resolve(response?.visitTime || Date.now());
+    chrome.runtime.sendMessage({ type: 'GET_VISIT_TIME', url }, (response) => {
+      resolve(response.visitTime);
     });
   });
 }
@@ -49,32 +51,33 @@ async function extractAndSendContent(): Promise<void> {
 
     console.log("DORY: Markdown generated successfully");
 
-    // 5) We'll use the 'fitMarkdown' for chunking
-    const regularMarkdown = result.markdownWithCitations || result.rawMarkdown;
-    const fitMarkdown = result.fitMarkdown || "";
-
-    // 6) Further chunk that 'fitMarkdown' with a Markdown chunker
-    let fitMarkdownChunks: string[] = [];
-    if (fitMarkdown) {
-      const chunker = new LangChainMarkdownChunking(1000, 200);
-      fitMarkdownChunks = await chunker.chunk(fitMarkdown);
-      console.log("DORY: fitMarkdown chunked into", fitMarkdownChunks.length, "chunks");
+    // 5) Select source markdown based on config
+    const sourceMarkdown = USE_FIT_MARKDOWN 
+      ? result.fitMarkdown 
+      : (result.markdownWithCitations || result.rawMarkdown);
+    
+    if (!sourceMarkdown) {
+      throw new Error("Failed to generate markdown");
     }
 
+    // 6) Chunk the selected markdown
+    const chunker = new LangChainMarkdownChunking(1000, 200);
+    const chunks = await chunker.chunk(sourceMarkdown);
+    console.log("DORY: Markdown chunked into", chunks.length, "chunks");
+
     // 7) Prepare metadata
-    const metadata = {
-      title: document.title,
+    const metadata: DocumentMetadata = {
+      title: document.title || 'Untitled',
       url: currentUrl,
-      extractionTimestamp: new Date().toISOString(),
-      visitedAt: lastVisitTime
+      visitedAt: lastVisitTime,
+      processedAt: Date.now(),
+      status: 'processed'
     };
 
     // 8) Send full document to backend
     const docId = await sendFullDocument(
-      document.title,
-      currentUrl,
-      regularMarkdown,
-      fitMarkdownChunks,
+      sourceMarkdown,
+      chunks,
       metadata
     );
 
@@ -87,7 +90,7 @@ async function extractAndSendContent(): Promise<void> {
         url: currentUrl,
         docId,
         metadata,
-        chunkCount: fitMarkdownChunks.length
+        chunkCount: chunks.length
       },
     });
 
@@ -104,9 +107,19 @@ async function extractAndSendContent(): Promise<void> {
       console.log("DORY: Non-Error object thrown:", error);
     }
 
+    // Create failed metadata
+    const failedMetadata: DocumentMetadata = {
+      title: document.title || 'Untitled',
+      url: window.location.href,
+      visitedAt: await getLastVisitTime(window.location.href),
+      processedAt: Date.now(),
+      status: 'failed'
+    };
+
     chrome.runtime.sendMessage({
       type: "EXTRACTION_ERROR",
       error: error instanceof Error ? error.message : "Unknown error occurred",
+      metadata: failedMetadata
     });
     console.log("DORY: EXTRACTION_ERROR message sent");
   }

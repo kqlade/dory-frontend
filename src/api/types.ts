@@ -14,12 +14,18 @@ export interface EmbeddingResponse {
 }
 
 // New document storage types (from backendGuide.md)
+export interface DocumentMetadata {
+  url: string;
+  title: string;
+  visitedAt: number;
+  processedAt: number;
+  status: 'processed' | 'failed';
+}
+
 export interface DocumentIngestionRequest {
-  title?: string;
-  url?: string;
   fullText: string;
   chunks?: string[];
-  metadata?: any;
+  metadata: DocumentMetadata;
 }
 
 export interface DocumentResponse {
@@ -29,27 +35,56 @@ export interface DocumentResponse {
 
 export interface DocumentRecord {
   docId: string;
-  title?: string;
-  url?: string;
   fullText: string;
-  metadata?: any;
+  metadata: DocumentMetadata;
   version?: number;
   createdAt: number;
   updatedAt?: number;
 }
 
 export interface SearchResult {
-  score: number;
-  chunkId: string;
+  contentId: string;
+  finalScore: number;
+  explanation: string;
+  isHighlighted: boolean;
   metadata: {
     chunkText: string;
-    title?: string;
-    url?: string;
-    visitedAt?: string;
-    lastModified?: string;
+    title: string;
+    url: string;
+    visitedAt: number;
+    snippet: string;
     docId: string;
-    [key: string]: any;
   };
+}
+
+export interface SearchDebugInfo {
+  parsedQuery: {
+    metadata_filters: {
+      domainFilter: string | null;
+      visitedAfterDomain: string | null;
+      lastNDays: number | null;
+    };
+    semantic_text: string;
+    confidence: number;
+    modelUsed: string;
+    complexity: number;
+  };
+  totalChunksFound: number;
+  performance: {
+    total: number;
+    parsing: number;
+    filtering: number;
+    vectorSearch: number;
+    recheck: number;
+  };
+}
+
+export interface SearchResponse {
+  result: {
+    topResults: SearchResult[];
+    reasoning: string;
+  };
+  debug: SearchDebugInfo;
 }
 
 // Generic API error

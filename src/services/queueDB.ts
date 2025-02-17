@@ -3,11 +3,12 @@
 console.log("[QueueDB] Starting initialization...");
 
 import { openDB, DBSchema, IDBPDatabase } from "idb";
+import { DocumentMetadata } from "@/api/types";
 console.log("[QueueDB] idb imported successfully");
 
 /**
  * We bump the version of the DB from 1 to 2 (or higher),
- * and in the interface we add optional fields lastProcessed, contentHash.
+ * and in the interface we add optional fields lastProcessed and metadata.
  * Because they are optional, we don't necessarily need to do a big migration step.
  */
 interface QueueDB extends DBSchema {
@@ -18,10 +19,8 @@ interface QueueDB extends DBSchema {
       addedAt: number;
       visitTimestamps: number[];
       processed: boolean;
-
-      // NEW optional fields
       lastProcessed?: number;  // Timestamp of last index
-      contentHash?: string;    // For content-change detection
+      metadata?: DocumentMetadata;  // Document metadata when processed
     };
   };
 }
@@ -49,7 +48,7 @@ export function getDB() {
           console.log("[QueueDB] queue store already exists. Checking for migrations...");
           if (oldVersion < 2) {
             // If needed, you could do data migration logic:
-            // e.g., read all items, add default lastProcessed or contentHash
+            // e.g., read all items, add default lastProcessed
             // But if optional, you can skip.
             console.log("[QueueDB] Migrating to version 2 - optional fields added.");
           }

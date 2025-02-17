@@ -1,344 +1,408 @@
-# Frontend Integration Guide
+# Dory Backend API Documentation
 
-This document explains how to integrate with the backend's advanced search functionality.
+This document provides detailed instructions for frontend integration with the Dory backend API. The backend provides endpoints for document ingestion, search, and embedding operations.
 
-## API Endpoints
+## Base URL
+```
+http://localhost:3000/api
+```
 
-### 1. Document Ingestion
-POST /api/documents
-```json
-Request:
+## Endpoints
+
+### 1. Advanced Search
+This is the primary endpoint for searching through user's browsing history using natural language queries.
+
+```
+POST /search/advanced
+```
+
+#### Request
+```typescript
 {
-  "title": "Optional document title",
-  "url": "Optional source URL",
-  "fullText": "The complete document text",
-  "metadata": {
-    "author": "optional",
-    "tags": ["optional", "metadata"]
+  // Required: Natural language query from the user
+  userQuery: string;
+
+  // Optional: Additional configuration
+  options?: {
+    enableTwoPassSystem?: boolean;
   }
-}
-Response:
-{
-  "docId": "uuid-of-new-document",
-  "message": "Document stored successfully."
 }
 ```
 
-### 2. Advanced Search
-POST /api/search/advanced
+Example request:
 ```json
-Request:
 {
-  "userQuery": "Your natural language query",
-  "topK": 5  // optional, defaults to 5 (but response will always return top 3)
+  "userQuery": "Find that article about JavaScript closures I read on dev.to last week"
 }
-Response:
+```
+
+#### Response
+```typescript
 {
   "result": {
+    // Array of relevant results (scored > 0.5)
+    // Maximum of 3 results, sorted by relevance
     "topResults": [
       {
-        "score": 0.89,
-        "chunkId": "doc123-chunk-0",
+        "contentId": string,      // Unique identifier
+        "finalScore": number,     // Relevance score (0.0 to 1.0)
+        "explanation": string,    // Why this result matches
+        "isHighlighted": boolean, // true for the highest-scoring result
         "metadata": {
-          "chunkText": "The matched text",
-          "url": "source url",
-          "title": "document title",
-          "visitedAt": "timestamp",
-          "lastModified": "timestamp",
-          "docId": "associated document id",
-          "isGoogleSearch": false
-        },
-        "isHighlighted": true  // Indicates this is the best result
-      },
-      {
-        // Second best result
-        "score": 0.85,
-        "isHighlighted": false,
-        // ... same metadata structure
-      },
-      {
-        // Third best result
-        "score": 0.82,
-        "isHighlighted": false,
-        // ... same metadata structure
+          "url": string,         // Full URL
+          "title": string,       // Content title
+          "visitedAt": number,   // Unix timestamp
+          "snippet": string      // Content excerpt
+        }
       }
     ],
-    "reasoning": "Explanation of why the highlighted result was chosen as best"
+    "reasoning": string          // Overall explanation
   },
   "debug": {
     "parsedQuery": {
       "metadata_filters": {
-        "domainFilter": null,
-        "visitedAfterDomain": null,
-        "lastNDays": null,
-        "timeRange": {
-          "start": null,
-          "end": null
-        }
+        "domainFilter": string | null,
+        "visitedAfterDomain": string | null,
+        "lastNDays": number | null
       },
-      "semantic_text": "actual search terms",
-      "confidence": 0.95,
-      "modelUsed": "gpt-4o-mini | gpt-4o | gpt-4o (fallback) | none (error)",
-      "complexity": 1 | 2
+      "semantic_text": string,
+      "confidence": number,
+      "modelUsed": string,
+      "complexity": number
     },
-    "totalChunksFound": 5,
-    "metadataFiltersApplied": {
-      "domainFilter": null,
-      "visitedAfterDomain": null,
-      "lastNDays": null,
-      "timeRange": {
-        "start": null,
-        "end": null
-      }
-    },
-    "modelUsed": "gpt-4o-mini | gpt-4o",
-    "complexity": 1 | 2,
+    "totalChunksFound": number,  // Total matches before filtering
     "performance": {
-      "total": 2500,
-      "parsing": 1000,
-      "filtering": 500,
-      "vectorSearch": 500,
-      "recheck": 500
+      "total": number,
+      "parsing": number,
+      "filtering": number,
+      "vectorSearch": number,
+      "recheck": number
     }
   }
 }
 ```
 
-## Supported Query Patterns
+#### Result Limits
+The search process applies several limits to ensure quality and performance:
+1. Initially retrieves top 30 most relevant chunks
+2. Groups results by URL to prevent duplicates from the same source
+3. Takes the best chunk from each URL
+4. Filters out results with relevance score ≤ 0.5
+5. Returns maximum of 3 results after filtering
 
-The advanced search supports natural language queries with various patterns:
+The frontend will receive at most 3 results, all with high relevance to the query (score > 0.5), sorted by relevance score in descending order.
 
-1. Time-based queries:
-   - "from the last N days" → sets lastNDays filter
-   - "within the past week" → converts to lastNDays: 7
-   - "recent articles about..." → defaults to recent time period
-   - "content from last month" → converts to lastNDays: 30
+#### Result Ranking and Scoring
+Results are ranked by their `finalScore` (0.0 to 1.0), which indicates how well each result matches the user's query. The scoring system works as follows:
 
-2. Domain-specific queries:
-   - "articles from dev.to" → sets domainFilter: "dev.to"
-   - "tutorials on youtube.com" → sets domainFilter: "youtube.com"
-   - "documentation from microsoft docs" → sets domainFilter: "microsoft.com"
+1. **Score Ranges**:
+   - 0.8-1.0: Extremely strong match (high confidence this is exactly what the user wants)
+   - 0.6-0.8: Strong match with good contextual alignment
+   - 0.4-0.6: Moderate match that might help trigger the right memory
+   - < 0.4: Weak matches are filtered out
 
-3. Sequential queries:
-   - "content I read after visiting medium.com" → sets visitedAfterDomain: "medium.com"
-   - "articles viewed after checking github" → sets visitedAfterDomain: "github.com"
+2. **Best Result**: 
+   - Results are automatically sorted by `finalScore` in descending order
+   - The highest-scoring result will have `isHighlighted: true`
+   - Only the top 3 results are returned
+   - The `reasoning` field explains why the best result was considered the best match
 
-4. Combined queries:
-   - "python tutorials from dev.to in the last week" → combines domainFilter and lastNDays
-   - "react articles I read after visiting medium.com but within the last 3 days" → combines visitedAfterDomain and lastNDays
+3. **Score Factors**:
+   - Temporal accuracy (how well the timestamp matches any time references)
+   - Source match (if user mentioned specific websites/domains)
+   - Content relevance (semantic similarity to the query)
+   - Metadata matches (title, URL patterns)
 
-## Query Processing Pipeline
-
-1. Query Parsing:
-   - Complexity assessment (simple vs complex)
-   - Model selection (gpt-4o-mini for simple, gpt-4o for complex)
-   - Caching of parsed queries for performance
-   - Fallback mechanisms if parsing fails
-
-2. Metadata Filtering:
-   - Domain-based filtering
-   - Time-based filtering (lastNDays, timeRange)
-   - Sequential filtering (visitedAfterDomain)
-
-3. Vector Search:
-   - Semantic search on filtered document set
-   - Two-pass search for Google results:
-     - First pass: Get non-Google results
-     - Second pass: Get Google results with 75% score penalty
-   - Returns top K results (default: 5)
-
-4. LLM Re-check:
-   - Final validation of results
-   - Selection of best matching chunk
-   - Generation of reasoning explanation
-   - Returns top 3 results with best one highlighted
-
-## Result Ranking and Scoring
-
-1. Google Search Results:
-   - Automatically detected and flagged (isGoogleSearch: true)
-   - 75% score penalty applied
-   - Limited to maximum of 2 results
-   - Only included if highly relevant after penalty
-
-2. Regular Results:
-   - No score penalty
-   - Preferred over Google search results
-   - Must be significantly less relevant to be outranked by Google results
-
-3. Final Results:
-   - Top 3 results always returned
-   - Best result marked with isHighlighted: true
-   - Includes explanation of selection
-   - Sorted by final score (after penalties)
-
-## Performance Characteristics
-
-Typical latency breakdown:
-- Query parsing: 1-4s (cached queries are instant)
-- Metadata filtering: 0.5-2s
-- Vector search: 0.5-3s
-- LLM re-check: 0.8-1.2s
-- Total latency: 2.5-8s
-
-Performance optimizations:
-- Query parsing cache
-- Complexity-based model selection
-- Efficient metadata filtering
-- Optimized vector search
-- Two-pass search for Google results
-
-## Error Handling
-
-The API returns standard HTTP status codes:
-- 200: Successful operation
-- 400: Invalid request (missing/invalid parameters)
-- 500: Server error
-
-Common error responses:
-```json
-{
-  "error": "Missing userQuery"
+Example of interpreting results:
+```typescript
+function getBestResult(response: SearchResponse) {
+  // The first result is always the highest-scoring match
+  // and will have isHighlighted: true
+  const bestResult = response.result.topResults[0];
+  
+  if (bestResult && bestResult.finalScore >= 0.8) {
+    return {
+      result: bestResult,
+      confidence: "high"
+    };
+  }
+  
+  // Even if we have results, they might not be high-confidence matches
+  return {
+    result: bestResult,
+    confidence: bestResult?.finalScore >= 0.6 ? "medium" : "low"
+  };
 }
 ```
 
-## Implementation Guide
+Frontend display recommendations:
+1. Always show the `finalScore` and `explanation` to help users understand why a result was returned
+2. Consider using different UI treatments based on score ranges:
+   - ≥ 0.8: Highlight as "Best Match"
+   - ≥ 0.6: Show as "Strong Match"
+   - < 0.6: Show as "Possible Match"
+3. Use the `reasoning` field from the response to provide an overall summary of the search results
+4. The highest-scoring result will have `isHighlighted: true` and should be emphasized in the UI
 
-### 1. Search Interface
-- Implement a single search bar for natural language input
-- Show example queries to help users understand the capabilities
-- Consider adding query suggestions based on common patterns
+Example response:
+```json
+{
+  "result": {
+    "topResults": [
+      {
+        "contentId": "doc-123",
+        "finalScore": 0.95,
+        "explanation": "Strong match: visited last week on dev.to, contains 'JavaScript closures' in title",
+        "isHighlighted": true,
+        "metadata": {
+          "url": "https://dev.to/javascript/understanding-closures",
+          "title": "Understanding JavaScript Closures",
+          "visitedAt": 1709654400000,
+          "snippet": "A comprehensive guide to JavaScript closures with examples..."
+        }
+      }
+    ],
+    "reasoning": "Found highly relevant article matching your timeframe and topic"
+  },
+  "debug": {
+    "parsedQuery": {
+      "metadata_filters": {
+        "domainFilter": "dev.to",
+        "visitedAfterDomain": null,
+        "lastNDays": 7
+      },
+      "semantic_text": "JavaScript closures",
+      "confidence": 0.85,
+      "modelUsed": "gpt-4o-mini (cached)",
+      "complexity": 1
+    },
+    "totalChunksFound": 5,
+    "performance": {
+      "total": 1200,
+      "parsing": 200,
+      "filtering": 300,
+      "vectorSearch": 500,
+      "recheck": 200
+    }
+  }
+}
+```
 
-### 2. Results Display
-- Show all three results in a list/grid
-- Highlight the best result visually (using isHighlighted flag)
-- Display the reasoning for why it was chosen
-- Show metadata (source, date, etc.)
-- Indicate Google search results differently
-- Optionally show debug info in a developer mode
+### 2. Document Ingestion
+Use this endpoint to store new documents in the system.
 
-### 3. Progressive Enhancement
-- Start with the semantic_text for basic highlighting
-- Use metadata_filters to show applied filters
-- Show total chunks found for context
-- Add filter chips based on detected metadata
-- Display performance metrics in debug mode
+```
+POST /documents
+```
 
-### 4. Error Handling
-- Show friendly error messages
-- Provide query suggestions on errors
-- Add retry logic for temporary failures
-- Cache successful results when appropriate
+#### Request
+```typescript
+{
+  // Required: Full document text
+  fullText: string;
 
-## Example Implementation
+  // Required: Pre-chunked content
+  chunks: string[];
+
+  // Required: Document metadata
+  metadata: {
+    title: string;      // Document title
+    url: string;        // Source URL
+    visitedAt: number;  // Unix timestamp
+    processedAt: number;// Unix timestamp
+    status: 'processed';
+  }
+}
+```
+
+Example request:
+```json
+{
+  "fullText": "Complete article content here...",
+  "chunks": [
+    "First chunk of content...",
+    "Second chunk of content...",
+    "Third chunk of content..."
+  ],
+  "metadata": {
+    "title": "Understanding JavaScript Closures",
+    "url": "https://dev.to/javascript/understanding-closures",
+    "visitedAt": 1709654400000,
+    "processedAt": 1709654400000,
+    "status": "processed"
+  }
+}
+```
+
+#### Response
+```typescript
+{
+  "docId": string,           // Unique document identifier
+  "message": string          // Success message
+}
+```
+
+Example response:
+```json
+{
+  "docId": "doc-123",
+  "message": "Document stored successfully."
+}
+```
+
+### 3. Batch Document Ingestion
+For ingesting multiple documents at once.
+
+```
+POST /documents/batch
+```
+
+#### Request
+```typescript
+{
+  "documents": [
+    {
+      // Same structure as single document ingestion
+      fullText: string;
+      chunks: string[];
+      metadata: {
+        title: string;
+        url: string;
+        visitedAt: number;
+        processedAt: number;
+        status: 'processed';
+      }
+    }
+  ]
+}
+```
+
+#### Response
+```typescript
+{
+  "results": [
+    {
+      "docId": string,
+      "success": boolean,
+      "error"?: string
+    }
+  ]
+}
+```
+
+## Query Types Supported
+
+The advanced search endpoint supports various types of natural language queries:
+
+1. **Temporal References**
+   - "last week"
+   - "during January"
+   - "around Christmas"
+   - "last summer"
+
+2. **Domain-Specific**
+   - "on dev.to"
+   - "from Medium"
+   - "not from Stack Overflow"
+
+3. **Content Type**
+   - "blog post"
+   - "documentation"
+   - "tutorial"
+
+4. **Combined Queries**
+   - "JavaScript tutorial I read on dev.to last week"
+   - "that article about React hooks from Medium I saw during Christmas"
+
+## Error Handling
+
+All endpoints follow this error response format:
+```typescript
+{
+  "error": string,          // Error message
+  "details"?: unknown       // Optional additional details
+}
+```
+
+Common HTTP status codes:
+- 200: Success
+- 201: Created (for POST requests)
+- 400: Bad Request (invalid input)
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 429: Too Many Requests (rate limit exceeded)
+- 500: Internal Server Error
+
+## Rate Limiting
+
+The API implements rate limiting with the following defaults:
+- 100 requests per minute per IP
+- Batch endpoints count as multiple requests based on batch size
+
+## Best Practices
+
+1. **Document Ingestion**
+   - Pre-chunk documents on the frontend (recommended size: 500-1000 characters)
+   - Include accurate timestamps for `visitedAt` and `processedAt`
+   - Ensure URLs are properly formatted and accessible
+
+2. **Search Queries**
+   - Use natural language queries
+   - Include temporal context when available
+   - Specify domain preferences if known
+
+3. **Error Handling**
+   - Implement exponential backoff for rate limit errors
+   - Display user-friendly messages based on error responses
+   - Cache successful search results when appropriate
+
+4. **Performance**
+   - Batch document ingestion when possible
+   - Monitor the debug information in search responses
+   - Use the performance metrics to optimize frontend behavior
+
+## Example Integration
 
 ```typescript
-async function performAdvancedSearch(query: string) {
+async function searchDory(query: string) {
   try {
-    const response = await fetch('/api/search/advanced', {
+    const response = await fetch('http://localhost:3000/api/search/advanced', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        userQuery: query,
-        topK: 5
+        userQuery: query
       })
     });
 
     if (!response.ok) {
-      throw new Error('Search failed');
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();
-    
-    // Display all results
-    displaySearchResults(data.result.topResults);
-    
-    // Show applied filters
-    if (data.debug?.parsedQuery?.metadata_filters) {
-      displayAppliedFilters(data.debug.parsedQuery.metadata_filters);
-    }
-    
-    // Show match reasoning
-    if (data.result.reasoning) {
-      displayReasoning(data.result.reasoning);
-    }
-
-    // Show performance metrics in debug mode
-    if (data.debug?.performance) {
-      displayPerformanceMetrics(data.debug.performance);
-    }
+    return data.result.topResults;
   } catch (error) {
-    handleSearchError(error);
+    console.error('Search failed:', error);
+    throw error;
   }
 }
+```
 
-function displaySearchResults(results: any[]) {
-  const resultsContainer = document.getElementById('search-results');
-  resultsContainer.innerHTML = results.map(result => `
-    <div class="result-card ${result.isHighlighted ? 'highlighted' : ''} ${result.metadata.isGoogleSearch ? 'google-result' : ''}">
-      <div class="content">${result.metadata.chunkText}</div>
-      <div class="metadata">
-        <span>Source: ${result.metadata.url || 'Unknown'}</span>
-        <span>Relevance: ${(result.score * 100).toFixed(1)}%</span>
-        <span>Visited: ${new Date(result.metadata.visitedAt).toLocaleString()}</span>
-        ${result.metadata.isGoogleSearch ? '<span class="google-badge">Google Search Result</span>' : ''}
-      </div>
-    </div>
-  `).join('');
-}
+## Testing
 
-function displayPerformanceMetrics(performance: any) {
-  const metricsElement = document.getElementById('performance-metrics');
-  metricsElement.innerHTML = `
-    <div class="metrics">
-      <div>Total: ${performance.total}ms</div>
-      <div>Parsing: ${performance.parsing}ms</div>
-      <div>Filtering: ${performance.filtering}ms</div>
-      <div>Search: ${performance.vectorSearch}ms</div>
-      <div>Recheck: ${performance.recheck}ms</div>
-    </div>
-  `;
+The backend includes a health check endpoint:
+```
+GET /health
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "uptime": 123456 // seconds
 }
 ```
 
-## Performance Optimizations
-
-### 1. Debounce Search Requests
-```typescript
-const debouncedSearch = debounce((query: string) => {
-  performAdvancedSearch(query);
-}, 300);
-```
-
-### 2. Cache Results
-```typescript
-const searchCache = new Map();
-
-async function cachedSearch(query: string) {
-  if (searchCache.has(query)) {
-    return searchCache.get(query);
-  }
-  
-  const result = await performAdvancedSearch(query);
-  searchCache.set(query, result);
-  return result;
-}
-```
-
-### 3. Progressive Loading
-```typescript
-function displayResults(data: any) {
-  // Show immediate results
-  displaySearchResults(data.result.topResults);
-  
-  // Then load additional UI elements
-  requestAnimationFrame(() => {
-    displayMetadata(data.result.topResults);
-    displayReasoning(data.result.reasoning);
-    displayDebugInfo(data.debug);
-    displayPerformanceMetrics(data.debug.performance);
-  });
-}
-```
+Use this endpoint to verify the backend is operational before making other requests.
