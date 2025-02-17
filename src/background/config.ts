@@ -35,13 +35,19 @@ export const WINDOW_CONFIG = {
 // Queue processing configuration
 export const QUEUE_CONFIG = {
   // Maximum number of retries for processing a URL
-  MAX_RETRIES: 1,
+  MAX_RETRIES: 3,
   
   // Delay between retries (in milliseconds)
-  RETRY_DELAY_MS: 1000,
+  RETRY_DELAY_MS: 3000,
   
   // Maximum time to process a single URL (in milliseconds)
-  PROCESSING_TIMEOUT_MS: 30000
+  PROCESSING_TIMEOUT_MS: 30000,
+
+  // Maximum time to wait for DOM to settle (in milliseconds)
+  DOM_IDLE_TIMEOUT_MS: 7000,
+
+  // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
+  DOM_IDLE_CHECK_DELAY_MS: 500
 } as const;
 
 // Logging configuration
