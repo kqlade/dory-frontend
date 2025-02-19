@@ -15,124 +15,166 @@ interface QueueEntry {
 }
 
 /**
- * Checks if a URL is a Google search page
+ * Checks if the URL protocol is HTTP/HTTPS.
  */
-function isGoogleSearch(url: string): boolean {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname.includes('google.') && 
-           (urlObj.pathname.includes('/search') || 
-            urlObj.pathname === '/' && urlObj.searchParams.has('q'));
-  } catch {
-    return false;
-  }
+function isHttpUrl(urlObj: URL): boolean {
+  return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
 }
 
 /**
- * Checks if a URL is a Reddit listing page (but not a post)
+ * Checks if a URL is a Google search page or ephemeral Google page.
  */
-function isRedditListing(url: string): boolean {
-  try {
-    const urlObj = new URL(url);
-    
-    // Check for any Reddit domain variant
-    // Handles: reddit.com, old.reddit.com, new.reddit.com, np.reddit.com, 
-    // m.reddit.com, i.reddit.com, pay.reddit.com, de.reddit.com, etc.
-    // But prevents fake domains like notreallyreddit.com
-    const hostname = urlObj.hostname;
-    const isRedditDomain = hostname === 'reddit.com' || 
-                          hostname.endsWith('.reddit.com');
-    if (!isRedditDomain) return false;
-    
-    // Skip these Reddit paths
-    const listingPaths = [
-      '/r/all',
-      '/r/popular',
-      '/new',
-      '/hot',
-      '/rising',
-      '/controversial',
-      '/top',
-    ];
+function isGoogleSearch(urlObj: URL): boolean {
+  const { hostname, pathname, searchParams } = urlObj;
+  if (!hostname.includes('google.')) return false;
 
-    // Check if it's a subreddit listing (e.g., /r/programming/, /r/programming/new)
-    const subredditPattern = /^\/r\/[^/]+\/?$/;
-    const subredditSortPattern = /^\/r\/[^/]+\/(new|hot|rising|controversial|top)/;
-    const isSubredditListing = subredditPattern.test(urlObj.pathname) || 
-                              subredditSortPattern.test(urlObj.pathname);
-
-    // Check if it's a comments page
-    const isCommentsPage = urlObj.pathname.includes('/comments/');
-    
-    return !isCommentsPage && (
-      listingPaths.some(path => urlObj.pathname.startsWith(path)) ||
-      urlObj.pathname === '/' || // Reddit home
-      isSubredditListing
-    );
-  } catch {
-    return false;
+  // Basic search
+  if (pathname.includes('/search') || (pathname === '/' && searchParams.has('q'))) {
+    return true;
   }
+
+  // Optionally skip ephemeral Google paths, like /maps or /imgres
+  const ephemeralPaths = ['/maps', '/imgres', '/travel', '/flights'];
+  if (ephemeralPaths.some(path => pathname.startsWith(path))) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
- * Checks if a URL is likely an authentication page (login/signup/etc)
+ * Checks if a URL is a Reddit listing page (but not a comments/post page).
  */
-function isAuthPage(url: string): boolean {
-  try {
-    const urlObj = new URL(url);
-    
-    // Common auth-related paths
-    const authPaths = [
-      'login',
-      'signin',
-      'sign-in',
-      'signup',
-      'sign-up',
-      'register',
-      'authentication',
-      'auth',
-      'oauth',
-      'sso',
-      'forgot-password',
-      'reset-password',
-      'password/reset',
-      'password/forgot',
-      'verify',
-      'verification',
-      'confirm',
-      'activate',
-      '2fa',
-      'mfa'
-    ];
+function isRedditListing(urlObj: URL): boolean {
+  const { hostname, pathname } = urlObj;
+  // e.g., reddit.com, old.reddit.com, new.reddit.com, i.redd.it, etc.
+  // and also the shortened redd.it domain
+  const isRedditDomain =
+    hostname === 'reddit.com' ||
+    hostname.endsWith('.reddit.com') ||
+    hostname === 'redd.it' ||
+    hostname.endsWith('.redd.it');
 
-    // Check if any auth-related word is in the path
-    const pathLower = urlObj.pathname.toLowerCase();
-    const hasAuthPath = authPaths.some(path => 
-      pathLower.includes(`/${path}`) || // Matches /login, /auth/login, etc.
-      pathLower.includes(`/${path}/`) || // Matches /login/, /auth/login/, etc.
-      pathLower === `/${path}` // Exact match for /login
-    );
+  if (!isRedditDomain) return false;
 
-    // Check URL parameters for auth-related flags
-    const hasAuthParams = urlObj.searchParams.has('login') ||
-                         urlObj.searchParams.has('signup') ||
-                         urlObj.searchParams.has('signin') ||
-                         urlObj.searchParams.has('auth') ||
-                         urlObj.searchParams.has('token');
-
-    return hasAuthPath || hasAuthParams;
-  } catch {
+  // If it’s a comments/post page, we skip marking it as listing
+  // We want to process actual posts, so let’s not skip these:
+  // /r/something/comments/...
+  const isCommentsPage = pathname.includes('/comments/');
+  if (isCommentsPage) {
     return false;
   }
+
+  // Typical listing endpoints
+  const listingPaths = [
+    '/r/all',
+    '/r/popular',
+    '/new',
+    '/hot',
+    '/rising',
+    '/controversial',
+    '/top'
+  ];
+
+  // Check if it's a subreddit listing pattern (e.g., /r/programming/, /r/programming/new)
+  const subredditPattern = /^\/r\/[^/]+\/?$/;
+  const subredditSortPattern = /^\/r\/[^/]+\/(new|hot|rising|controversial|top)/;
+  const isSubredditListing =
+    subredditPattern.test(pathname) || subredditSortPattern.test(pathname);
+
+  return (
+    pathname === '/' || // reddit.com home
+    listingPaths.some(path => pathname.startsWith(path)) ||
+    isSubredditListing
+  );
 }
 
 /**
- * Checks if a URL should be skipped for indexing
+ * Checks if a URL is likely an authentication page (login/signup/etc.).
+ */
+function isAuthPage(urlObj: URL): boolean {
+  const { pathname, searchParams } = urlObj;
+
+  // Common auth-related paths
+  const authPaths = [
+    'login',
+    'signin',
+    'sign-in',
+    'signup',
+    'sign-up',
+    'register',
+    'authentication',
+    'auth',
+    'oauth',
+    'sso',
+    'forgot-password',
+    'reset-password',
+    'password/reset',
+    'password/forgot',
+    'verify',
+    'verification',
+    'confirm',
+    'activate',
+    '2fa',
+    'mfa'
+  ];
+
+  const pathLower = pathname.toLowerCase();
+  const hasAuthPath = authPaths.some(auth =>
+    pathLower === `/${auth}` ||
+    pathLower.includes(`/${auth}/`) ||
+    pathLower.endsWith(`/${auth}`)
+  );
+
+  const hasAuthParams =
+    searchParams.has('login') ||
+    searchParams.has('signup') ||
+    searchParams.has('signin') ||
+    searchParams.has('auth') ||
+    searchParams.has('token');
+
+  return hasAuthPath || hasAuthParams;
+}
+
+/**
+ * Checks if the URL ends with a file extension we want to skip.
+ * (Optional - customize if desired.)
+ */
+function hasSkipFileExtension(urlObj: URL): boolean {
+  // Add whatever file types you want to skip
+  const skipExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.pdf', '.zip', '.svg'];
+
+  const pathnameLower = urlObj.pathname.toLowerCase();
+  return skipExtensions.some(ext => pathnameLower.endsWith(ext));
+}
+
+/**
+ * Master skip function: determines whether a URL should be skipped.
  */
 function shouldSkipUrl(url: string): boolean {
-  return isGoogleSearch(url) || 
-         isRedditListing(url) || 
-         isAuthPage(url);
+  let urlObj: URL;
+  try {
+    urlObj = new URL(url);
+  } catch (err) {
+    // Malformed or invalid URL
+    return true;
+  }
+
+  // Check protocol (skip non-HTTP(S) links)
+  if (!isHttpUrl(urlObj)) return true;
+
+  // Evaluate all domain/page-specific skip checks
+  if (
+    isGoogleSearch(urlObj) ||
+    isRedditListing(urlObj) ||
+    isAuthPage(urlObj) ||
+    hasSkipFileExtension(urlObj)
+  ) {
+    return true;
+  }
+
+  // Extend with further skip checks as needed...
+  return false;
 }
 
 console.log('[QueueManager] About to define QueueManager class...');
@@ -149,7 +191,6 @@ class QueueManager {
   async addUrl(url: string, isInitialLoad: boolean = false): Promise<void> {
     if (!url) return;
 
-    // Skip unwanted URLs early
     if (shouldSkipUrl(url)) {
       console.log('[QueueManager] Skipping unwanted URL:', url);
       return;
@@ -201,7 +242,7 @@ class QueueManager {
     const db = await getDB();
     const entries: QueueEntry[] = await db.getAll('queue');
     
-    // Get first unprocessed URL
+    // Find the first unprocessed URL
     const unprocessed = entries.find(entry => !entry.processed);
     if (!unprocessed) {
       console.log('[QueueManager] No unprocessed URLs in queue');

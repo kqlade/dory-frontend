@@ -1,7 +1,5 @@
 /**
  * src/api/client.ts
- *
- * Main API client for your extension.
  */
 
 import {
