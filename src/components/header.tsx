@@ -27,7 +27,7 @@ const Header: React.FC<HeaderProps> = ({ onSearchStateChange }) => {
     try {
       const searchResponse = await semanticSearch(query);
       onSearchStateChange({ 
-        results: searchResponse.result.topResults, 
+        results: searchResponse.results, 
         isLoading: false, 
         error: null, 
         hasSearched: true 

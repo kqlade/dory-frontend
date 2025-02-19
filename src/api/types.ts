@@ -24,7 +24,6 @@ export interface DocumentMetadata {
 
 export interface DocumentIngestionRequest {
   fullText: string;
-  chunks?: string[];
   metadata: DocumentMetadata;
 }
 
@@ -44,16 +43,12 @@ export interface DocumentRecord {
 
 export interface SearchResult {
   contentId: string;
-  finalScore: number;
-  explanation: string;
   isHighlighted: boolean;
   metadata: {
-    chunkText: string;
-    title: string;
     url: string;
-    visitedAt: number;
+    title: string;
     snippet: string;
-    docId: string;
+    visitedAt: number;
   };
 }
 
@@ -80,11 +75,8 @@ export interface SearchDebugInfo {
 }
 
 export interface SearchResponse {
-  result: {
-    topResults: SearchResult[];
-    reasoning: string;
-  };
-  debug: SearchDebugInfo;
+  results: SearchResult[];
+  totalResults: number;
 }
 
 // Generic API error

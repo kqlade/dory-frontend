@@ -119,16 +119,14 @@ import {
   }
   
   /**
-   * Store a full document with optional chunks
+   * Store a full document
    */
   export async function sendFullDocument(
     fullText: string,
-    chunks: string[],
     metadata: DocumentMetadata
   ): Promise<string> {
     const payload: DocumentIngestionRequest = {
       fullText,
-      chunks,
       metadata
     };
   
@@ -137,16 +135,57 @@ import {
   }
   
   /**
+   * Splits documents into batches of appropriate size
+   */
+  function splitIntoBatches(documents: DocumentIngestionRequest[]): DocumentIngestionRequest[][] {
+    const MAX_BATCH_SIZE = 100;
+    const batches: DocumentIngestionRequest[][] = [];
+    
+    for (let i = 0; i < documents.length; i += MAX_BATCH_SIZE) {
+      batches.push(documents.slice(i, i + MAX_BATCH_SIZE));
+    }
+    
+    return batches;
+  }
+  
+  /**
    * Batch store multiple documents
+   * Handles batching limits:
+   * - Maximum 100 documents per batch
+   * - Each document must be under 300kb
+   * - Maximum 10 batch requests per minute
    */
   export async function sendDocumentsBatch(
     documents: DocumentIngestionRequest[]
   ): Promise<Array<{ docId: string; success: boolean; error?: string }>> {
-    const response = await apiPost<{ results: Array<{ docId: string; success: boolean; error?: string }> }>(
-      ENDPOINTS.DOCUMENTS_BATCH,
-      { documents }
-    );
-    return response.results;
+    // Validate document sizes
+    const MAX_DOC_SIZE = 300 * 1024; // 300kb in bytes
+    documents.forEach((doc, index) => {
+      const docSize = new TextEncoder().encode(doc.fullText).length;
+      if (docSize > MAX_DOC_SIZE) {
+        throw new Error(`Document at index ${index} exceeds maximum size of 300kb`);
+      }
+    });
+
+    // Split into batches of 100
+    const batches = splitIntoBatches(documents);
+    const results: Array<{ docId: string; success: boolean; error?: string }> = [];
+
+    // Process each batch
+    for (const batch of batches) {
+      const response = await apiPost<{ results: Array<{ docId: string; success: boolean; error?: string }> }>(
+        ENDPOINTS.DOCUMENTS_BATCH,
+        { documents: batch }
+      );
+      results.push(...response.results);
+
+      // If there are more batches, add a delay to respect rate limits
+      if (batches.length > 1) {
+        await delay(6000); // 6 second delay to stay under 10 requests per minute
+      }
+    }
+
+    return results;
   }
   
   /**

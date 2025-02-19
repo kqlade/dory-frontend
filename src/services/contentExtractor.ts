@@ -2,7 +2,6 @@
 
 import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
 import { PruningContentFilter } from "../html2text/content_filter_strategy";
-import { LangChainMarkdownChunking } from "../chunking/chunkingStrategy";
 import { sendFullDocument } from "../api/client";
 import { DocumentMetadata } from "../api/types";
 import { USE_FIT_MARKDOWN } from "../api/config";
@@ -14,8 +13,6 @@ console.log("DORY: Content script loaded successfully");
  * Checks if we're in a valid Chrome extension context.
  */
 function isExtensionContextValid(): boolean {
-  // Quick check for presence of chrome.runtime and an ID
-  // (your original approach with try/catch is still valid if you prefer)
   return !!(chrome?.runtime?.id);
 }
 
@@ -106,12 +103,13 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
     return;
   }
 
+  const currentUrl = window.location.href;
+
   try {
     // 1. Wait for DOM to become idle
     await waitForDomIdle();
 
     // 2. Extract raw HTML
-    const currentUrl = window.location.href;
     const rawHTMLString = document.body.innerHTML || "";
     if (!rawHTMLString) {
       throw new Error("Empty innerHTML");
@@ -143,11 +141,8 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
       throw new Error("Failed to generate markdown");
     }
 
-    // 4. Parallel chunking + last visit time
-    const [chunks, lastVisitTime] = await Promise.all([
-      new LangChainMarkdownChunking(1000, 200).chunk(sourceMarkdown),
-      getLastVisitTime(currentUrl),
-    ]);
+    // 4. Get last visit time
+    const lastVisitTime = await getLastVisitTime(currentUrl);
 
     // 5. Check again for extension validity before sending
     if (!isExtensionContextValid()) {
@@ -163,7 +158,7 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
       status: "processed",
     };
 
-    const docId = await sendFullDocument(sourceMarkdown, chunks, metadata);
+    const docId = await sendFullDocument(sourceMarkdown, metadata);
 
     // 7. Notify extension that extraction is complete
     if (isExtensionContextValid()) {
@@ -172,8 +167,7 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
         data: {
           url: currentUrl,
           docId,
-          metadata,
-          chunkCount: chunks.length,
+          metadata
         },
       });
     }

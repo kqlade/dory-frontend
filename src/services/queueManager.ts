@@ -14,6 +14,127 @@ interface QueueEntry {
   metadata?: DocumentMetadata;
 }
 
+/**
+ * Checks if a URL is a Google search page
+ */
+function isGoogleSearch(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname.includes('google.') && 
+           (urlObj.pathname.includes('/search') || 
+            urlObj.pathname === '/' && urlObj.searchParams.has('q'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks if a URL is a Reddit listing page (but not a post)
+ */
+function isRedditListing(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    
+    // Check for any Reddit domain variant
+    // Handles: reddit.com, old.reddit.com, new.reddit.com, np.reddit.com, 
+    // m.reddit.com, i.reddit.com, pay.reddit.com, de.reddit.com, etc.
+    // But prevents fake domains like notreallyreddit.com
+    const hostname = urlObj.hostname;
+    const isRedditDomain = hostname === 'reddit.com' || 
+                          hostname.endsWith('.reddit.com');
+    if (!isRedditDomain) return false;
+    
+    // Skip these Reddit paths
+    const listingPaths = [
+      '/r/all',
+      '/r/popular',
+      '/new',
+      '/hot',
+      '/rising',
+      '/controversial',
+      '/top',
+    ];
+
+    // Check if it's a subreddit listing (e.g., /r/programming/, /r/programming/new)
+    const subredditPattern = /^\/r\/[^/]+\/?$/;
+    const subredditSortPattern = /^\/r\/[^/]+\/(new|hot|rising|controversial|top)/;
+    const isSubredditListing = subredditPattern.test(urlObj.pathname) || 
+                              subredditSortPattern.test(urlObj.pathname);
+
+    // Check if it's a comments page
+    const isCommentsPage = urlObj.pathname.includes('/comments/');
+    
+    return !isCommentsPage && (
+      listingPaths.some(path => urlObj.pathname.startsWith(path)) ||
+      urlObj.pathname === '/' || // Reddit home
+      isSubredditListing
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks if a URL is likely an authentication page (login/signup/etc)
+ */
+function isAuthPage(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    
+    // Common auth-related paths
+    const authPaths = [
+      'login',
+      'signin',
+      'sign-in',
+      'signup',
+      'sign-up',
+      'register',
+      'authentication',
+      'auth',
+      'oauth',
+      'sso',
+      'forgot-password',
+      'reset-password',
+      'password/reset',
+      'password/forgot',
+      'verify',
+      'verification',
+      'confirm',
+      'activate',
+      '2fa',
+      'mfa'
+    ];
+
+    // Check if any auth-related word is in the path
+    const pathLower = urlObj.pathname.toLowerCase();
+    const hasAuthPath = authPaths.some(path => 
+      pathLower.includes(`/${path}`) || // Matches /login, /auth/login, etc.
+      pathLower.includes(`/${path}/`) || // Matches /login/, /auth/login/, etc.
+      pathLower === `/${path}` // Exact match for /login
+    );
+
+    // Check URL parameters for auth-related flags
+    const hasAuthParams = urlObj.searchParams.has('login') ||
+                         urlObj.searchParams.has('signup') ||
+                         urlObj.searchParams.has('signin') ||
+                         urlObj.searchParams.has('auth') ||
+                         urlObj.searchParams.has('token');
+
+    return hasAuthPath || hasAuthParams;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks if a URL should be skipped for indexing
+ */
+function shouldSkipUrl(url: string): boolean {
+  return isGoogleSearch(url) || 
+         isRedditListing(url) || 
+         isAuthPage(url);
+}
+
 console.log('[QueueManager] About to define QueueManager class...');
 class QueueManager {
   constructor() {
@@ -27,6 +148,13 @@ class QueueManager {
    */
   async addUrl(url: string, isInitialLoad: boolean = false): Promise<void> {
     if (!url) return;
+
+    // Skip unwanted URLs early
+    if (shouldSkipUrl(url)) {
+      console.log('[QueueManager] Skipping unwanted URL:', url);
+      return;
+    }
+    
     console.log('[QueueManager] Adding URL:', url, 'Initial load:', isInitialLoad);
     
     const db = await getDB();
