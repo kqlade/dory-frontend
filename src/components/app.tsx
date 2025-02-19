@@ -4,17 +4,21 @@ import Header from '@/components/header';
 import Content from '@/components/content';
 import type { SearchResult } from '../api/types';
 
+interface SearchState {
+  results: SearchResult[] | null;
+  isLoading: boolean;
+  error: string | null;
+  hasSearched: boolean;
+  query: string;
+}
+
 const App: React.FC = () => {
-  const [searchState, setSearchState] = useState<{
-    results: SearchResult[] | null;
-    isLoading: boolean;
-    error: string | null;
-    hasSearched: boolean;
-  }>({
+  const [searchState, setSearchState] = useState<SearchState>({
     results: null,
     isLoading: false,
     error: null,
-    hasSearched: false
+    hasSearched: false,
+    query: ''
   });
 
   return (
@@ -34,6 +38,7 @@ const App: React.FC = () => {
         isLoading={searchState.isLoading}
         error={searchState.error}
         hasSearched={searchState.hasSearched}
+        query={searchState.query}
       />
     </div>
   );

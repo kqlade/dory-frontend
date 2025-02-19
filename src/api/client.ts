@@ -199,7 +199,9 @@ import {
   export async function semanticSearch(
     query: string, 
     topK: number = 5,
-    options?: { enableTwoPassSystem?: boolean }
+    options?: { 
+      enableTwoPassSystem?: boolean;
+    }
   ): Promise<SearchResponse> {
     const response = await apiPost<SearchResponse>(
       ENDPOINTS.ADVANCED_SEARCH,

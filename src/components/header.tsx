@@ -10,6 +10,7 @@ interface HeaderProps {
     isLoading: boolean;
     error: string | null;
     hasSearched: boolean;
+    query: string;
   }) => void;
 }
 
@@ -22,7 +23,13 @@ const Header: React.FC<HeaderProps> = ({ onSearchStateChange }) => {
     
     setIsLoading(true);
     setError(null);
-    onSearchStateChange({ results: null, isLoading: true, error: null, hasSearched: true });
+    onSearchStateChange({ 
+      results: null, 
+      isLoading: true, 
+      error: null, 
+      hasSearched: true,
+      query
+    });
 
     try {
       const searchResponse = await semanticSearch(query);
@@ -30,12 +37,19 @@ const Header: React.FC<HeaderProps> = ({ onSearchStateChange }) => {
         results: searchResponse.results, 
         isLoading: false, 
         error: null, 
-        hasSearched: true 
+        hasSearched: true,
+        query
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred while searching';
       setError(errorMessage);
-      onSearchStateChange({ results: null, isLoading: false, error: errorMessage, hasSearched: true });
+      onSearchStateChange({ 
+        results: null, 
+        isLoading: false, 
+        error: errorMessage, 
+        hasSearched: true,
+        query
+      });
       console.error('Search error:', err);
     } finally {
       setIsLoading(false);

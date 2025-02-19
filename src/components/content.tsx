@@ -1,24 +1,70 @@
 // src/components/content.tsx
 import React, { useState } from 'react';
 import DoryMessage from './DoryMessage';
-import SearchResultCard from './SearchResultCard';
 import SearchBar from './searchBar';
-import { ChevronIcon } from './icons';
+import SearchSection from './SearchSection';
+import { semanticSearch } from '../api/client';
 import type { SearchResult } from '../api/types';
 
 interface ContentProps {
   searchResults: SearchResult[] | null;
   isLoading: boolean;
   error: string | null;
-  hasSearched?: boolean;  // New prop to track if a search has been performed
+  hasSearched?: boolean;
+  query: string;
 }
 
-type ActiveSection = 'search' | 'results' | null;
+interface SearchSectionData {
+  query: string;
+  results: SearchResult[];
+  showSearchBar?: boolean;
+}
 
-const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error, hasSearched = false }) => {
-  const [activeSection, setActiveSection] = useState<ActiveSection>(null);
+const Content: React.FC<ContentProps> = ({ 
+  searchResults, 
+  isLoading, 
+  error, 
+  hasSearched = false,
+  query = ''
+}) => {
+  const [searchSections, setSearchSections] = useState<SearchSectionData[]>([]);
+  const [refinementCount, setRefinementCount] = useState(0);
+  const [isRefinementLoading, setIsRefinementLoading] = useState(false);
+  const [currentFullQuery, setCurrentFullQuery] = useState('');
 
-  if (isLoading) {
+  // Handle initial search results
+  React.useEffect(() => {
+    if (searchResults && hasSearched) {
+      setCurrentFullQuery(query);
+      setSearchSections([{ query, results: searchResults }]);
+    }
+  }, [searchResults, hasSearched, query]);
+
+  const handleRefinementSearch = async (refinementQuery: string) => {
+    setIsRefinementLoading(true);
+    try {
+      const newFullQuery = `${currentFullQuery} ${refinementQuery}`;
+      const response = await semanticSearch(newFullQuery);
+      
+      setCurrentFullQuery(newFullQuery);
+      setSearchSections(prev => {
+        const updated = [...prev];
+        if (updated.length > 0) {
+          updated[updated.length - 1].showSearchBar = true;
+          updated[updated.length - 1].query = refinementQuery;
+        }
+        return [...updated, { query: '', results: response.results }];
+      });
+      setRefinementCount(prev => prev + 1);
+    } catch (err) {
+      console.error('Refinement search error:', err);
+    } finally {
+      setIsRefinementLoading(false);
+    }
+  };
+
+  // Initial loading state (no sections yet)
+  if (isLoading && !searchSections.length) {
     return (
       <main style={{ 
         flex: 1,
@@ -48,7 +94,7 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error, hasS
     );
   }
 
-  if (!searchResults || searchResults.length === 0) {
+  if (!searchSections.length) {
     return (
       <main style={{ 
         flex: 1,
@@ -59,17 +105,46 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error, hasS
         paddingTop: '18px',
       }}>
         {hasSearched && (
-          <>
-            <DoryMessage type="suggestion">
-              Hmm, I'm having trouble finding what you're looking for, what else do you remember about it?
-            </DoryMessage>
+          <DoryMessage type="suggestion">
+            Hmm, I'm having trouble finding what you're looking for, what else do you remember about it?
+          </DoryMessage>
+        )}
+      </main>
+    );
+  }
+
+  return (
+    <main style={{ 
+      flex: 1,
+      backgroundColor: '#1E1E1E',
+      position: 'relative',
+      paddingLeft: '16px',
+      paddingRight: '16px',
+      paddingTop: '18px',
+    }}>
+      {searchSections.map((section, index) => (
+        <div key={index} style={{ marginBottom: '24px' }}>
+          <SearchSection
+            results={section.results}
+            onAddDetails={() => {
+              setSearchSections(prev => {
+                const updated = [...prev];
+                // Toggle the showSearchBar value
+                updated[index].showSearchBar = !updated[index].showSearchBar;
+                return updated;
+              });
+            }}
+            canAddDetails={index === searchSections.length - 1 && refinementCount < 2}
+          />
+          
+          {section.showSearchBar && (
             <div style={{ paddingBottom: '6px', position: 'relative', marginTop: '12px' }}>
               <SearchBar 
                 variant="refinement"
-                onSearch={async (query) => {
-                  // TODO: Implement search functionality
-                  console.log('Search query:', query);
-                }}
+                onSearch={handleRefinementSearch}
+                isLoading={isRefinementLoading && index === searchSections.length - 1}
+                initialValue={index !== searchSections.length - 1 ? section.query : ''}
+                readOnly={index !== searchSections.length - 1}
               />
               <div
                 style={{
@@ -82,139 +157,14 @@ const Content: React.FC<ContentProps> = ({ searchResults, isLoading, error, hasS
                 }}
               />
             </div>
-          </>
-        )}
-      </main>
-    );
-  }
-
-  const bestResult = searchResults.find(result => result.isHighlighted) || searchResults[0];
-  
-  // Only show non-highlighted results as alternatives
-  const alternativeResults = searchResults.filter(result => !result.isHighlighted);
-
-  const handleSectionToggle = (section: ActiveSection) => {
-    setActiveSection(current => current === section ? null : section);
-  };
-
-  return (
-    <main style={{ 
-      flex: 1,
-      backgroundColor: '#1E1E1E',
-      position: 'relative',
-      paddingLeft: '16px',
-      paddingRight: '16px',
-      paddingTop: '18px',
-    }}>
-      <DoryMessage type="suggestion">
-        I think this is what you're looking for:
-      </DoryMessage>
-
-      <SearchResultCard result={bestResult} />
-
-      <DoryMessage type="alternative">
-        Not what you remember seeing?
-      </DoryMessage>
-
-      {/* Button Row */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        paddingLeft: '25px',
-        paddingRight: '25px',
-      }}>
-        <div style={{ flex: 1, marginRight: '16px' }}>
-          <button
-            onClick={() => handleSectionToggle('search')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              background: 'transparent',
-              border: 'none',
-              padding: '0 0 8px 0',
-              color: 'white',
-              opacity: activeSection === 'search' ? 0.9 : 0.7,
-              cursor: 'pointer',
-              width: '100%',
-              textAlign: 'left',
-              fontFamily: 'Cabinet Grotesk, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-              fontSize: '13px',
-              fontWeight: 400,
-              transition: 'opacity 0.1s ease',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = activeSection === 'search' ? '0.9' : '0.7'}
-          >
-            <ChevronIcon direction={activeSection === 'search' ? 'up' : 'down'} />
-            Add search details
-          </button>
-        </div>
-
-        {alternativeResults.length > 0 && (
-          <div style={{ flex: 1 }}>
-            <button
-              onClick={() => handleSectionToggle('results')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'transparent',
-                border: 'none',
-                padding: '0 0 8px 0',
-                color: 'white',
-                opacity: activeSection === 'results' ? 0.9 : 0.7,
-                cursor: 'pointer',
-                width: '100%',
-                textAlign: 'left',
-                fontFamily: 'Cabinet Grotesk, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-                fontSize: '13px',
-                fontWeight: 400,
-                transition: 'opacity 0.1s ease',
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = activeSection === 'results' ? '0.9' : '0.7'}
-            >
-              <ChevronIcon direction={activeSection === 'results' ? 'up' : 'down'} />
-              See other results
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Expanded Content */}
-      {activeSection && (
-        <div style={{
-          marginTop: '8px',
-          position: 'relative',
-        }}>
-          {activeSection === 'search' ? (
-            <>
-              <div style={{ paddingBottom: '6px', position: 'relative' }}>
-                <SearchBar 
-                  variant="refinement"
-                  onSearch={async (query) => {
-                    // TODO: Implement search functionality
-                    console.log('Search query:', query);
-                  }}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    height: '1px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.1)'
-                  }}
-                />
-              </div>
-            </>
-          ) : (
-            alternativeResults.map((result, index) => (
-              <SearchResultCard key={index} result={result} />
-            ))
           )}
+        </div>
+      ))}
+      
+      {/* Show loading message for refinement searches */}
+      {isRefinementLoading && (
+        <div style={{ marginTop: '24px' }}>
+          <DoryMessage type="suggestion">Searching...</DoryMessage>
         </div>
       )}
     </main>

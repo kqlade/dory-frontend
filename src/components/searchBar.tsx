@@ -3,54 +3,62 @@ import SearchIcon from '@/components/searchIcon';
 import { RefinementIcon } from './icons';
 
 interface SearchBarProps {
-  onSearch: (query: string) => Promise<void>;
+  onSearch: (query: string) => void;
   isLoading?: boolean;
-  variant?: 'search' | 'refinement';
+  variant?: 'default' | 'refinement';
+  initialValue?: string;
+  readOnly?: boolean;
 }
 
-const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isLoading = false, variant = 'search' }) => {
-  const [searchQuery, setSearchQuery] = useState<string>('');
+const SearchBar: React.FC<SearchBarProps> = ({ 
+  onSearch, 
+  isLoading = false, 
+  variant = 'default',
+  initialValue = '',
+  readOnly = false
+}) => {
+  const [query, setQuery] = useState(initialValue);
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value);
+    setQuery(e.target.value);
   };
 
   const handleKeyPress = async (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !isLoading && searchQuery.trim()) {
-      await onSearch(searchQuery);
+    if (e.key === 'Enter' && !isLoading && query.trim()) {
+      await onSearch(query);
     }
   };
 
   return (
     <div style={{
       display: 'flex',
-      alignItems: 'flex-end',
+      alignItems: 'center',
       gap: '8px',
       width: '100%',
-      opacity: isLoading ? 0.7 : 1,
+      position: 'relative',
     }}>
-      {variant === 'search' ? <SearchIcon /> : <RefinementIcon />}
+      {variant === 'default' ? <SearchIcon /> : <RefinementIcon />}
       <input
         type="text"
-        value={searchQuery}
+        value={query}
         onChange={handleInputChange}
-        onKeyPress={handleKeyPress}
-        placeholder="I remember it! It's like a picture in my head..."
-        disabled={isLoading}
+        onKeyDown={handleKeyPress}
+        placeholder={variant === 'refinement' ? "I remember it's like a picture in my head..." : "Search your memory..."}
+        readOnly={readOnly}
         style={{
           background: 'transparent',
           border: 'none',
           color: 'white',
           fontSize: '14px',
           fontWeight: 400,
-          opacity: 0.9,
+          opacity: readOnly ? 0.7 : 1,
           fontFamily: 'Cabinet Grotesk, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
           lineHeight: '18px',
           width: '100%',
           padding: 0,
           margin: 0,
           outline: 'none',
-          cursor: isLoading ? 'not-allowed' : 'text',
+          cursor: readOnly ? 'default' : 'text',
         }}
       />
       {isLoading && (
