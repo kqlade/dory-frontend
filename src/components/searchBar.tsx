@@ -43,7 +43,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
         value={query}
         onChange={handleInputChange}
         onKeyDown={handleKeyPress}
-        placeholder={variant === 'refinement' ? "I remember it's like a picture in my head..." : "Search your memory..."}
+        placeholder="I remember it's like a picture in my head..."
         readOnly={readOnly}
         style={{
           background: 'transparent',
