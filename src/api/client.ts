@@ -198,16 +198,21 @@ import {
    */
   export async function semanticSearch(
     query: string, 
-    topK: number = 5,
+    limit: number = 5,
     options?: { 
-      enableTwoPassSystem?: boolean;
+      useHybridSearch?: boolean;
+      useLLMExpansion?: boolean;
+      useReranking?: boolean;
     }
   ): Promise<SearchResponse> {
     const response = await apiPost<SearchResponse>(
       ENDPOINTS.ADVANCED_SEARCH,
       { 
-        userQuery: query, 
-        options
+        query, 
+        limit,
+        useHybridSearch: options?.useHybridSearch !== undefined ? options.useHybridSearch : true,
+        useLLMExpansion: options?.useLLMExpansion !== undefined ? options.useLLMExpansion : true,
+        useReranking: options?.useReranking !== undefined ? options.useReranking : false
       }
     );
     return response;
