@@ -215,6 +215,28 @@ import {
         useReranking: options?.useReranking !== undefined ? options.useReranking : false
       }
     );
+    
+    // Process the results to match our application needs
+    if (response.results && response.results.length > 0) {
+      // Find the result with the highest score and mark it as highlighted
+      let highestScoreIndex = 0;
+      let highestScore = response.results[0].score || 0;
+      
+      for (let i = 1; i < response.results.length; i++) {
+        const score = response.results[i].score || 0;
+        if (score > highestScore) {
+          highestScore = score;
+          highestScoreIndex = i;
+        }
+      }
+      
+      // Mark only the highest scoring result as highlighted
+      response.results = response.results.map((result, index) => ({
+        ...result,
+        isHighlighted: index === highestScoreIndex
+      }));
+    }
+    
     return response;
   }
   

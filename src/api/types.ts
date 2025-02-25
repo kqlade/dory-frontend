@@ -42,14 +42,20 @@ export interface DocumentRecord {
 }
 
 export interface SearchResult {
-  contentId: string;
+  docId: string;
+  chunkText: string;
   isHighlighted: boolean;
   metadata: {
     url: string;
     title: string;
-    snippet: string;
     visitedAt: number;
+    processedAt?: number;
+    status?: string;
+    chunkIndex?: number;
+    totalChunks?: number;
   };
+  score?: number;
+  explanation?: string;
 }
 
 export interface SearchDebugInfo {
@@ -77,6 +83,24 @@ export interface SearchDebugInfo {
 export interface SearchResponse {
   results: SearchResult[];
   totalResults: number;
+  metadata?: {
+    total: number;
+    query: {
+      original: string;
+      dense?: string;
+      sparse?: string;
+      filters?: Record<string, any>;
+    };
+    timing?: {
+      total_ms: number;
+      expansion_ms?: number;
+      embedding_ms?: number;
+      search_ms?: number;
+      reranking_ms?: number;
+    };
+    search_type?: string;
+    reranking_applied?: boolean;
+  };
 }
 
 // Generic API error

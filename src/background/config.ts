@@ -10,7 +10,7 @@ export const HISTORY_CONFIG = {
   DAYS_OF_HISTORY: 0,
   
   // How often to poll for new history items (in minutes)
-  POLLING_INTERVAL_MIN: 15,
+  POLLING_INTERVAL_MIN: 60,
   
   // Maximum number of history results to fetch at once
   MAX_HISTORY_RESULTS: 50

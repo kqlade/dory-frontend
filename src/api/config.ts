@@ -21,7 +21,7 @@ export const ENDPOINTS = {
 };
 
 // Typical request timeout (ms)
-export const REQUEST_TIMEOUT = 10000; // e.g., 10 seconds
+export const REQUEST_TIMEOUT = 15000; // e.g., 10 seconds
 
 // Retry config
 export const RETRY_ATTEMPTS = 3;
