@@ -212,7 +212,7 @@ import {
         limit,
         useHybridSearch: options?.useHybridSearch !== undefined ? options.useHybridSearch : true,
         useLLMExpansion: options?.useLLMExpansion !== undefined ? options.useLLMExpansion : true,
-        useReranking: options?.useReranking !== undefined ? options.useReranking : false
+        useReranking: options?.useReranking !== undefined ? options.useReranking : true
       }
     );
     
