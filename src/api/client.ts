@@ -198,7 +198,7 @@ import {
    */
   export async function semanticSearch(
     query: string, 
-    limit: number = 5,
+    limit: number = 3,
     options?: { 
       useHybridSearch?: boolean;
       useLLMExpansion?: boolean;

@@ -7,7 +7,7 @@
 // History-related configuration
 export const HISTORY_CONFIG = {
   // Number of days of history to fetch
-  DAYS_OF_HISTORY: 0,
+  DAYS_OF_HISTORY: 1,
   
   // How often to poll for new history items (in minutes)
   POLLING_INTERVAL_MIN: 60,
