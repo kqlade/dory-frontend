@@ -18,13 +18,9 @@ import {
   updateVisitActiveTime,
   VisitRecord
 } from '../services/browsingStore';
-import { sendDoryEvent, EventTypes } from '../services/eventStreamer';
-import { testAuth } from '../services/auth';
+import { sendDoryEvent, EventTypes, initEventStreaming } from '../services/eventStreamer';
 
 console.log('[DORY] Service Worker: Starting up...');
-
-// Test auth on startup
-testAuth().catch(console.error);
 
 // Session idle config
 const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
@@ -46,6 +42,10 @@ async function initialize() {
   console.log('[DORY] Initializing extension...');
   messageRouter.initialize();
   registerMessageHandlers();
+
+  // Initialize event streaming and authentication
+  await initEventStreaming();
+  console.log('[DORY] Event streaming initialized');
 
   const sessionId = await startNewSession();
   isSessionActive = true;
