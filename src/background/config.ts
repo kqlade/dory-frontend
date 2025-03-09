@@ -7,7 +7,7 @@
 // History-related configuration
 export const HISTORY_CONFIG = {
   // Number of days of history to fetch
-  DAYS_OF_HISTORY: 1,
+  DAYS_OF_HISTORY: 0,
   
   // How often to poll for new history items (in minutes)
   POLLING_INTERVAL_MIN: 60,
@@ -41,20 +41,11 @@ export const QUEUE_CONFIG = {
   RETRY_DELAY_MS: 3000,
   
   // Maximum time to process a single URL (in milliseconds)
-  PROCESSING_TIMEOUT_MS: 30000,
+  PROCESSING_TIMEOUT_MS: 60000,
 
   // Maximum time to wait for DOM to settle (in milliseconds)
   DOM_IDLE_TIMEOUT_MS: 7000,
 
   // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
   DOM_IDLE_CHECK_DELAY_MS: 500
-} as const;
-
-// Logging configuration
-export const LOGGING_CONFIG = {
-  // Whether to enable verbose logging
-  VERBOSE: true,
-  
-  // Log prefix for the service worker
-  PREFIX: '[ServiceWorker]'
 } as const; 

@@ -12,14 +12,10 @@ import {
   
   import {
     ApiError,
-    EmbeddingRequest,
-    EmbeddingResponse,
-    DocumentIngestionRequest,
-    DocumentResponse,
-    DocumentRecord,
-    SearchResult,
-    DocumentMetadata,
-    SearchResponse
+    SearchResponse,
+    SearchRequest,
+    DoryEvent,
+    EventType
   } from './types';
   
   /**
@@ -53,43 +49,31 @@ import {
   
       if (!response.ok) {
         const errorText = await response.text();
-        throw <ApiError>{
-          status: response.status,
-          message: errorText || 'Request failed',
-          details: null
-        };
+        const error = new ApiError(
+          `API Error (${response.status}): ${errorText}`,
+          response.status
+        );
+        throw error;
       }
   
-      return response.json() as Promise<T>;
+      return await response.json();
   
-    } catch (error: any) {
+    } catch (error) {
       clearTimeout(id);
   
-      // Handle timeouts with retry
-      if (error.name === 'AbortError') {
-        if (attempt < RETRY_ATTEMPTS) {
-          await delay(RETRY_DELAY);
-          return apiRequest(endpoint, init, attempt + 1);
-        }
-        throw <ApiError>{
-          status: 408,
-          message: 'Request timed out after multiple attempts',
-          details: error
-        };
+      // If we've hit our retry limit, or this isn't a network error, rethrow
+      if (
+        attempt >= RETRY_ATTEMPTS ||
+        (error instanceof Error && 'status' in error && 
+         (error as ApiError).status !== 503 && (error as ApiError).status !== 429)
+      ) {
+        throw error;
       }
   
-      // If network or unknown error, retry
-      if (attempt < RETRY_ATTEMPTS) {
-        await delay(RETRY_DELAY);
-        return apiRequest(endpoint, init, attempt + 1);
-      }
-  
-      // Exhausted retries
-      throw <ApiError>{
-        status: error.status || 500,
-        message: error.message || 'Unknown error',
-        details: error.details || error
-      };
+      // Otherwise, wait and retry
+      console.warn(`API request failed, retrying (${attempt}/${RETRY_ATTEMPTS})...`);
+      await delay(RETRY_DELAY);
+      return apiRequest<T>(endpoint, init, attempt + 1);
     }
   }
   
@@ -108,93 +92,7 @@ import {
   }
   
   /**
-   * Get embeddings from the backend
-   */
-  export async function getEmbeddings(texts: string[]): Promise<number[][]> {
-    const payload: EmbeddingRequest = { texts };
-    const response = await apiPost<EmbeddingResponse>(ENDPOINTS.EMBEDDINGS, payload);
-    return response.embeddings;
-  }
-  
-  /**
-   * Store a full document
-   */
-  export async function sendFullDocument(
-    fullText: string,
-    metadata: DocumentMetadata
-  ): Promise<string> {
-    const payload: DocumentIngestionRequest = {
-      fullText,
-      metadata
-    };
-  
-    const response = await apiPost<DocumentResponse>(ENDPOINTS.DOCUMENTS, payload);
-    return response.docId;
-  }
-  
-  /**
-   * Splits documents into batches of appropriate size
-   */
-  function splitIntoBatches(documents: DocumentIngestionRequest[]): DocumentIngestionRequest[][] {
-    const MAX_BATCH_SIZE = 100;
-    const batches: DocumentIngestionRequest[][] = [];
-    
-    for (let i = 0; i < documents.length; i += MAX_BATCH_SIZE) {
-      batches.push(documents.slice(i, i + MAX_BATCH_SIZE));
-    }
-    
-    return batches;
-  }
-  
-  /**
-   * Batch store multiple documents
-   * Handles batching limits:
-   * - Maximum 100 documents per batch
-   * - Each document must be under 300kb
-   * - Maximum 10 batch requests per minute
-   */
-  export async function sendDocumentsBatch(
-    documents: DocumentIngestionRequest[]
-  ): Promise<Array<{ docId: string; success: boolean; error?: string }>> {
-    // Validate document sizes
-    const MAX_DOC_SIZE = 300 * 1024; // 300kb in bytes
-    documents.forEach((doc, index) => {
-      const docSize = new TextEncoder().encode(doc.fullText).length;
-      if (docSize > MAX_DOC_SIZE) {
-        throw new Error(`Document at index ${index} exceeds maximum size of 300kb`);
-      }
-    });
-
-    // Split into batches of 100
-    const batches = splitIntoBatches(documents);
-    const results: Array<{ docId: string; success: boolean; error?: string }> = [];
-
-    // Process each batch
-    for (const batch of batches) {
-      const response = await apiPost<{ results: Array<{ docId: string; success: boolean; error?: string }> }>(
-        ENDPOINTS.DOCUMENTS_BATCH,
-        { documents: batch }
-      );
-      results.push(...response.results);
-
-      // If there are more batches, add a delay to respect rate limits
-      if (batches.length > 1) {
-        await delay(6000); // 6 second delay to stay under 10 requests per minute
-      }
-    }
-
-    return results;
-  }
-  
-  /**
-   * Retrieve a stored document by ID
-   */
-  export async function getDocument(docId: string): Promise<DocumentRecord> {
-    return apiGet<DocumentRecord>(`${ENDPOINTS.DOCUMENTS}/${docId}`);
-  }
-  
-  /**
-   * Perform semantic search
+   * Perform a semantic search
    */
   export async function semanticSearch(
     query: string, 
@@ -205,43 +103,39 @@ import {
       useReranking?: boolean;
     }
   ): Promise<SearchResponse> {
-    const response = await apiPost<SearchResponse>(
-      ENDPOINTS.ADVANCED_SEARCH,
-      { 
-        query, 
-        limit,
-        useHybridSearch: options?.useHybridSearch !== undefined ? options.useHybridSearch : true,
-        useLLMExpansion: options?.useLLMExpansion !== undefined ? options.useLLMExpansion : true,
-        useReranking: options?.useReranking !== undefined ? options.useReranking : true
-      }
-    );
-    
-    // Process the results to match our application needs
-    if (response.results && response.results.length > 0) {
-      // Find the result with the highest score and mark it as highlighted
-      let highestScoreIndex = 0;
-      let highestScore = response.results[0].score || 0;
+    const searchRequest: SearchRequest = {
+      query,
+      limit
+    };
+
+    // Add search options as query parameters
+    let queryParams = '';
+    if (options) {
+      const params = new URLSearchParams();
       
-      for (let i = 1; i < response.results.length; i++) {
-        const score = response.results[i].score || 0;
-        if (score > highestScore) {
-          highestScore = score;
-          highestScoreIndex = i;
-        }
+      if (options.useHybridSearch !== undefined) {
+        params.append('hybrid', options.useHybridSearch.toString());
       }
       
-      // Mark only the highest scoring result as highlighted
-      response.results = response.results.map((result, index) => ({
-        ...result,
-        isHighlighted: index === highestScoreIndex
-      }));
+      if (options.useLLMExpansion !== undefined) {
+        params.append('expand', options.useLLMExpansion.toString());
+      }
+      
+      if (options.useReranking !== undefined) {
+        params.append('rerank', options.useReranking.toString());
+      }
+      
+      const paramsString = params.toString();
+      if (paramsString) {
+        queryParams = `?${paramsString}`;
+      }
     }
-    
-    return response;
+
+    return apiPost<SearchResponse>(`${ENDPOINTS.ADVANCED_SEARCH}${queryParams}`, searchRequest);
   }
   
   /**
-   * Health check function to test backend connectivity
+   * Check if the backend is healthy
    */
   export async function checkHealth(): Promise<boolean> {
     try {
@@ -252,3 +146,25 @@ import {
       return false;
     }
   }
+
+  /**
+   * Send a DORY event to the backend
+   */
+  export async function sendEvent(event: DoryEvent): Promise<void> {
+    // Add timestamp if not provided
+    if (!event.timestamp) {
+      event.timestamp = Date.now();
+    }
+    
+    try {
+      await apiRequest(ENDPOINTS.EVENTS, {
+        method: 'POST',
+        body: JSON.stringify(event)
+      });
+    } catch (err) {
+      console.error('[DORY] Failed sending event:', err);
+    }
+  }
+
+  // Export event type constants for convenience
+  export const Events = EventType;

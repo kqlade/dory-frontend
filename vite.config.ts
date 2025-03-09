@@ -23,7 +23,10 @@ export default defineConfig({
     rollupOptions: {
       input: {
         background: 'src/background/serviceWorker.ts',
-        content: 'src/services/contentExtractor.ts',
+        contentExtractor: 'src/services/contentExtractor.ts',
+        activityTracker: 'src/services/activityTracker.ts',
+        graph: 'src/pages/graph/graph.js',
+        graphHtml: 'src/pages/graph/graph.html'
       },
       output: {
         entryFileNames: '[name].js',
@@ -33,6 +36,6 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['html-entities']
+    include: ['html-entities', 'vis-network', 'vis-data']
   }
 });

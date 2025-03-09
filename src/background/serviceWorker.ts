@@ -1,195 +1,348 @@
 // src/background/serviceWorker.ts
 
+import { messageRouter, MessageType, Message, createMessage } from '../services/messageSystem';
 import {
-  HISTORY_CONFIG,
-  WINDOW_CONFIG,
-  QUEUE_CONFIG,
-  LOGGING_CONFIG
-} from './config';
+  startNewSession,
+  endCurrentSession,
+  getCurrentSessionId,
+  checkSessionIdle,
+  updateSessionActivityTime,
+} from '../services/sessionManager';
+import {
+  createOrGetPage,
+  createNavigationEdge,
+  updateActiveTimeForPage,
+  createOrUpdateEdge,
+  startVisit,
+  endVisit,
+  updateVisitActiveTime,
+  VisitRecord
+} from '../services/browsingStore';
+import { sendDoryEvent, EventTypes } from '../services/eventStreamer';
+import { testAuth } from '../services/auth';
 
-console.log(`${LOGGING_CONFIG.PREFIX} Starting initialization...`);
+console.log('[DORY] Service Worker: Starting up...');
 
-console.log(`${LOGGING_CONFIG.PREFIX} About to import queueManager...`);
-import queueManager from '../services/queueManager';
-console.log(`${LOGGING_CONFIG.PREFIX} queueManager imported successfully`);
+// Test auth on startup
+testAuth().catch(console.error);
 
-console.log(`${LOGGING_CONFIG.PREFIX} About to import indexingScheduler...`);
-import { processQueue, currentQueueUrl, currentProcessingWindowId } from '../services/indexingScheduler';
-console.log(`${LOGGING_CONFIG.PREFIX} indexingScheduler imported successfully`);
+// Session idle config
+const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
+let isSessionActive = false;
+let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-// Import only what we need from the API client
-import { apiRequest, getDocument } from '../api/client';
+// A small cache that tracks each tab's "current page URL," so we know from->to
+// for same-tab navigations.
+const tabToCurrentUrl: Record<number, string | undefined> = {};
 
-console.log('Service Worker loaded');
+// Track the current page ID for each tab
+const tabToPageId: Record<number, number> = {};
 
-// Track whether we're doing initial indexing
-let isInitialIndexing = false;
+// Track the current visit ID for each tab
+const tabToVisitId: Record<number, string> = {};
 
-// Ensure processing window stays muted
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.mutedInfo?.muted === false) {
-    chrome.tabs.get(tabId, (tab) => {
-      if (tab.windowId === currentProcessingWindowId) {
-        chrome.tabs.update(tabId, { muted: true });
-      }
-    });
-  }
-});
+/** Initialize everything */
+async function initialize() {
+  console.log('[DORY] Initializing extension...');
+  messageRouter.initialize();
+  registerMessageHandlers();
 
-let lastCheckedTime: number = Date.now() - HISTORY_CONFIG.DAYS_OF_HISTORY * 24 * 60 * 60 * 1000;
+  const sessionId = await startNewSession();
+  isSessionActive = true;
+  console.log(`[DORY] Started initial session: ${sessionId}`);
 
-// Track retry counts for URLs
-const extractionRetryCounts = new Map<string, number>();
+  // Periodically check if we've gone idle
+  idleCheckInterval = setInterval(checkSessionInactivity, 60 * 1000); // once per minute
+  
+  // Add listener for extension icon clicks
+  chrome.action.onClicked.addListener(handleExtensionIconClick);
+}
 
-/**
- * Fetches browser history starting from a given time and adds the URLs to the queue.
- */
-async function loadHistory() {
-  console.log('[ServiceWorker] Loading history...');
-  isInitialIndexing = true;
+/** Handle clicks on the extension icon */
+function handleExtensionIconClick() {
+  // Open the graph page in a new tab
+  chrome.tabs.create({
+    url: chrome.runtime.getURL('src/pages/graph/graph.html')
+  });
+}
 
-  const startTime = new Date(
-    Date.now() - HISTORY_CONFIG.DAYS_OF_HISTORY * 24 * 60 * 60 * 1000
-  ).getTime();
-
-  try {
-    const historyItems = await chrome.history.search({
-      text: '',
-      startTime,
-      maxResults: HISTORY_CONFIG.MAX_HISTORY_RESULTS,
-    });
-
-    console.log(
-      `[ServiceWorker] Found ${historyItems.length} history items since ${new Date(
-        startTime
-      ).toLocaleString()}`
-    );
-
-    const urls = historyItems
-      .map((item) => item.url)
-      .filter((url): url is string => Boolean(url));
-    await queueManager.addUrls(urls, true);
-    console.log('[ServiceWorker] Successfully queued history items');
-    
-    // Start processing the queue
-    processQueue();
-  } catch (error) {
-    console.error('[ServiceWorker] Error loading history:', error);
-    isInitialIndexing = false;
+/** Check if session is idle -> if so, end it. */
+async function checkSessionInactivity() {
+  const ended = await checkSessionIdle(SESSION_IDLE_THRESHOLD);
+  if (ended) {
+    isSessionActive = false;
+    console.log('[DORY] Session ended due to inactivity.');
   }
 }
 
-// Listen for messages from content scripts.
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log(`${LOGGING_CONFIG.PREFIX} Received message:`, message.type, message);
-  
-  if (message.type === 'GET_VISIT_TIME') {
-    chrome.history.getVisits({ url: message.url }, (historyItems) => {
-      const visitTime = historyItems.length > 0 ? historyItems[historyItems.length - 1].visitTime : Date.now();
-      sendResponse({ visitTime });
-    });
-    return true;
+/** Ensure we have an active session; if none is active, start one. */
+async function ensureActiveSession() {
+  if (!isSessionActive) {
+    const sessionId = await startNewSession();
+    isSessionActive = true;
+    console.log('[DORY] New session started (it was idle before):', sessionId);
   }
-  
-  if (message.type === 'EXTRACTION_COMPLETE') {
-    console.log(`${LOGGING_CONFIG.PREFIX} Extraction complete for URL:`, message.data.url);
-    
-    if (!currentQueueUrl) {
-      console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found. This should not happen.`);
-      return true;
+}
+
+/** Message Handlers */
+function registerMessageHandlers() {
+  // 1) Activity events (from content script)
+  messageRouter.registerHandler(MessageType.ACTIVITY_EVENT, async (message: Message, sender) => {
+    const { isActive, pageUrl, duration } = message.data;
+    console.log(`[DORY] ACTIVITY_EVENT => isActive=${isActive}, pageUrl=${pageUrl}, dur=${duration}s`);
+
+    if (isActive) {
+      // User did something => ensure session is active
+      await ensureActiveSession();
     }
     
-    // Mark as processed and move to next URL
-    queueManager.markIndexed(currentQueueUrl, message.data.metadata)
-      .then(async () => {
-        // Check if we have more URLs to process
-        const queueSize = await queueManager.getQueueSize();
-        if (queueSize === 0 && isInitialIndexing) {
-          // Initial indexing is complete
-          console.log(`${LOGGING_CONFIG.PREFIX} Initial indexing complete`);
-          isInitialIndexing = false;
+    // If we have some time to add, do it
+    if (pageUrl && duration > 0) {
+      await updateActiveTimeForPage(pageUrl, duration);
+      // Also update session's lastActivityAt
+      await updateSessionActivityTime();
+      
+      // If we have a visit ID for this tab, update its active time too
+      const tabId = sender.tab?.id;
+      if (tabId && tabToVisitId[tabId]) {
+        const visitId = tabToVisitId[tabId];
+        await updateVisitActiveTime(visitId, duration);
+        
+        // Send active time updated event
+        const sessionId = await getCurrentSessionId();
+        if (sessionId) {
+          sendDoryEvent({
+            operation: EventTypes.ACTIVE_TIME_UPDATED,
+            sessionId: sessionId.toString(),
+            timestamp: Date.now(),
+            data: {
+              pageId: tabToPageId[tabId].toString(),
+              visitId,
+              duration,
+              isActive
+            }
+          });
         }
-        processQueue();
-      })
-      .catch(error => {
-        console.error(`${LOGGING_CONFIG.PREFIX} Error marking URL as processed:`, error);
-        processQueue();
-      });
-  }
-  
-  if (message.type === 'EXTRACTION_ERROR') {
-    console.error(`${LOGGING_CONFIG.PREFIX} Extraction error:`, message.error);
-
-    if (!currentQueueUrl) {
-      console.error(`${LOGGING_CONFIG.PREFIX} No currentQueueUrl found for error handling`);
-      return true;
+      }
     }
+    return true; // Indicate async response handling
+  });
 
-    // On error, mark as processed with failed status and move on
-    const failedMetadata = {
-      ...message.metadata,
-      status: 'failed' as const
-    };
+  // 2) Everything else we'll log (like EXTRACTION_COMPLETE, if you need it)
+  messageRouter.registerHandler(MessageType.EXTRACTION_COMPLETE, async (message: Message, sender) => {
+    const { title, url, timestamp } = message.data;
+    console.log(`[DORY] EXTRACTION_COMPLETE => ${title} @ ${url}`);
 
-    queueManager.markIndexed(currentQueueUrl, failedMetadata)
-      .then(async () => {
-        // Check if we have more URLs to process
-        const queueSize = await queueManager.getQueueSize();
-        if (queueSize === 0 && isInitialIndexing) {
-          // Initial indexing is complete
-          console.log(`${LOGGING_CONFIG.PREFIX} Initial indexing complete`);
-          isInitialIndexing = false;
-        }
-        processQueue();
-      })
-      .catch(error => {
-        console.error(`${LOGGING_CONFIG.PREFIX} Error marking failed URL:`, error);
-        processQueue();
-      });
-  }
-  
-  return true;
-});
+    await ensureActiveSession();
+    const pageId = await createOrGetPage(url, title, timestamp);
+    const sessionId = await getCurrentSessionId();
+    if (sessionId) {
+      // If you want to store "which pages belong to which session," do that here.
+      console.log('[DORY] Page created / got ID:', pageId, ' in session:', sessionId);
+      
+      // If we have a tab ID, set the extraction context
+      const tabId = sender.tab?.id;
+      if (tabId && tabToVisitId[tabId]) {
+        // Send message to content script to set extraction context
+        chrome.tabs.sendMessage(tabId, createMessage(MessageType.SET_EXTRACTION_CONTEXT, {
+          pageId: pageId.toString(),
+          visitId: tabToVisitId[tabId]
+        }, 'background'));
+      }
+    }
+    return true; // Indicate async response handling
+  });
 
-// On installation, fetch initial history.
-chrome.runtime.onInstalled.addListener(() => {
-  console.log(`${LOGGING_CONFIG.PREFIX} Service Worker installed. Fetching initial history...`);
-  loadHistory();
-});
+  // Default handler
+  messageRouter.setDefaultHandler((msg, sender, resp) => {
+    console.warn('[DORY] Unhandled message type:', msg);
+    resp({ error: 'Unhandled message type' });
+  });
+}
 
-// Set up periodic history refresh.
-chrome.alarms.create('refreshHistory', { periodInMinutes: HISTORY_CONFIG.POLLING_INTERVAL_MIN });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'refreshHistory' && !isInitialIndexing) {
-    console.log(`${LOGGING_CONFIG.PREFIX} Alarm triggered. Fetching new history items...`);
-    loadHistory();
-  }
-});
-
-// Add click handler for extension icon
-chrome.action.onClicked.addListener((tab) => {
-  if (tab.windowId) {
-    chrome.sidePanel.open({ windowId: tab.windowId });
-  }
-});
-
-// Handle history updates - only after initial indexing is complete
-chrome.history.onVisited.addListener(async (historyItem) => {
-  if (isInitialIndexing) {
-    return; // Skip during initial indexing
-  }
-
-  console.log('[ServiceWorker] History item visited:', historyItem);
-  if (!historyItem.url) {
-    console.warn('[ServiceWorker] Visited history item has no URL');
-    return;
-  }
-
+/** Get the title of a tab */
+async function getTabTitle(tabId: number): Promise<string | null> {
   try {
-    await queueManager.addUrl(historyItem.url, false);
-    console.log('[ServiceWorker] Successfully queued visited URL');
-    processQueue(); // Start processing if not already running
+    const tab = await chrome.tabs.get(tabId);
+    return tab.title || null;
   } catch (error) {
-    console.error('[ServiceWorker] Error queueing visited URL:', error);
+    console.error('[DORY] Error getting tab title:', error);
+    return null;
   }
+}
+
+/** End the current visit for a tab */
+async function endCurrentVisit(tabId: number): Promise<void> {
+  const visitId = tabToVisitId[tabId];
+  if (visitId) {
+    const now = Date.now();
+    await endVisit(visitId, now);
+    
+    // Send page visit ended event
+    const sessionId = await getCurrentSessionId();
+    if (sessionId) {
+      sendDoryEvent({
+        operation: EventTypes.PAGE_VISIT_ENDED,
+        sessionId: sessionId.toString(),
+        timestamp: now,
+        data: {
+          pageId: tabToPageId[tabId].toString(),
+          visitId
+        }
+      });
+    }
+    
+    delete tabToVisitId[tabId];
+  }
+}
+
+/** Start a new visit for a tab */
+async function startNewVisit(tabId: number, pageId: number, fromPageId?: number, isBackNav?: boolean): Promise<string> {
+  const sessionId = await getCurrentSessionId();
+  if (!sessionId) {
+    throw new Error('No active session');
+  }
+  
+  // End any existing visit for this tab
+  await endCurrentVisit(tabId);
+  
+  // Start a new visit
+  const visitId = await startVisit(pageId, sessionId, fromPageId, isBackNav);
+  tabToVisitId[tabId] = visitId;
+  tabToPageId[tabId] = pageId;
+  
+  // Send page visit started event
+  const url = tabToCurrentUrl[tabId] || '';
+  const title = await getTabTitle(tabId) || url;
+  
+  sendDoryEvent({
+    operation: EventTypes.PAGE_VISIT_STARTED,
+    sessionId: sessionId.toString(),
+    timestamp: Date.now(),
+    data: {
+      pageId: pageId.toString(),
+      visitId,
+      url,
+      title,
+      fromPageId: fromPageId ? fromPageId.toString() : undefined,
+      isBackNavigation: isBackNav
+    }
+  });
+  
+  return visitId;
+}
+
+/** WEB NAVIGATION: handle completed navigations (after all redirects) */
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+  // We only want main frame navigations
+  if (details.frameId !== 0) return;
+  const { tabId, url, timeStamp, transitionType, transitionQualifiers } = details;
+  console.log('[DORY] onCommitted => navigation:', { tabId, url, transitionType, transitionQualifiers });
+
+  await ensureActiveSession();
+
+  // Check if this is a back/forward navigation
+  const isBackNav = transitionQualifiers.includes('forward_back');
+  console.log('[DORY] Navigation type:', isBackNav ? 'BACK/FORWARD' : transitionType.toUpperCase());
+
+  // Try to get the page title
+  const title = await getTabTitle(tabId) || url;
+
+  // Get the current URL for this tab
+  const currentTabValue = tabToCurrentUrl[tabId];
+  
+  // Create or get the destination page
+  const toPageId = await createOrGetPage(url, title, timeStamp);
+
+  // Check if this is a pending navigation from a new tab
+  if (currentTabValue && currentTabValue.startsWith('pending:')) {
+    // Extract the source page ID from the pending value
+    const fromPageId = parseInt(currentTabValue.substring(8));
+    const sessionId = await getCurrentSessionId();
+    
+    if (sessionId) {
+      // Create or update the edge
+      await createOrUpdateEdge(fromPageId, toPageId, sessionId, timeStamp, isBackNav);
+      console.log('[DORY] Created/updated new-tab-edge:', { fromPageId, toPageId, title, isBackNav });
+      
+      // Start a new visit
+      await startNewVisit(tabId, toPageId, fromPageId, isBackNav);
+    }
+  } 
+  // Otherwise, check if this is a same-tab navigation
+  else if (currentTabValue && currentTabValue !== url) {
+    const fromPageId = await createOrGetPage(currentTabValue, currentTabValue, timeStamp);
+    const sessionId = await getCurrentSessionId();
+    
+    if (sessionId) {
+      // Create or update the edge
+      await createOrUpdateEdge(fromPageId, toPageId, sessionId, timeStamp, isBackNav);
+      console.log('[DORY] Created/updated same-tab-edge:', { fromPageId, toPageId, title, isBackNav });
+      
+      // Start a new visit
+      await startNewVisit(tabId, toPageId, fromPageId, isBackNav);
+    }
+  } else {
+    // This is a direct navigation (typed URL, bookmark, etc.)
+    // Start a new visit without a fromPageId
+    await startNewVisit(tabId, toPageId);
+  }
+
+  // Update our tab->url mapping so next navigation is from this new URL
+  tabToCurrentUrl[tabId] = url;
+
+  // Trigger content extraction after navigation is complete
+  chrome.tabs.sendMessage(tabId, createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background'));
+});
+
+/** WEB NAVIGATION: handle new tab creation from a link */
+chrome.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
+  // This event is fired when a link in one tab spawns a new tab
+  // (i.e. target="_blank").
+  // sourceTabId = the original tab; url = the new tab's URL
+  const { sourceTabId, tabId, timeStamp } = details;
+  console.log('[DORY] onCreatedNavigationTarget => ', { sourceTabId, tabId });
+
+  await ensureActiveSession();
+
+  // Old page => fromPage
+  const oldUrl = tabToCurrentUrl[sourceTabId];
+  if (oldUrl && !oldUrl.startsWith('pending:')) {
+    const fromPageId = await createOrGetPage(oldUrl, oldUrl, timeStamp);
+    
+    // Store the source page ID temporarily so we can create the edge when the navigation completes
+    tabToCurrentUrl[tabId] = `pending:${fromPageId}`;
+    console.log('[DORY] Stored pending navigation from:', { fromPageId, tabId });
+  }
+});
+
+/** Also watch for tab removal => clear from the map and end visit. */
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  // End the current visit for this tab
+  await endCurrentVisit(tabId);
+  
+  // Clean up our maps
+  delete tabToCurrentUrl[tabId];
+  delete tabToPageId[tabId];
+});
+
+/** Also store the initial URL for a tab if it's loaded right away. */
+chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.id && tab.url) {
+    tabToCurrentUrl[tab.id] = tab.url;
+  }
+});
+
+// This can help if the extension's service worker is reloaded
+initialize();
+
+// Cleanup on service worker unload
+self.addEventListener('activate', () => {
+  console.log('[DORY] Service worker activated');
+});
+
+chrome.runtime.onSuspend.addListener(async () => {
+  console.log('[DORY] Service worker is suspending => end session');
+  await endCurrentSession();
+  if (idleCheckInterval) clearInterval(idleCheckInterval);
 });

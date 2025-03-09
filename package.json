@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "node scripts/build-manifest.js && vite",
+    "build": "node scripts/build-manifest.js && tsc && vite build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -31,12 +31,15 @@
     "idb": "^8.0.2",
     "langchain": "^0.3.15",
     "natural": "^8.0.1",
+    "normalize-url": "^6.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "sentence-splitter": "^5.0.0",
     "snowball-stemmers": "^0.6.0",
     "text-segmentation": "^1.0.3",
     "turndown": "^7.2.0",
+    "vis-data": "^7.1.9",
+    "vis-network": "^9.1.9",
     "wink-bm25-text-search": "^3.1.2",
     "word-wrap": "^1.2.5"
   }
