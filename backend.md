@@ -5,14 +5,18 @@ This document provides comprehensive details on the DORY backend API endpoints, 
 ## Table of Contents
 
 1. [Authentication](#authentication)
-2. [Event API](#event-api)
-   - [Event Types](#event-types)
-   - [Implementation Notes](#event-implementation-notes)
-3. [Unified Search API](#unified-search-api)
+2. [Cold Storage API](#cold-storage-api)
+   - [Pages API](#pages-api)
+   - [Visits API](#visits-api)
+   - [Sessions API](#sessions-api)
+   - [Implementation Notes](#cold-storage-implementation-notes)
+3. [Content API](#content-api)
+   - [Content Extraction](#content-extraction)
+4. [Unified Search API](#unified-search-api)
    - [Search API](#search)
    - [Click Tracking API](#click-tracking)
    - [Result Ranking](#result-ranking)
-4. [Error Handling](#error-handling)
+5. [Error Handling](#error-handling)
 
 ## Authentication
 
@@ -20,122 +24,212 @@ Authentication details should be included in all requests. The specific authenti
 
 ---
 
-## Event API
+## Cold Storage API
 
-The Event API allows the frontend to report user activities and document interactions.
+The Cold Storage API allows the frontend to sync browsing history data once per day, including pages, visits, and sessions.
 
-### Send Event
+### Pages API
 
 ```
-POST /api/events
+POST /api/cold-storage/pages
+```
+
+#### Request Payload
+
+```json
+[
+  {
+    "pageId": "12345",
+    "userId": "user123",
+    "title": "Example Website Title",
+    "url": "https://example.com/path",
+    "firstVisit": 1647823456789,
+    "lastVisit": 1648023456789,
+    "visitCount": 5,
+    "totalActiveTime": 450,
+    "totalDuration": 580,
+    "lastModified": 1648023456789
+  },
+  {
+    // Additional page records...
+  }
+]
+```
+
+Fields:
+- `pageId`: (Required) Unique identifier for the page
+- `userId`: (Required) Identifier for the user who visited the page
+- `title`: (Required) Page title
+- `url`: (Required) Full URL
+- `firstVisit`: (Required) First visit timestamp (ms)
+- `lastVisit`: (Required) Most recent visit timestamp (ms)
+- `visitCount`: (Required) Number of times visited
+- `totalActiveTime`: (Required) Total time spent active on page (seconds)
+- `totalDuration`: (Required) Total time page was open (seconds)
+- `lastModified`: (Required) Last modified timestamp (ms)
+
+#### Response
+
+```json
+{
+  "success": true,
+  "syncedCount": 5,
+  "serverTimestamp": 1648023456789,
+  "nextSyncAfter": 1648109856789
+}
+```
+
+### Visits API
+
+```
+POST /api/cold-storage/visits
+```
+
+#### Request Payload
+
+```json
+[
+  {
+    "visitId": "visit_12345abc",
+    "userId": "user123",
+    "pageId": "12345",
+    "sessionId": "session_67890xyz",
+    "startTime": 1647823456789,
+    "endTime": 1647823556789,
+    "duration": 100.0,
+    "fromPageId": "12344",
+    "totalActiveTime": 98.5,
+    "isBackNavigation": false
+  },
+  {
+    // Additional visit records...
+  }
+]
+```
+
+Fields:
+- `visitId`: (Required) Unique identifier for the visit
+- `userId`: (Required) Identifier for the user who made the visit
+- `pageId`: (Required) Reference to the page
+- `sessionId`: (Required) Reference to the browsing session
+- `startTime`: (Required) Visit start timestamp (ms)
+- `endTime`: (Required/Null) Visit end timestamp (ms), null if ongoing
+- `duration`: (Required) Total time page was open (seconds)
+- `fromPageId`: (Optional) Reference to the referrer page, if any
+- `totalActiveTime`: (Required) Time actively engaged with the page (seconds)
+- `isBackNavigation`: (Required) Whether this was a back navigation
+
+#### Response
+
+```json
+{
+  "success": true,
+  "syncedCount": 12,
+  "serverTimestamp": 1648023456789,
+  "nextSyncAfter": 1648109856789
+}
+```
+
+### Sessions API
+
+```
+POST /api/cold-storage/sessions
+```
+
+#### Request Payload
+
+```json
+[
+  {
+    "sessionId": "session_67890xyz",
+    "userId": "user123",
+    "startTime": 1647823456000,
+    "endTime": 1647833456000,
+    "totalActiveTime": 3540,
+    "totalDuration": 3600,
+    "deviceInfo": {
+      "browser": "Chrome",
+      "browserVersion": "98.0.4758.102",
+      "os": "Windows",
+      "osVersion": "10"
+    }
+  },
+  {
+    // Additional session records...
+  }
+]
+```
+
+Fields:
+- `sessionId`: (Required) Unique identifier for the session
+- `userId`: (Required) Identifier for the user who created the session
+- `startTime`: (Required) Session start timestamp (ms)
+- `endTime`: (Required/Null) Session end timestamp (ms), null if ongoing
+- `totalActiveTime`: (Required) Total active time across all pages (seconds)
+- `totalDuration`: (Required) Total session duration (seconds)
+- `deviceInfo`: (Required) Object containing device information
+  - `browser`: (Required) Browser name
+  - `browserVersion`: (Required) Browser version
+  - `os`: (Required) Operating system
+  - `osVersion`: (Required) Operating system version
+
+#### Response
+
+```json
+{
+  "success": true,
+  "syncedCount": 3,
+  "serverTimestamp": 1648023456789,
+  "nextSyncAfter": 1648109856789
+}
+```
+
+### Cold Storage Implementation Notes
+
+#### Sync Frequency
+
+- Cold storage data should be synced once per day, typically during browser idle time
+- Only records modified since the last successful sync should be transmitted
+- The `nextSyncAfter` field in responses indicates when the next sync should occur
+
+#### Batching
+
+- Data should be sent in batches of up to 500 records at a time
+- If more records need to be synced, send multiple batches
+
+#### Error Handling
+
+- If a sync fails, the client should retry during the next sync window
+- Failed records remain eligible for future syncs since the last sync timestamp is only updated after successful syncs
+
+---
+
+## Content API
+
+The Content API handles real-time content extraction events that need immediate processing for search functionality.
+
+### Content Extraction
+
+```
+POST /api/content
 ```
 
 #### Request Payload
 
 ```json
 {
-  "operation": "EVENT_TYPE",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
+  "contentId": "content_12345abc",
+  "sessionId": "session_67890xyz",
+  "userId": "user123",
+  "timestamp": 1647823456789,
   "data": {
-    // Event-specific data
-  }
-}
-```
-
-Fields:
-- `operation`: (Required) The type of event (one of the defined event types)
-- `sessionId`: (Required) A unique identifier for the current browsing session
-- `userId`: (Required) The user's unique identifier
-- `userEmail`: (Required) The user's email address
-- `timestamp`: (Required) The time when the event occurred (milliseconds since epoch)
-- `data`: (Required) An object containing event-specific data as detailed below
-
-### Event Types
-
-The `operation` field must be one of the following event types:
-
-- `SESSION_STARTED` - When a new browsing session begins
-- `PAGE_VISIT_STARTED` - When a user navigates to a page
-- `PAGE_VISIT_ENDED` - When a user leaves a page
-- `CONTENT_EXTRACTED` - When page content has been extracted
-- `ACTIVE_TIME_UPDATED` - When tracking active time on a page
-- `SESSION_ENDED` - When a browsing session ends
-
-#### SESSION_STARTED
-
-Sent when a new browsing session begins. This is typically the first event sent when a user opens the browser or extension.
-
-```json
-{
-  "operation": "SESSION_STARTED",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
-  "data": {
-    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36...",
-    "platform": "macOS",
-    "language": "en-US"
-  }
-}
-```
-
-Data fields:
-- `userAgent`: (Required) The full browser user agent string
-- `platform`: (Required) The operating system platform (e.g., "macOS", "Windows", "iOS")
-- `language`: (Required) The browser language (e.g., "en-US")
-
-#### PAGE_VISIT_STARTED
-
-Sent when a user navigates to a page. This event should be sent as soon as navigation begins.
-
-```json
-{
-  "operation": "PAGE_VISIT_STARTED",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
-  "data": {
-    "pageId": "unique-page-id",
-    "visitId": "unique-visit-id",
-    "url": "https://example.com/page",
-    "title": "Example Page Title",
-    "isBackNavigation": false,
-    "fromPageId": "previous-page-id"
-  }
-}
-```
-
-Data fields:
-- `pageId`: (Required) Unique identifier for the page
-- `visitId`: (Required) Unique identifier for this specific visit to the page
-- `url`: (Required) The full URL of the page
-- `title`: (Required) The title of the page
-- `isBackNavigation`: (Optional) Whether this navigation used the browser's back button
-- `fromPageId`: (Optional) The pageId of the previous page, if applicable
-
-#### CONTENT_EXTRACTED
-
-Sent when the content of a page has been extracted and processed. This typically occurs after the page has loaded.
-
-```json
-{
-  "operation": "CONTENT_EXTRACTED",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
-  "data": {
-    "pageId": "unique-page-id",
-    "visitId": "unique-visit-id",
-    "url": "https://example.com/page",
+    "pageId": "12345",
+    "visitId": "visit_67890xyz",
+    "userId": "user123",
+    "url": "https://example.com/path",
     "content": {
       "title": "Example Page Title",
-      "markdown": "# Content in markdown format\n\nPage content here...",
+      "markdown": "# Heading\n\nThis is the extracted content...",
       "metadata": {
         "language": "en"
       }
@@ -144,125 +238,40 @@ Sent when the content of a page has been extracted and processed. This typically
 }
 ```
 
-Data fields:
-- `pageId`: (Required) Unique identifier for the page (same as in PAGE_VISIT_STARTED)
-- `visitId`: (Required) Unique identifier for this specific visit (same as in PAGE_VISIT_STARTED)
-- `url`: (Optional) The URL of the page (may be omitted if already provided in PAGE_VISIT_STARTED)
-- `content`: (Required) Object containing the extracted content
-  - `title`: (Required) The title of the page
-  - `markdown`: (Required) The page content converted to markdown format
-  - `metadata`: (Optional) Additional metadata about the content
-    - `language`: (Optional) The detected language of the content
-
-#### PAGE_VISIT_ENDED
-
-Sent when a user navigates away from a page or closes the tab/window.
-
-```json
-{
-  "operation": "PAGE_VISIT_ENDED",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
-  "data": {
-    "pageId": "unique-page-id",
-    "visitId": "unique-visit-id",
-    "toPageId": "next-page-id",
-    "timeSpent": 120
-  }
-}
-```
-
-Data fields:
-- `pageId`: (Required) Unique identifier for the page being left
-- `visitId`: (Required) Unique identifier for this specific visit
-- `toPageId`: (Optional) The pageId of the next page, if applicable
-- `timeSpent`: (Required) Total time spent on the page in seconds
-
-#### ACTIVE_TIME_UPDATED
-
-Sent periodically to update the active time spent on a page. This helps track engagement more accurately by distinguishing between active and passive time.
-
-```json
-{
-  "operation": "ACTIVE_TIME_UPDATED",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
-  "data": {
-    "pageId": "unique-page-id",
-    "visitId": "unique-visit-id",
-    "duration": 45.5,
-    "isActive": true
-  }
-}
-```
-
-Data fields:
-- `pageId`: (Required) Unique identifier for the page
-- `visitId`: (Required) Unique identifier for this specific visit
-- `duration`: (Required) The duration in seconds since the last update
-- `isActive`: (Required) Whether the user was active during this period
-
-#### SESSION_ENDED
-
-Sent when a browsing session ends, typically when the browser/extension is closed.
-
-```json
-{
-  "operation": "SESSION_ENDED",
-  "sessionId": "unique-session-id",
-  "userId": "user-id",
-  "userEmail": "user@example.com",
-  "timestamp": 1682541285123,
-  "data": {
-    "totalDuration": 3600,
-    "pagesVisited": 12
-  }
-}
-```
-
-Data fields:
-- `totalDuration`: (Required) Total duration of the session in seconds
-- `pagesVisited`: (Required) Total number of pages visited during the session
+Fields:
+- `contentId`: (Required) Unique identifier for the content
+- `sessionId`: (Required) Session when content was extracted
+- `userId`: (Required) Identifier for the user who visited the page
+- `timestamp`: (Required) When the event occurred (ms)
+- `data`: (Required) Object containing content data
+  - `pageId`: (Required) Reference to the page
+  - `visitId`: (Required) Reference to the visit
+  - `userId`: (Required) User ID (duplicated for data consistency)
+  - `url`: (Required) URL of the page
+  - `content`: (Required) Object containing the extracted content
+    - `title`: (Required) Page title
+    - `markdown`: (Required) Page content in markdown format
+    - `metadata`: (Optional) Additional metadata
+      - `language`: (Optional) Detected language of the content
 
 #### Response
 
 ```json
 {
   "success": true,
-  "eventId": "stored-event-id",
+  "contentId": "content_12345abc",
   "result": {
-    "acknowledged": true,
-    "operation": "EVENT_TYPE"
+    "stored": true
   }
 }
 ```
 
-### Event Implementation Notes
+#### Content Extraction Behavior
 
-#### ID Generation
-
-- `sessionId`: Should be a unique identifier generated at the start of each browsing session
-- `pageId`: Should be a deterministic hash of the URL to ensure the same URL always gets the same pageId
-- `visitId`: Should be a unique identifier for each page visit, even if a user revisits the same page multiple times
-
-#### Timing
-
-- Send `SESSION_STARTED` when the extension/application initializes
-- Send `PAGE_VISIT_STARTED` as soon as navigation to a new page begins
-- Send `CONTENT_EXTRACTED` after the page content has been successfully processed
-- Send `ACTIVE_TIME_UPDATED` periodically (e.g., every 30 seconds) while the user is on a page
-- Send `PAGE_VISIT_ENDED` when the user navigates away or closes the page
-- Send `SESSION_ENDED` when the browser/extension is closed
-
-#### Error Handling
-
-- If an event fails to send, the frontend should queue it for retry
-- After multiple failed attempts, consider storing events locally until connectivity is restored
-- Events should be sent in chronological order whenever possible
+Unlike cold storage data, content extraction events:
+- Are sent immediately when content is extracted, not in daily batch syncs
+- Trigger immediate processing for search indexing and embeddings
+- Are processed in real-time to make content searchable as quickly as possible
 
 ---
 

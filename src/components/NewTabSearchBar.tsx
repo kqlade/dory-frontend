@@ -1,12 +1,16 @@
-import React, { ChangeEvent, KeyboardEvent, RefObject } from 'react';
+import React, { ChangeEvent, KeyboardEvent, RefObject, forwardRef } from 'react';
 import styled from 'styled-components';
 
 interface NewTabSearchBarProps {
-  onSearch: (query: string) => void;
+  onSearch?: (query: string) => void;
   isLoading?: boolean;
   inputRef?: RefObject<HTMLInputElement>;
-  query: string;
-  onQueryChange: (query: string) => void;
+  query?: string;
+  value?: string;
+  onQueryChange?: (query: string) => void;
+  onChange?: (query: string) => void;
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
+  placeholder?: string;
 }
 
 // Custom Dory Logo component that works well with themes
@@ -80,22 +84,44 @@ const Spinner = styled.div`
   animation: spin 0.8s linear infinite;
 `;
 
-const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ 
-  onSearch, 
-  isLoading = false,
-  inputRef,
-  query,
-  onQueryChange
-}) => {
+const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>((
+  { 
+    onSearch, 
+    isLoading = false,
+    inputRef,
+    query,
+    value,
+    onQueryChange,
+    onChange,
+    onKeyDown,
+    placeholder = "Find what you forgot..."
+  }, 
+  ref
+) => {
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    onQueryChange(e.target.value);
+    if (onChange) {
+      onChange(e.target.value);
+    }
+    if (onQueryChange) {
+      onQueryChange(e.target.value);
+    }
   };
 
   const handleKeyPress = async (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !isLoading && query.trim()) {
-      await onSearch(query);
+    if (onKeyDown) {
+      onKeyDown(e);
+    }
+    
+    if (e.key === 'Enter' && !isLoading && onSearch) {
+      const searchQuery = query || value || '';
+      if (searchQuery.trim()) {
+        await onSearch(searchQuery);
+      }
     }
   };
+
+  // Use either the passed inputRef or the forwarded ref
+  const inputRefToUse = inputRef || ref;
 
   return (
     <SearchContainer>
@@ -103,12 +129,12 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({
         <DoryLogo size={22} />
       </IconWrapper>
       <SearchInput
-        ref={inputRef}
+        ref={inputRefToUse}
         type="text"
-        value={query}
+        value={value || query || ''}
         onChange={handleInputChange}
         onKeyDown={handleKeyPress}
-        placeholder="Find what you forgot..."
+        placeholder={placeholder}
         autoFocus
       />
       {isLoading && (
@@ -118,6 +144,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({
       )}
     </SearchContainer>
   );
-};
+});
+
+// Add display name for React DevTools
+NewTabSearchBar.displayName = 'NewTabSearchBar';
 
 export default NewTabSearchBar;

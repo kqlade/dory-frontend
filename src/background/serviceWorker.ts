@@ -1,10 +1,20 @@
 /**
  * @file serviceWorker.ts
  * Using ES modules (strict mode by default).
+ * 
+ * This is the main background service worker for the DORY extension.
+ * It handles:
+ * - Session management
+ * - Navigation tracking
+ * - Content extraction coordination
+ * - Message routing between content scripts and background
+ * - Local event logging (for later cold storage sync)
  */
 
-// Import necessary modules and services
+// Import message system for handling communication between content scripts and background
 import { messageRouter, MessageType, Message, createMessage } from '../services/messageSystem';
+
+// Import session management functions
 import {
   startNewSession,
   endCurrentSession,
@@ -12,26 +22,35 @@ import {
   checkSessionIdle,
   updateSessionActivityTime
 } from '../services/dexieSessionManager';
+
+// Import browsing data storage functions
 import {
   createOrGetPage,
   updateActiveTimeForPage,
-  createOrUpdateEdge,
   startVisit,
   endVisit,
   updateVisitActiveTime,
   getDB
 } from '../services/dexieBrowsingStore';
-// Import the Dexie event streamer for all regular events
-import { sendDoryEvent, EventTypes, initEventStreaming } from '../services/dexieEventStreamer';
-// We don't need to import the API event streamer here since content extraction events 
-// are sent directly from the contentExtractor.ts file
+
+// Import the event service for initialization only
+// Note: Content extraction events are sent directly from contentExtractor.ts
+import { initEventService } from '../services/eventService';
+
+// Import the event logger for local storage
+import { logEvent } from '../services/dexieEventLogger';
+import { EventType } from '../api/types';
+
+// Import database initialization
 import { initDexieSystem } from '../services/dexieInit';
+
+// Import authentication
+import { getUserInfo } from '../auth/googleAuth';
 
 // Import navigation handlers
 import {
   handleOnCommitted,
-  handleOnCreatedNavigationTarget,
-  TabTracking
+  handleOnCreatedNavigationTarget
 } from '../services/navigationHandlers';
 
 console.log('[DORY] INFO:', 'Service Worker: Starting up...');
@@ -40,6 +59,9 @@ console.log('[DORY] INFO:', 'Service Worker: Starting up...');
 const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
 let isSessionActive = false;
 let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+// Authentication status
+let isAuthenticated = false;
 
 // Tracking structures
 const tabToCurrentUrl: Record<number, string | undefined> = {};
@@ -52,8 +74,69 @@ const tabToVisitId: Record<number, string> = {};
 async function initialize(): Promise<void> {
   console.log('[DORY] INFO:', 'Initializing extension...');
   
+  // Check authentication first - gate all functionality behind auth
+  try {
+    const userInfo = await getUserInfo();
+    if (!userInfo || !userInfo.id) {
+      console.log('[DORY] AUTH:', 'User not authenticated, extension functionality disabled');
+      isAuthenticated = false;
+      
+      // Set extension icon click to trigger authentication
+      chrome.action.onClicked.addListener(handleUnauthenticatedClick);
+      
+      // Update icon to indicate unauthenticated state
+      chrome.action.setIcon({ 
+        path: {
+          16: '/icons/dory-gray-16.png',
+          48: '/icons/dory-gray-48.png',
+          128: '/icons/dory-gray-128.png'
+        }
+      });
+      
+      return; // Exit early - don't initialize other functionality
+    }
+    
+    // User is authenticated
+    isAuthenticated = true;
+    console.log('[DORY] AUTH:', `User authenticated: ${userInfo.email}`);
+    
+    // Update icon to active state
+    chrome.action.setIcon({ 
+      path: {
+        16: '/icons/dory-16.png',
+        48: '/icons/dory-48.png',
+        128: '/icons/dory-128.png'
+      }
+    });
+  } catch (error) {
+    console.error('[DORY] AUTH ERROR:', error);
+    isAuthenticated = false;
+    return; // Exit initialization on error
+  }
+  
+  // Only proceed with initialization if authenticated
+  
   // Initialize Dexie
-  await initDexieSystem();
+  const dbInitialized = await initDexieSystem();
+  if (!dbInitialized) {
+    console.log('[DORY] INFO:', 'Database initialization failed or user not authenticated, aborting initialization');
+    
+    // Set icon click to trigger re-authentication
+    chrome.action.onClicked.removeListener(handleExtensionIconClick);
+    chrome.action.onClicked.addListener(handleUnauthenticatedClick);
+    
+    // Update icon to indicate disabled state
+    chrome.action.setIcon({ 
+      path: {
+        16: '/icons/dory-gray-16.png',
+        48: '/icons/dory-gray-48.png',
+        128: '/icons/dory-gray-128.png'
+      }
+    });
+    
+    return;
+  }
+  
   console.log('[DORY] INFO:', 'Dexie database system initialized');
   
   // Setup message routing
@@ -61,7 +144,7 @@ async function initialize(): Promise<void> {
   registerMessageHandlers();
 
   // Initialize event streaming
-  await initEventStreaming();
+  await initEventService();
   console.log('[DORY] INFO:', 'Event streaming initialized (Dexie storage)');
 
   // Start a new session
@@ -73,7 +156,28 @@ async function initialize(): Promise<void> {
   idleCheckInterval = setInterval(checkSessionInactivity, 60 * 1000);
 
   // Extension icon click -> open a new tab
+  chrome.action.onClicked.removeListener(handleUnauthenticatedClick); // Remove auth handler if exists
   chrome.action.onClicked.addListener(handleExtensionIconClick);
+}
+
+/** 
+ * Handle extension icon click when not authenticated 
+ * This will trigger the authentication flow
+ */
+async function handleUnauthenticatedClick(): Promise<void> {
+  console.log('[DORY] AUTH:', 'User clicked extension while unauthenticated, triggering auth flow');
+  try {
+    const userInfo = await getUserInfo();
+    if (userInfo && userInfo.id) {
+      console.log('[DORY] AUTH:', 'Authentication successful, initializing extension');
+      // Reinitialize the extension now that we're authenticated
+      initialize();
+    } else {
+      console.log('[DORY] AUTH:', 'Authentication failed or was cancelled');
+    }
+  } catch (error) {
+    console.error('[DORY] AUTH ERROR:', error);
+  }
 }
 
 /** Clicks on the extension icon => open new tab */
@@ -126,13 +230,16 @@ async function endCurrentVisit(tabId: number): Promise<void> {
     const sessionId = await getCurrentSessionId();
     if (sessionId && visit) {
       const timeSpent = Math.round((now - visit.startTime) / 1000);
-      sendDoryEvent({
-        operation: EventTypes.PAGE_VISIT_ENDED,
+      
+      // Log visit ended event locally - will be synced to backend via cold storage
+      await logEvent({
+        operation: EventType.PAGE_VISIT_ENDED,
         sessionId: sessionId.toString(),
         timestamp: Math.floor(now),
         data: {
-          pageId: tabToPageId[tabId].toString(),
+          pageId: visit.pageId.toString(),
           visitId,
+          url: tabToCurrentUrl[tabId] || '',
           timeSpent
         }
       });
@@ -153,24 +260,19 @@ async function startNewVisit(
     throw new Error('No active session');
   }
 
-  const tab = await chrome.tabs.get(tabId);
-  const url = tab.url || '';
-  const title = (await getTabTitle(tabId)) || 'Untitled';
-  
-  console.log('[DORY] INFO:', 'Starting new visit', { tabId, pageId, url });
+  const now = Date.now();
+  const url = tabToCurrentUrl[tabId] || '';
+  const title = await getTabTitle(tabId) || url;
 
-  // Start the visit in Dexie
+  // Create visit record in Dexie
   const visitId = await startVisit(pageId, sessionId, fromPageId, isBackNav);
-  
-  // Update tracking
-  tabToPageId[tabId] = pageId;
   tabToVisitId[tabId] = visitId;
 
   // Fire PAGE_VISIT_STARTED
-  sendDoryEvent({
-    operation: EventTypes.PAGE_VISIT_STARTED,
+  await logEvent({
+    operation: EventType.PAGE_VISIT_STARTED,
     sessionId: sessionId.toString(),
-    timestamp: Math.floor(Date.now()),
+    timestamp: Math.floor(now),
     data: {
       pageId: pageId.toString(),
       visitId,
@@ -180,24 +282,6 @@ async function startNewVisit(
       isBackNavigation: isBackNav
     }
   });
-
-  // If it's a web page, set extraction context & trigger extraction
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    try {
-      chrome.tabs.sendMessage(
-        tabId,
-        createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId: pageId.toString(), visitId }, 'background')
-      );
-      chrome.tabs.sendMessage(
-        tabId,
-        createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
-      );
-    } catch (err) {
-      console.error('Error triggering extraction for tab', { tabId, err });
-    }
-  } else {
-    console.log('[DORY] INFO:', 'Skipping extraction for non-web URL', { url });
-  }
 
   return visitId;
 }
@@ -222,14 +306,18 @@ function registerMessageHandlers(): void {
         const visitId = tabToVisitId[tabId];
         await updateVisitActiveTime(visitId, duration);
 
+        // Get the pageId from our tracking
+        const pageId = tabToPageId[tabId];
+        
         const sessionId = await getCurrentSessionId();
         if (sessionId) {
-          sendDoryEvent({
-            operation: EventTypes.ACTIVE_TIME_UPDATED,
+          // Log active time update locally - will be synced to backend via cold storage
+          await logEvent({
+            operation: EventType.ACTIVE_TIME_UPDATED,
             sessionId: sessionId.toString(),
             timestamp: Math.floor(Date.now()),
             data: {
-              pageId: tabToPageId[tabId].toString(),
+              pageId: pageId.toString(),
               visitId,
               duration,
               isActive
@@ -335,3 +423,43 @@ chrome.runtime.onSuspend.addListener(async () => {
   await endCurrentSession();
   if (idleCheckInterval) clearInterval(idleCheckInterval);
 });
+
+// Handle auth state changes via chrome identity API
+chrome.identity.onSignInChanged.addListener((account, signedIn) => {
+  console.log('[DORY] AUTH:', `Sign-in state changed: ${signedIn ? 'signed in' : 'signed out'} for account:`, account);
+  
+  if (signedIn && !isAuthenticated) {
+    // User just signed in, initialize the extension
+    initialize();
+  } else if (!signedIn && isAuthenticated) {
+    // User signed out, disable functionality
+    isAuthenticated = false;
+    
+    // Clean up
+    if (idleCheckInterval) {
+      clearInterval(idleCheckInterval);
+      idleCheckInterval = null;
+    }
+    
+    if (isSessionActive) {
+      endCurrentSession();
+      isSessionActive = false;
+    }
+    
+    // Update icon to indicate unauthenticated state
+    chrome.action.setIcon({ 
+      path: {
+        16: '/icons/dory-gray-16.png',
+        48: '/icons/dory-gray-48.png',
+        128: '/icons/dory-gray-128.png'
+      }
+    });
+    
+    // Set up click listener for re-authentication
+    chrome.action.onClicked.removeListener(handleExtensionIconClick);
+    chrome.action.onClicked.addListener(handleUnauthenticatedClick);
+  }
+});
+
+// Bootstrap the extension
+initialize();

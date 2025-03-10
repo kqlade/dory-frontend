@@ -1,11 +1,9 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { searchWithSSE, trackSearchClick } from '../../api/client';
-import { SearchResult } from '../../api/types';
+import React, { useRef, useEffect } from 'react';
 import NewTabSearchBar from '../../components/NewTabSearchBar';
 import ThemeToggle from './ThemeToggle';
 import styled from 'styled-components';
-import { getUserInfo } from '../../auth/googleAuth';
-import debounce from 'lodash/debounce';
+import { trackSearchClick } from '../../services/eventService';
+import { useHybridSearch } from '../../hooks/useSearch';
 
 const Container = styled.div`
   width: 100%;
@@ -47,63 +45,119 @@ const ResultsList = styled.ul`
 `;
 
 const ResultItem = styled.li`
-  padding: 12px 8px;
+  padding: 10px 12px;
   cursor: pointer;
-  border-bottom: 1px solid var(--border-color);
+  transition: background-color 0.2s;
+  border-radius: 8px;
+  margin: 4px 0;
 
   &:hover {
-    background-color: var(--hover-color);
+    background-color: var(--item-hover-bg);
   }
 `;
 
 const ResultTitle = styled.div`
+  font-size: 16px;
   font-weight: 500;
+  color: var(--text-primary);
   margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 `;
 
 const ResultUrl = styled.div`
   font-size: 12px;
-  color: var(--text-secondary-color);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`;
+
+const LoadingIndicator = styled.div`
+  text-align: center;
+  padding: 10px;
+  color: var(--text-secondary);
+  font-style: italic;
+`;
+
+const SemanticResultsHeader = styled.div`
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+`;
+
+const NoResultsMessage = styled.div`
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary);
+`;
+
+const Footer = styled.footer`
+  position: fixed;
+  bottom: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
 `;
 
 const NewTab: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  // Use our custom hybrid search hook
+  const {
+    inputValue,
+    setInputValue,
+    handleEnterKey,
+    results,
+    isSearching,
+    localResults,
+    quickResults,
+    semanticResults
+  } = useHybridSearch();
 
-  // Debounced search function to avoid excessive API calls as the user types.
-  const debouncedSearch = useMemo(
-    () =>
-      debounce((searchText: string) => {
-        if (!searchText || !userId) return;
-        setIsSearching(true);
-        searchWithSSE(
-          searchText,
-          userId,
-          false, // Quick search while typing
-          (data, type) => {
-            if (type === 'quicklaunch') {
-              setResults(data.results);
-              setIsSearching(false);
-            } else if (type === 'error') {
-              console.error('Search error:', data.message);
-              setIsSearching(false);
-            }
-          }
-        );
-      }, 150),
-    [userId]
-  );
+  // Handle input change
+  const handleQueryChange = (newQuery: string) => {
+    setInputValue(newQuery);
+  };
 
-  // Manage focus on mount and ensure that keystrokes are directed to the search input.
+  // Handle result click
+  const handleResultClick = (result: any) => {
+    // Track the click for analytics
+    // Log the search click locally for later sync via cold storage
+    const searchSessionId = result.searchSessionId || 'local-session';
+    const pageId = result.id || result.pageId;
+    const position = result.position || 0;
+    const url = result.url;
+    const query = inputValue; // Use the current search query
+    
+    trackSearchClick(searchSessionId, pageId, position, url, query);
+    
+    // Navigate to the URL
+    window.location.href = url;
+  };
+
+  // Handle key events
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleEnterKey(e.currentTarget.value);
+    }
+  };
+
+  // Focus input on mount and ensure that keystrokes are directed to the search input
   useEffect(() => {
     window.focus();
     if (document.body) {
       document.body.tabIndex = -1;
       document.body.focus();
     }
+    
     const focusTimer = setTimeout(() => {
       searchInputRef.current?.focus();
     }, 50);
@@ -111,99 +165,70 @@ const NewTab: React.FC = () => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
       if (document.activeElement !== searchInputRef.current) {
         searchInputRef.current?.focus();
-        event.preventDefault();
-        event.stopPropagation();
       }
     };
 
     document.addEventListener('keydown', handleGlobalKeyDown, true);
+    
     return () => {
       clearTimeout(focusTimer);
       document.removeEventListener('keydown', handleGlobalKeyDown, true);
     };
   }, []);
 
-  // Fetch the user info on component mount.
-  useEffect(() => {
-    const fetchUserId = async () => {
-      try {
-        const userInfo = await getUserInfo();
-        if (userInfo) {
-          setUserId(userInfo.id);
-        }
-      } catch (error) {
-        console.error('Error fetching user info:', error);
-      }
-    };
-    fetchUserId();
-  }, []);
-
-  // Trigger debounced search whenever the query changes.
-  useEffect(() => {
-    if (query) {
-      debouncedSearch(query);
-    }
-    return () => {
-      debouncedSearch.cancel();
-    };
-  }, [query, debouncedSearch]);
-
-  // Final deep search when the user submits the query.
-  const handleSearch = async (finalQuery: string) => {
-    if (!finalQuery.trim() || !userId) return;
-    setIsSearching(true);
-    searchWithSSE(
-      finalQuery,
-      userId,
-      true, // Deep search on submit
-      (data, type) => {
-        if (type === 'quicklaunch' || type === 'semantic') {
-          setResults(data.results);
-        } else if (type === 'complete') {
-          setIsSearching(false);
-        } else if (type === 'error') {
-          console.error('Search error:', data.message);
-          setIsSearching(false);
-        }
-      }
-    );
-  };
-
-  // Handle clicks on search results with tracking.
-  const handleResultClick = (result: SearchResult, index: number) => {
-    if (result.searchSessionId && result.pageId) {
-      trackSearchClick(result.searchSessionId, result.pageId, index);
-    }
-    window.open(result.url, '_self');
-  };
-
-  // Memoized handler for query changes.
-  const handleQueryChange = useCallback((newQuery: string) => {
-    setQuery(newQuery);
-  }, []);
+  // Determine if we have any results to show
+  const hasAnyResults = results.length > 0;
+  const hasSemanticResults = semanticResults.length > 0;
+  
+  // Split results into main (local + backend quick) and semantic for display
+  const mainResults = results.filter(r => r.source !== 'semantic');
+  const displaySemanticResults = results.filter(r => r.source === 'semantic');
 
   return (
     <Container>
       <SearchContainer>
         <NewTabSearchBar
-          onSearch={handleSearch}
-          isLoading={isSearching}
-          inputRef={searchInputRef}
-          query={query}
-          onQueryChange={handleQueryChange}
+          ref={searchInputRef}
+          value={inputValue}
+          onChange={handleQueryChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Search your history..."
         />
-        {results.length > 0 && (
+        
+        {inputValue.trim() && (
           <ResultsList>
-            {results.map((result, index) => (
-              <ResultItem key={`result-${index}-${result.pageId}`} onClick={() => handleResultClick(result, index)}>
+            {isSearching && <LoadingIndicator>Searching...</LoadingIndicator>}
+            
+            {mainResults.map((result) => (
+              <ResultItem key={result.id} onClick={() => handleResultClick(result)}>
                 <ResultTitle>{result.title}</ResultTitle>
                 <ResultUrl>{result.url}</ResultUrl>
               </ResultItem>
             ))}
+            
+            {/* Show semantic results with a header if we have any */}
+            {displaySemanticResults.length > 0 && (
+              <>
+                <SemanticResultsHeader>Semantic Results</SemanticResultsHeader>
+                {displaySemanticResults.map((result) => (
+                  <ResultItem key={result.id} onClick={() => handleResultClick(result)}>
+                    <ResultTitle>{result.title}</ResultTitle>
+                    <ResultUrl>{result.url}</ResultUrl>
+                  </ResultItem>
+                ))}
+              </>
+            )}
+            
+            {!isSearching && !hasAnyResults && (
+              <NoResultsMessage>No results found</NoResultsMessage>
+            )}
           </ResultsList>
         )}
       </SearchContainer>
-      <ThemeToggle />
+      
+      <Footer>
+        <ThemeToggle />
+      </Footer>
     </Container>
   );
 };

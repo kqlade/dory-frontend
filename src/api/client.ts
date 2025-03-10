@@ -17,6 +17,13 @@ import {
   EventType
 } from './types';
 
+import { 
+  sendContentEvent, 
+  sendSessionEvent, 
+  sendVisitEvent, 
+  trackSearchClick 
+} from '../services/eventService';
+
 /**
  * Helper: Delay for a given ms
  */
@@ -107,7 +114,7 @@ export async function searchHistory(
     timestamp: Math.floor(Date.now())
   };
 
-  return apiPost<SearchResponse>(ENDPOINTS.ADVANCED_SEARCH, payload);
+  return apiPost<SearchResponse>(ENDPOINTS.UNIFIED_SEARCH, payload);
 }
 
 // Single source of search state with abort controller
@@ -130,7 +137,7 @@ export function searchWithSSE(
   // Create new controller
   currentSearchController = new AbortController();
 
-  fetch(`${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}`, {
+  fetch(`${API_BASE_URL}${ENDPOINTS.UNIFIED_SEARCH}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -214,49 +221,96 @@ export function searchWithSSE(
 }
 
 /**
- * Simple click tracking function using navigator.sendBeacon if available.
+ * @deprecated Use specialized event functions from eventService instead
+ * Legacy function for backward compatibility during migration
  */
-export function trackSearchClick(searchSessionId: string, pageId: string, position: number) {
-  const data = JSON.stringify({
-    searchSessionId,
-    pageId,
-    position,
-    timestamp: Math.floor(Date.now())
-  });
-
-  const endpoint = `${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}/click`;
-
-  if (navigator.sendBeacon) {
-    navigator.sendBeacon(endpoint, data);
-  } else {
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: data,
-      keepalive: true
-    }).catch(e => console.error('Click tracking error:', e));
-  }
-}
-
-/**
- * Check if the backend is healthy
- */
-export async function checkHealth(): Promise<boolean> {
+export async function sendEvent(event: any): Promise<Response> {
+  console.warn('[API Client] sendEvent is deprecated. Use specialized event functions from eventService instead.');
+  
   try {
-    await apiGet(ENDPOINTS.HEALTH);
-    return true;
-  } catch (err) {
-    console.error('Health check failed:', err);
-    return false;
+    // Forward to the appropriate specialized function based on event type
+    if (event.operation === 'CONTENT_EXTRACTED') {
+      await sendContentEvent({
+        pageId: event.data.pageId,
+        visitId: event.data.visitId,
+        url: event.data.url,
+        title: event.data.content.title,
+        markdown: event.data.content.markdown,
+        metadata: event.data.content.metadata
+      });
+    } else if (event.operation === 'SESSION_STARTED' || event.operation === 'SESSION_ENDED') {
+      await sendSessionEvent({
+        sessionId: event.sessionId,
+        operation: event.operation,
+        data: event.data
+      });
+    } else if (
+      event.operation === 'PAGE_VISIT_STARTED' || 
+      event.operation === 'PAGE_VISIT_ENDED' || 
+      event.operation === 'ACTIVE_TIME_UPDATED'
+    ) {
+      await sendVisitEvent({
+        pageId: event.data.pageId,
+        visitId: event.data.visitId,
+        sessionId: event.sessionId,
+        url: event.data.url || '',
+        operation: event.operation,
+        data: event.data
+      });
+    }
+    
+    // Return a mock response for backward compatibility
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('[API Client] Error sending event:', error);
+    throw error;
   }
 }
 
 /**
- * Send a DORY event to the backend
+ * Fetch health status from the API
  */
-export async function sendEvent(event: DoryEvent): Promise<void> {
-  await apiPost(ENDPOINTS.EVENTS, event);
+export async function checkHealth(): Promise<{ status: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${ENDPOINTS.HEALTH}`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Health check failed: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('[API Client] Health check failed:', error);
+    throw error;
+  }
 }
+
+/**
+ * Create a streaming search connection to the backend
+ * @param query The search query
+ * @param triggerSemantic Whether to trigger semantic search
+ * @returns EventSource for the streaming connection
+ */
+export function createSearchStream(query: string, triggerSemantic: boolean = true): EventSource {
+  const url = new URL(`${API_BASE_URL}${ENDPOINTS.UNIFIED_SEARCH}`);
+  url.searchParams.append('query', query);
+  url.searchParams.append('triggerSemantic', triggerSemantic.toString());
+  
+  return new EventSource(url.toString(), { withCredentials: true });
+}
+
+// Export the specialized event functions for direct use
+export { 
+  sendContentEvent, 
+  sendSessionEvent, 
+  sendVisitEvent
+};
 
 // Export event type constants for convenience
-export const Events = EventType;
+export { EventType as Events };

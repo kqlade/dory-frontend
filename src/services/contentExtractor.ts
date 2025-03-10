@@ -12,16 +12,14 @@ console.log("[ContentExtractor] Debug: About to import config values");
 import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from "../config";
 console.log("[ContentExtractor] Debug: About to import message system");
 import { createMessage, MessageType, ExtractionData } from "./messageSystem";
-console.log("[ContentExtractor] Debug: About to import event streamer");
+console.log("[ContentExtractor] Debug: About to import event service");
 
 /**
  * IMPORTANT: Content extraction events are special-cased to be sent directly to the backend API
  * instead of being stored in the local Dexie database. This is why we're importing from the 
- * API-based eventStreamer instead of dexieEventStreamer.
- * 
- * These content extraction events are the only events that will be sent to the backend in real-time.
+ * dedicated event service that sends directly to the content API endpoint.
  */
-import { sendDoryEvent, EventTypes } from "./eventStreamer";
+import { sendContentEvent } from "../services/eventService";
 
 console.log("[ContentExtractor] Debug: About to import session manager");
 // We still want to use the Dexie session manager to get the current session ID
@@ -243,6 +241,28 @@ function sendExtractionError(code: string, message: string, url: string, stack?:
   }
 }
 
+// Initialize content extractor directly - authentication is already checked at extension level
+console.log("[ContentExtractor] Initializing content extractor");
+initializeExtractor();
+
+// Move initialization logic to a function
+function initializeExtractor() {
+  console.log("[ContentExtractor] Starting content extractor initialization");
+  
+  // Initialize extraction if in the right context
+  if (chrome.runtime && chrome.runtime.onMessage) {
+    // ... existing message handling code ...
+  }
+}
+
+/** Public function to initiate extraction. */
+export function extract(): void {
+  console.log("[ContentExtractor] extract() called");
+  setupExtractionTimeout();
+  console.log("[ContentExtractor] Starting content extraction");
+  void extractAndSendContent();
+}
+
 /**
  * Main function that does:
  *  1) Wait for DOM idle
@@ -349,51 +369,34 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
       }
     }
     
-    // 6) Send content extraction event to backend if context is available
-    console.log(`[ContentExtractor] Getting current session ID...`);
+    // 6) Send extracted content to backend
+    console.log(`[ContentExtractor] Sending extracted content to backend API`);
     const sessionId = await getCurrentSessionId();
-    console.log(`[ContentExtractor] Session ID: ${sessionId}`);
     
-    if (sessionId && currentPageId) {
-      console.log(`[ContentExtractor] Preparing to send event to backend: pageId=${currentPageId}, visitId=${currentVisitId}`);
+    if (sessionId && currentPageId && currentVisitId) {
       try {
-        console.log(`[ContentExtractor] Sending CONTENT_EXTRACTED event to API instead of local storage`);
+        // Get user info - authentication is already verified at extension level
+        const userInfo = await getUserInfo();
+        const userId = userInfo?.id;
         
-        // Get current user info for proper attribution
-        let userId = 'anonymous';
-        try {
-          const userInfo = await getUserInfo();
-          if (userInfo && userInfo.id) {
-            userId = userInfo.id;
-          }
-        } catch (userError) {
-          console.warn('[ContentExtractor] Could not get user info:', userError);
-        }
-        
-        await sendDoryEvent({
-          operation: EventTypes.CONTENT_EXTRACTED,
-          sessionId: sessionId.toString(),
-          timestamp,
-          data: {
-            pageId: currentPageId,
-            visitId: currentVisitId,
-            userId: userId, // Add userId to data object for cold storage
-            url: currentUrl,
-            content: {
-              title: title,
-              markdown: sourceMarkdown,
-              metadata: {
-                language: "en"
-              }
-            }
+        // Send content directly to the dedicated content API endpoint
+        await sendContentEvent({
+          pageId: currentPageId,
+          visitId: currentVisitId,
+          url: currentUrl,
+          title: title,
+          markdown: sourceMarkdown,
+          metadata: {
+            language: "en"
           }
         });
+        
         console.log(`[ContentExtractor] Content extraction event successfully sent to API backend`);
       } catch (eventError) {
-        console.error("[ContentExtractor] Error sending event to backend:", eventError);
+        console.error("[ContentExtractor] Error sending content to backend:", eventError);
       }
     } else {
-      console.warn(`[ContentExtractor] Cannot send event: sessionId=${sessionId}, pageId=${currentPageId}, visitId=${currentVisitId}`);
+      console.warn(`[ContentExtractor] Cannot send content: sessionId=${sessionId}, pageId=${currentPageId}, visitId=${currentVisitId}`);
     }
 
   } catch (error) {
@@ -445,14 +448,6 @@ function setupExtractionTimeout(): void {
       extractionTimeoutId = null;
     }
   });
-}
-
-/** Public function to initiate extraction. */
-export function extract(): void {
-  console.log("[ContentExtractor] extract() called");
-  setupExtractionTimeout();
-  console.log("[ContentExtractor] Starting content extraction");
-  void extractAndSendContent();
 }
 
 // Listen for extraction trigger messages from the background script

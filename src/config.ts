@@ -15,8 +15,15 @@ export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/a
 // Available backend endpoints
 export const ENDPOINTS = {
   HEALTH: '/health',
-  ADVANCED_SEARCH: '/unified-search',
-  EVENTS: '/events'
+  UNIFIED_SEARCH: '/unified-search',
+  CONTENT: '/content',
+  COLD_STORAGE: {
+    BASE: '/cold-storage',
+    PAGES: '/cold-storage/pages',
+    VISITS: '/cold-storage/visits',
+    SESSIONS: '/cold-storage/sessions',
+    SEARCH_CLICKS: '/cold-storage/search-clicks'
+  }
 } as const;
 
 // API request settings

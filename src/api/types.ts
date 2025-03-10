@@ -89,7 +89,8 @@ export enum EventType {
   CONTENT_EXTRACTED = 'CONTENT_EXTRACTED',
   PAGE_VISIT_ENDED = 'PAGE_VISIT_ENDED',
   ACTIVE_TIME_UPDATED = 'ACTIVE_TIME_UPDATED',
-  SESSION_ENDED = 'SESSION_ENDED'
+  SESSION_ENDED = 'SESSION_ENDED',
+  SEARCH_CLICK = 'SEARCH_CLICK'
 }
 
 export interface DoryEvent {
@@ -148,4 +149,13 @@ export interface ActiveTimeUpdatedData {
 export interface SessionEndedData {
   totalDuration: number;
   pagesVisited: number;
+}
+
+// Add SearchClickData interface after the other event data interfaces
+export interface SearchClickData {
+  searchSessionId: string;
+  pageId: string;
+  url: string;
+  query: string;
+  position: number;
 }

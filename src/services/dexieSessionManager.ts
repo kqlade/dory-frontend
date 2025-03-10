@@ -2,12 +2,14 @@
  * Dexie-based Session Manager
  * 
  * This file provides the same API as the original sessionManager.ts
- * but uses Dexie.js for storage.
+ * but uses Dexie.js for local storage only.
+ * Events are NOT sent directly to the backend - they are synced later via cold storage.
  */
 
 import * as dexieDb from './dexieDB';
 import { BrowsingSession } from './dexieDB';
-import { sendDoryEvent, EventTypes } from './dexieEventStreamer';
+import { logEvent } from './dexieEventLogger';
+import { EventType } from '../api/types';
 
 // Track the current session ID
 let currentSessionId: number | null = null;
@@ -30,9 +32,9 @@ export async function startNewSession(): Promise<number> {
   const id = await db.sessions.add(session);
   currentSessionId = id;
   
-  // Send session started event - now stored in DB instead of API
-  await sendDoryEvent({
-    operation: EventTypes.SESSION_STARTED,
+  // Log session started event locally - will be synced to backend via cold storage
+  await logEvent({
+    operation: EventType.SESSION_STARTED,
     sessionId: id.toString(),
     timestamp: Math.floor(now),
     data: {
@@ -75,9 +77,9 @@ export async function endCurrentSession(): Promise<void> {
       console.error('Error getting page visit count:', e);
     }
     
-    // Log session ended event
-    await sendDoryEvent({
-      operation: EventTypes.SESSION_ENDED,
+    // Log session ended event locally - will be synced to backend via cold storage
+    await logEvent({
+      operation: EventType.SESSION_ENDED,
       sessionId: currentSessionId.toString(),
       timestamp: now,
       data: {
