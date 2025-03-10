@@ -20,6 +20,8 @@ export interface SearchResult {
   };
   score?: number;
   explanation?: string;
+  searchSessionId?: string;
+  pageId?: string;
 }
 
 export interface SearchDebugInfo {
@@ -64,17 +66,6 @@ export interface SearchResponse {
     };
     search_type?: string;
     reranking_applied?: boolean;
-  };
-}
-
-export interface SearchRequest {
-  query: string;
-  limit?: number;
-  offset?: number;
-  filters?: {
-    startDate?: number;
-    endDate?: number;
-    domains?: string[];
   };
 }
 

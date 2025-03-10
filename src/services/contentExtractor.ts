@@ -2,8 +2,7 @@
 
 import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
 import { PruningContentFilter } from "../html2text/content_filter_strategy";
-import { USE_FIT_MARKDOWN } from "../api/config";
-import { QUEUE_CONFIG } from "../background/config";
+import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from "../config";
 import { createMessage, MessageType, ExtractionData } from "./messageSystem";
 import { sendDoryEvent, EventTypes } from "./eventStreamer";
 import { getCurrentSessionId } from "./sessionManager";

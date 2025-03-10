@@ -25,8 +25,8 @@ export default defineConfig({
         background: 'src/background/serviceWorker.ts',
         contentExtractor: 'src/services/contentExtractor.ts',
         activityTracker: 'src/services/activityTracker.ts',
-        graph: 'src/pages/graph/graph.js',
-        graphHtml: 'src/pages/graph/graph.html'
+        newtab: 'src/pages/newtab/index.tsx',
+        newtabHtml: 'src/pages/newtab/newtab.html'
       },
       output: {
         entryFileNames: '[name].js',
@@ -36,6 +36,6 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['html-entities', 'vis-network', 'vis-data']
+    include: ['html-entities', 'react', 'react-dom']
   }
 });

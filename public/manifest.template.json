@@ -10,8 +10,8 @@
       "128": "icons/dory_logo_128x128.png"
     }
   },
-  "side_panel": {
-    "default_path": "src/pages/sidepanel/sidepanel.html"
+  "chrome_url_overrides": {
+    "newtab": "src/pages/newtab/newtab.html"
   },
   "background": {
     "service_worker": "src/background/serviceWorker.ts",
@@ -38,7 +38,6 @@
     "scripting",
     "tabs",
     "windows",
-    "sidePanel",
     "history",
     "alarms",
     "webNavigation",

@@ -3,168 +3,258 @@
  */
 
 import {
-    API_BASE_URL,
-    ENDPOINTS,
-    REQUEST_TIMEOUT,
-    RETRY_ATTEMPTS,
-    RETRY_DELAY
-  } from './config';
-  
-  import {
-    ApiError,
-    SearchResponse,
-    SearchRequest,
-    DoryEvent,
-    EventType
-  } from './types';
-  
-  /**
-   * Helper: Delay for a given ms
-   */
-  function delay(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  API_BASE_URL,
+  ENDPOINTS,
+  REQUEST_TIMEOUT,
+  RETRY_ATTEMPTS,
+  RETRY_DELAY
+} from '../config';
+
+import {
+  ApiError,
+  SearchResponse,
+  DoryEvent,
+  EventType
+} from './types';
+
+/**
+ * Helper: Delay for a given ms
+ */
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Main API request function with timeout and retry logic
+ */
+export async function apiRequest<T>(
+  endpoint: string,
+  init: RequestInit = {},
+  attempt = 1
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+
+  // Set default headers for JSON API
+  const headers = new Headers(init.headers || {});
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
   }
-  
-  /**
-   * Main API request function with timeout and retry logic
-   */
-  export async function apiRequest<T>(
-    endpoint: string,
-    init: RequestInit = {},
-    attempt = 1
-  ): Promise<T> {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-  
-    try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(init.headers || {})
-        },
-        signal: controller.signal
-      });
-      clearTimeout(id);
-  
-      if (!response.ok) {
-        const errorText = await response.text();
-        const error = new ApiError(
-          `API Error (${response.status}): ${errorText}`,
-          response.status
-        );
-        throw error;
-      }
-  
-      return await response.json();
-  
-    } catch (error) {
-      clearTimeout(id);
-  
-      // If we've hit our retry limit, or this isn't a network error, rethrow
-      if (
-        attempt >= RETRY_ATTEMPTS ||
-        (error instanceof Error && 'status' in error && 
-         (error as ApiError).status !== 503 && (error as ApiError).status !== 429)
-      ) {
-        throw error;
-      }
-  
-      // Otherwise, wait and retry
-      console.warn(`API request failed, retrying (${attempt}/${RETRY_ATTEMPTS})...`);
-      await delay(RETRY_DELAY);
-      return apiRequest<T>(endpoint, init, attempt + 1);
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json');
+  }
+
+  // Create an AbortController for timeout handling
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+  const config: RequestInit = {
+    ...init,
+    headers,
+    signal: controller.signal,
+  };
+
+  try {
+    const response = await fetch(url, config);
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error (${response.status}): ${errorText}`);
     }
-  }
-  
-  /**
-   * Convenience helpers for common HTTP verbs
-   */
-  export async function apiGet<T>(endpoint: string): Promise<T> {
-    return apiRequest<T>(endpoint, { method: 'GET' });
-  }
-  
-  export async function apiPost<T>(endpoint: string, body: unknown): Promise<T> {
-    return apiRequest<T>(endpoint, {
-      method: 'POST',
-      body: JSON.stringify(body)
-    });
-  }
-  
-  /**
-   * Perform a semantic search
-   */
-  export async function semanticSearch(
-    query: string, 
-    limit: number = 3,
-    options?: { 
-      useHybridSearch?: boolean;
-      useLLMExpansion?: boolean;
-      useReranking?: boolean;
+
+    // If no content, return empty object
+    if (response.status === 204) {
+      return {} as T;
     }
-  ): Promise<SearchResponse> {
-    const searchRequest: SearchRequest = {
+
+    return await response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.error(`API request failed (attempt ${attempt}/${RETRY_ATTEMPTS}):`, err);
+
+    if (attempt >= RETRY_ATTEMPTS) {
+      throw err;
+    }
+
+    // Optionally, you can use exponential backoff: RETRY_DELAY * attempt
+    await delay(RETRY_DELAY);
+    return apiRequest<T>(endpoint, init, attempt + 1);
+  }
+}
+
+/**
+ * Convenience helpers for common HTTP verbs
+ */
+export async function apiGet<T>(endpoint: string): Promise<T> {
+  return apiRequest<T>(endpoint, { method: 'GET' });
+}
+
+export async function apiPost<T>(endpoint: string, body: unknown): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+}
+
+/**
+ * Search history with the required payload structure
+ */
+export async function searchHistory(
+  query: string,
+  userId: string
+): Promise<SearchResponse> {
+  const payload = {
+    query,
+    userId,
+    timestamp: Date.now()
+  };
+
+  return apiPost<SearchResponse>(ENDPOINTS.ADVANCED_SEARCH, payload);
+}
+
+// Single source of search state with abort controller
+let currentSearchController: AbortController | null = null;
+
+/**
+ * Search with Server-Sent Events (SSE)
+ */
+export function searchWithSSE(
+  query: string,
+  userId: string,
+  triggerSemantic = false,
+  onResults: (results: any, type: string) => void
+) {
+  // Cancel previous search if exists
+  if (currentSearchController) {
+    currentSearchController.abort();
+  }
+
+  // Create new controller
+  currentSearchController = new AbortController();
+
+  fetch(`${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream'
+    },
+    body: JSON.stringify({
       query,
-      limit
-    };
+      userId,
+      timestamp: Date.now(),
+      triggerSemantic
+    }),
+    signal: currentSearchController.signal
+  })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
 
-    // Add search options as query parameters
-    let queryParams = '';
-    if (options) {
-      const params = new URLSearchParams();
-      
-      if (options.useHybridSearch !== undefined) {
-        params.append('hybrid', options.useHybridSearch.toString());
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      // Process the stream using async/await for clarity
+      const processStream = async (): Promise<void> => {
+        try {
+          const { done, value } = await reader.read();
+          if (done) return;
+
+          // Decode and append the chunk to the buffer
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          // Process each complete event in the buffer
+          for (const event of events) {
+            if (!event.trim()) continue;
+
+            const dataMatch = event.match(/^data: (.+)$/m);
+            if (!dataMatch) continue;
+
+            try {
+              const data = JSON.parse(dataMatch[1]);
+              onResults(data, data.type);
+
+              // If the search is complete, stop processing
+              if (data.type === 'complete') {
+                reader.cancel();
+                return;
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e);
+            }
+          }
+
+          // Recursively process the next chunk
+          await processStream();
+        } catch (err) {
+          if ((err as any).name !== 'AbortError') {
+            console.error('SSE processing error:', err);
+            onResults({ type: 'error', message: (err as Error).message }, 'error');
+          }
+        }
+      };
+
+      return processStream();
+    })
+    .catch(error => {
+      if (error.name !== 'AbortError') {
+        console.error('SSE error:', error);
+        onResults({ type: 'error', message: error.message }, 'error');
       }
-      
-      if (options.useLLMExpansion !== undefined) {
-        params.append('expand', options.useLLMExpansion.toString());
-      }
-      
-      if (options.useReranking !== undefined) {
-        params.append('rerank', options.useReranking.toString());
-      }
-      
-      const paramsString = params.toString();
-      if (paramsString) {
-        queryParams = `?${paramsString}`;
-      }
+    });
+
+  // Return a cancel function to abort the SSE request
+  return () => {
+    if (currentSearchController) {
+      currentSearchController.abort();
+      currentSearchController = null;
     }
+  };
+}
 
-    return apiPost<SearchResponse>(`${ENDPOINTS.ADVANCED_SEARCH}${queryParams}`, searchRequest);
+/**
+ * Simple click tracking function using navigator.sendBeacon if available.
+ */
+export function trackSearchClick(searchSessionId: string, pageId: string, position: number) {
+  const data = JSON.stringify({
+    searchSessionId,
+    pageId,
+    position,
+    timestamp: Date.now()
+  });
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(`${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}/click`, data);
+  } else {
+    fetch(`${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}/click`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: data,
+      keepalive: true
+    }).catch(e => console.error('Click tracking error:', e));
   }
-  
-  /**
-   * Check if the backend is healthy
-   */
-  export async function checkHealth(): Promise<boolean> {
-    try {
-      await apiGet(ENDPOINTS.HEALTH);
-      return true;
-    } catch (error) {
-      console.error('Health check failed:', error);
-      return false;
-    }
-  }
+}
 
-  /**
-   * Send a DORY event to the backend
-   */
-  export async function sendEvent(event: DoryEvent): Promise<void> {
-    // Add timestamp if not provided
-    if (!event.timestamp) {
-      event.timestamp = Date.now();
-    }
-    
-    try {
-      await apiRequest(ENDPOINTS.EVENTS, {
-        method: 'POST',
-        body: JSON.stringify(event)
-      });
-    } catch (err) {
-      console.error('[DORY] Failed sending event:', err);
-    }
+/**
+ * Check if the backend is healthy
+ */
+export async function checkHealth(): Promise<boolean> {
+  try {
+    await apiGet(ENDPOINTS.HEALTH);
+    return true;
+  } catch (err) {
+    console.error('Health check failed:', err);
+    return false;
   }
+}
 
-  // Export event type constants for convenience
-  export const Events = EventType;
+/**
+ * Send a DORY event to the backend
+ */
+export async function sendEvent(event: DoryEvent): Promise<void> {
+  await apiPost(ENDPOINTS.EVENTS, event);
+}
+
+// Export event type constants for convenience
+export const Events = EventType;

@@ -1,0 +1,75 @@
+:root {
+  --bg-color: #ffffff;
+  --text-color: #000000;
+  --border-color: rgba(0, 0, 0, 0.3);
+  --border-hover-color: rgba(0, 0, 0, 0.5);
+  --border-focus-color: rgba(0, 0, 0, 0.8);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+  --shadow-focus-color: rgba(0, 0, 0, 0.15);
+  --icon-filter: invert(0); /* Default light mode */
+}
+
+/* Dark mode styles applied when the 'dark-mode' class is present */
+html.dark-mode {
+  --bg-color: #000000;
+  --text-color: #ffffff;
+  --border-color: rgba(255, 255, 255, 0.3);
+  --border-hover-color: rgba(255, 255, 255, 0.5);
+  --border-focus-color: rgba(255, 255, 255, 0.8);
+  --shadow-color: rgba(255, 255, 255, 0.1);
+  --shadow-focus-color: rgba(255, 255, 255, 0.15);
+  --icon-filter: invert(1); /* Makes icons white in dark mode */
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.newtab-container {
+  width: 100%;
+  height: 100vh; /* Use viewport height */
+  display: flex;
+  justify-content: center;
+  align-items: center; /* This centers vertically */
+}
+
+.search-container {
+  width: 600px;
+  max-width: 90%;
+  background-color: transparent;
+  border-radius: 12px;
+  padding: 16px 20px;
+  border: 1px solid var(--border-color);
+  transition: all 0.3s ease;
+  margin-bottom: 10vh;
+}
+
+.search-container:hover {
+  border-color: var(--border-hover-color);
+  box-shadow: 0 0 20px var(--shadow-color);
+}
+
+/* Focus styles for the search container when the input is focused */
+.search-container:focus-within {
+  border-color: var(--border-focus-color);
+  box-shadow: 0 0 25px var(--shadow-focus-color);
+}
+
+/* Override Chrome's default focus behavior */
+.newtab-container input:focus {
+  outline: none !important;
+}
+
+/* Theme toggle button hover effect */
+button.theme-toggle:hover {
+  transform: scale(1.1);
+  border-color: var(--border-focus-color);
+}

@@ -60,10 +60,8 @@ async function initialize() {
 
 /** Handle clicks on the extension icon */
 function handleExtensionIconClick() {
-  // Open the graph page in a new tab
-  chrome.tabs.create({
-    url: chrome.runtime.getURL('src/pages/graph/graph.html')
-  });
+  // Open a new tab (which will use our custom new tab page)
+  chrome.tabs.create({});
 }
 
 /** Check if session is idle -> if so, end it. */
