@@ -6,22 +6,24 @@
 
 // Search result types
 export interface SearchResult {
-  docId: string;
-  chunkText: string;
-  isHighlighted: boolean;
-  metadata: {
-    url: string;
-    title: string;
-    visitedAt: number;
+  pageId: string;
+  title: string;
+  url: string;
+  score?: number;
+  searchSessionId?: string;
+  
+  // Additional fields we support
+  docId?: string;
+  chunkText?: string;
+  isHighlighted?: boolean;
+  metadata?: {
+    visitedAt?: number;
     processedAt?: number;
     status?: string;
     chunkIndex?: number;
     totalChunks?: number;
   };
-  score?: number;
   explanation?: string;
-  searchSessionId?: string;
-  pageId?: string;
 }
 
 export interface SearchDebugInfo {
@@ -100,10 +102,9 @@ export interface DoryEvent {
 }
 
 export interface SessionStartedData {
-  browser: {
-    name: string;
-    platform: string;
-  };
+  userAgent: string;
+  platform: string;
+  language: string;
 }
 
 export interface PageVisitStartedData {
@@ -120,16 +121,20 @@ export interface ContentExtractedData {
   visitId: string;
   url?: string;  // Optional URL for the page
   content: {
-    extracted: boolean;
     title: string;
     markdown: string;
-    metadata: Record<string, any>;
+    metadata?: {
+      language?: string;
+      [key: string]: any;
+    };
   };
 }
 
 export interface PageVisitEndedData {
   pageId: string;
   visitId: string;
+  toPageId?: string;   // Optional, the pageId of the next page if applicable
+  timeSpent: number;   // Required, total time spent on the page in seconds
 }
 
 export interface ActiveTimeUpdatedData {
@@ -140,6 +145,6 @@ export interface ActiveTimeUpdatedData {
 }
 
 export interface SessionEndedData {
-  totalActiveTime: number;
-  duration: number;
+  totalDuration: number;
+  pagesVisited: number;
 }

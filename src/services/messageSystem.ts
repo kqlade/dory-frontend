@@ -36,7 +36,7 @@ export function createMessage<T>(
 ): Message<T> {
   return {
     type,
-    timestamp: Date.now(),
+    timestamp: Math.floor(Date.now()),
     source,
     data
   };

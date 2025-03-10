@@ -15,7 +15,7 @@ export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/a
 // Available backend endpoints
 export const ENDPOINTS = {
   HEALTH: '/health',
-  ADVANCED_SEARCH: '/search',
+  ADVANCED_SEARCH: '/unified-search',
   EVENTS: '/events'
 } as const;
 

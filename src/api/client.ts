@@ -104,7 +104,7 @@ export async function searchHistory(
   const payload = {
     query,
     userId,
-    timestamp: Date.now()
+    timestamp: Math.floor(Date.now())
   };
 
   return apiPost<SearchResponse>(ENDPOINTS.ADVANCED_SEARCH, payload);
@@ -139,7 +139,7 @@ export function searchWithSSE(
     body: JSON.stringify({
       query,
       userId,
-      timestamp: Date.now(),
+      timestamp: Math.floor(Date.now()),
       triggerSemantic
     }),
     signal: currentSearchController.signal
@@ -221,13 +221,15 @@ export function trackSearchClick(searchSessionId: string, pageId: string, positi
     searchSessionId,
     pageId,
     position,
-    timestamp: Date.now()
+    timestamp: Math.floor(Date.now())
   });
 
+  const endpoint = `${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}/click`;
+
   if (navigator.sendBeacon) {
-    navigator.sendBeacon(`${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}/click`, data);
+    navigator.sendBeacon(endpoint, data);
   } else {
-    fetch(`${API_BASE_URL}${ENDPOINTS.ADVANCED_SEARCH}/click`, {
+    fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: data,

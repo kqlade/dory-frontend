@@ -42,9 +42,10 @@ function handleVisibilityChange() {
 // Watch for visibility changes
 document.addEventListener('visibilitychange', handleVisibilityChange);
 
-// Also if user leaves the page entirely
-window.addEventListener('unload', () => {
-  if (lastActiveTime) {
+// Replace unload with pagehide for when the user leaves the page
+window.addEventListener('pagehide', (event) => {
+  // Only send final data if the page is truly unloading, not just being put in bfcache
+  if (!event.persisted && lastActiveTime) {
     const now = Date.now();
     const diffSec = (now - lastActiveTime) / 1000;
     notifyActivity(false, diffSec);

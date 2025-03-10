@@ -4,7 +4,7 @@ import { SearchResult } from '../../api/types';
 import NewTabSearchBar from '../../components/NewTabSearchBar';
 import ThemeToggle from './ThemeToggle';
 import styled from 'styled-components';
-import { getUserInfo } from '../../services/auth';
+import { getUserInfo } from '../../auth/googleAuth';
 import debounce from 'lodash/debounce';
 
 const Container = styled.div`
@@ -174,7 +174,7 @@ const NewTab: React.FC = () => {
     if (result.searchSessionId && result.pageId) {
       trackSearchClick(result.searchSessionId, result.pageId, index);
     }
-    window.open(result.metadata.url, '_self');
+    window.open(result.url, '_self');
   };
 
   // Memoized handler for query changes.
@@ -195,9 +195,9 @@ const NewTab: React.FC = () => {
         {results.length > 0 && (
           <ResultsList>
             {results.map((result, index) => (
-              <ResultItem key={result.docId} onClick={() => handleResultClick(result, index)}>
-                <ResultTitle>{result.metadata.title}</ResultTitle>
-                <ResultUrl>{result.metadata.url}</ResultUrl>
+              <ResultItem key={`result-${index}-${result.pageId}`} onClick={() => handleResultClick(result, index)}>
+                <ResultTitle>{result.title}</ResultTitle>
+                <ResultUrl>{result.url}</ResultUrl>
               </ResultItem>
             ))}
           </ResultsList>

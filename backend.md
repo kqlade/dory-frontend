@@ -6,7 +6,12 @@ This document provides comprehensive details on the DORY backend API endpoints, 
 
 1. [Authentication](#authentication)
 2. [Event API](#event-api)
+   - [Event Types](#event-types)
+   - [Implementation Notes](#event-implementation-notes)
 3. [Unified Search API](#unified-search-api)
+   - [Search API](#search)
+   - [Click Tracking API](#click-tracking)
+   - [Result Ranking](#result-ranking)
 4. [Error Handling](#error-handling)
 
 ## Authentication
@@ -40,6 +45,16 @@ POST /api/events
 }
 ```
 
+Fields:
+- `operation`: (Required) The type of event (one of the defined event types)
+- `sessionId`: (Required) A unique identifier for the current browsing session
+- `userId`: (Required) The user's unique identifier
+- `userEmail`: (Required) The user's email address
+- `timestamp`: (Required) The time when the event occurred (milliseconds since epoch)
+- `data`: (Required) An object containing event-specific data as detailed below
+
+### Event Types
+
 The `operation` field must be one of the following event types:
 
 - `SESSION_STARTED` - When a new browsing session begins
@@ -49,26 +64,41 @@ The `operation` field must be one of the following event types:
 - `ACTIVE_TIME_UPDATED` - When tracking active time on a page
 - `SESSION_ENDED` - When a browsing session ends
 
-#### Event-Specific Data Structures
+#### SESSION_STARTED
 
-##### SESSION_STARTED
+Sent when a new browsing session begins. This is typically the first event sent when a user opens the browser or extension.
 
 ```json
 {
   "operation": "SESSION_STARTED",
+  "sessionId": "unique-session-id",
+  "userId": "user-id",
+  "userEmail": "user@example.com",
+  "timestamp": 1682541285123,
   "data": {
-    "userAgent": "Mozilla/5.0...",
-    "platform": "MacOS",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36...",
+    "platform": "macOS",
     "language": "en-US"
   }
 }
 ```
 
-##### PAGE_VISIT_STARTED
+Data fields:
+- `userAgent`: (Required) The full browser user agent string
+- `platform`: (Required) The operating system platform (e.g., "macOS", "Windows", "iOS")
+- `language`: (Required) The browser language (e.g., "en-US")
+
+#### PAGE_VISIT_STARTED
+
+Sent when a user navigates to a page. This event should be sent as soon as navigation begins.
 
 ```json
 {
   "operation": "PAGE_VISIT_STARTED",
+  "sessionId": "unique-session-id",
+  "userId": "user-id",
+  "userEmail": "user@example.com",
+  "timestamp": 1682541285123,
   "data": {
     "pageId": "unique-page-id",
     "visitId": "unique-visit-id",
@@ -80,11 +110,25 @@ The `operation` field must be one of the following event types:
 }
 ```
 
-##### CONTENT_EXTRACTED
+Data fields:
+- `pageId`: (Required) Unique identifier for the page
+- `visitId`: (Required) Unique identifier for this specific visit to the page
+- `url`: (Required) The full URL of the page
+- `title`: (Required) The title of the page
+- `isBackNavigation`: (Optional) Whether this navigation used the browser's back button
+- `fromPageId`: (Optional) The pageId of the previous page, if applicable
+
+#### CONTENT_EXTRACTED
+
+Sent when the content of a page has been extracted and processed. This typically occurs after the page has loaded.
 
 ```json
 {
   "operation": "CONTENT_EXTRACTED",
+  "sessionId": "unique-session-id",
+  "userId": "user-id",
+  "userEmail": "user@example.com",
+  "timestamp": 1682541285123,
   "data": {
     "pageId": "unique-page-id",
     "visitId": "unique-visit-id",
@@ -100,11 +144,27 @@ The `operation` field must be one of the following event types:
 }
 ```
 
-##### PAGE_VISIT_ENDED
+Data fields:
+- `pageId`: (Required) Unique identifier for the page (same as in PAGE_VISIT_STARTED)
+- `visitId`: (Required) Unique identifier for this specific visit (same as in PAGE_VISIT_STARTED)
+- `url`: (Optional) The URL of the page (may be omitted if already provided in PAGE_VISIT_STARTED)
+- `content`: (Required) Object containing the extracted content
+  - `title`: (Required) The title of the page
+  - `markdown`: (Required) The page content converted to markdown format
+  - `metadata`: (Optional) Additional metadata about the content
+    - `language`: (Optional) The detected language of the content
+
+#### PAGE_VISIT_ENDED
+
+Sent when a user navigates away from a page or closes the tab/window.
 
 ```json
 {
   "operation": "PAGE_VISIT_ENDED",
+  "sessionId": "unique-session-id",
+  "userId": "user-id",
+  "userEmail": "user@example.com",
+  "timestamp": 1682541285123,
   "data": {
     "pageId": "unique-page-id",
     "visitId": "unique-visit-id",
@@ -114,31 +174,59 @@ The `operation` field must be one of the following event types:
 }
 ```
 
-##### ACTIVE_TIME_UPDATED
+Data fields:
+- `pageId`: (Required) Unique identifier for the page being left
+- `visitId`: (Required) Unique identifier for this specific visit
+- `toPageId`: (Optional) The pageId of the next page, if applicable
+- `timeSpent`: (Required) Total time spent on the page in seconds
+
+#### ACTIVE_TIME_UPDATED
+
+Sent periodically to update the active time spent on a page. This helps track engagement more accurately by distinguishing between active and passive time.
 
 ```json
 {
   "operation": "ACTIVE_TIME_UPDATED",
+  "sessionId": "unique-session-id",
+  "userId": "user-id",
+  "userEmail": "user@example.com",
+  "timestamp": 1682541285123,
   "data": {
     "pageId": "unique-page-id",
     "visitId": "unique-visit-id",
     "duration": 45.5,
-    "isActive": false
+    "isActive": true
   }
 }
 ```
 
-##### SESSION_ENDED
+Data fields:
+- `pageId`: (Required) Unique identifier for the page
+- `visitId`: (Required) Unique identifier for this specific visit
+- `duration`: (Required) The duration in seconds since the last update
+- `isActive`: (Required) Whether the user was active during this period
+
+#### SESSION_ENDED
+
+Sent when a browsing session ends, typically when the browser/extension is closed.
 
 ```json
 {
   "operation": "SESSION_ENDED",
+  "sessionId": "unique-session-id",
+  "userId": "user-id",
+  "userEmail": "user@example.com",
+  "timestamp": 1682541285123,
   "data": {
     "totalDuration": 3600,
     "pagesVisited": 12
   }
 }
 ```
+
+Data fields:
+- `totalDuration`: (Required) Total duration of the session in seconds
+- `pagesVisited`: (Required) Total number of pages visited during the session
 
 #### Response
 
@@ -152,6 +240,29 @@ The `operation` field must be one of the following event types:
   }
 }
 ```
+
+### Event Implementation Notes
+
+#### ID Generation
+
+- `sessionId`: Should be a unique identifier generated at the start of each browsing session
+- `pageId`: Should be a deterministic hash of the URL to ensure the same URL always gets the same pageId
+- `visitId`: Should be a unique identifier for each page visit, even if a user revisits the same page multiple times
+
+#### Timing
+
+- Send `SESSION_STARTED` when the extension/application initializes
+- Send `PAGE_VISIT_STARTED` as soon as navigation to a new page begins
+- Send `CONTENT_EXTRACTED` after the page content has been successfully processed
+- Send `ACTIVE_TIME_UPDATED` periodically (e.g., every 30 seconds) while the user is on a page
+- Send `PAGE_VISIT_ENDED` when the user navigates away or closes the page
+- Send `SESSION_ENDED` when the browser/extension is closed
+
+#### Error Handling
+
+- If an event fails to send, the frontend should queue it for retry
+- After multiple failed attempts, consider storing events locally until connectivity is restored
+- Events should be sent in chronological order whenever possible
 
 ---
 
@@ -303,11 +414,37 @@ Each search result contains:
 }
 ```
 
+### Result Ranking
+
+Both types of search results include ranking information through the `score` property:
+
+#### QuickLaunch Results Ranking
+
+1. **Score Range**: Values between 0.0 and 1.0, with higher values indicating greater relevance.
+2. **Score Calculation**: QuickLaunch results are returned in order of relevance, with scores calculated based on:
+   - Browsing history frequency and recency
+   - String similarity between query and page title/URL
+   - The highest-ranked result has a score close to 1.0
+3. **Result Limit**: Up to 10 QuickLaunch results are returned.
+
+#### Semantic Search Results Ranking
+
+1. **Score Range**: Values between 0.0 and 1.0, with higher values indicating greater relevance.
+2. **Score Calculation**: Semantic search scores are based on:
+   - Vector similarity between query and page content
+   - LLM-based relevance assessments when reranking is enabled
+3. **Result Limit**: Up to 10 semantic search results are returned.
+
+#### Combined Results
+
+When both QuickLaunch and semantic search results are returned (`triggerSemantic: true`), they're deduplicated so the same page doesn't appear twice. The frontend may choose to:
+  - Display them as separate sections (QuickLaunch vs. Content)
+  - Merge and resort by score
+  - Apply custom UI treatments based on score ranges
+
 ### Click Tracking
 
-The Unified Search API includes click tracking to help analyze which search results users interact with. Each result returned by the API includes a `searchSessionId` that should be used when reporting clicks.
-
-#### Search Click Endpoint
+When a user clicks on a search result, send a click tracking event to help analyze which results are most useful.
 
 ```
 POST /api/unified-search/click
@@ -318,7 +455,7 @@ POST /api/unified-search/click
 ```json
 {
   "searchSessionId": "user-id-1682541285123-xyz", // Required: Session ID from the search result
-  "pageId": "page-id-3",                          // Required: ID of the clicked page
+  "pageId": "page-id-3",                          // Required: ID of the clicked result
   "position": 2,                                  // Optional: Position in results (0-based index)
   "timestamp": 1682541290456                      // Optional: When the click occurred
 }
