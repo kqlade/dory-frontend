@@ -11,6 +11,7 @@
  */
 
 import { getDB } from './dexieDB';
+import { getUserInfo } from '../auth/googleAuth';
 
 // Configuration
 const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -113,29 +114,53 @@ export class ColdStorageSync {
     const lastSync = localStorage.getItem(LAST_SYNC_KEY);
     const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
     
+    // Get current user ID for attaching to all records
+    const userId = await this.getCurrentUserId();
+    
     // Sync pages
     await this.syncCollection(
       'pages', 
-      await db.pages.where('lastModified').above(lastSyncTime).toArray()
+      await db.pages.where('lastModified').above(lastSyncTime).toArray(),
+      userId
     );
     
     // Sync visits
     await this.syncCollection(
       'visits',
-      await db.visits.where('startTime').above(lastSyncTime).toArray()
+      await db.visits.where('startTime').above(lastSyncTime).toArray(),
+      userId
     );
     
     // Sync sessions
     await this.syncCollection(
       'sessions',
-      await db.sessions.where('startTime').above(lastSyncTime).toArray()
+      await db.sessions.where('startTime').above(lastSyncTime).toArray(),
+      userId
     );
+    
+    // Note: Content extraction events are sent directly to the backend
+    // in real-time, so they are NOT included in the cold storage sync process.
+    // According to payload.md, we are only syncing pages, visits, and sessions
+    // collections, not events.
+  }
+
+  /**
+   * Get the current user ID, with fallback to anonymous
+   */
+  private async getCurrentUserId(): Promise<string> {
+    try {
+      const userInfo = await getUserInfo();
+      return userInfo?.id || 'anonymous';
+    } catch (error) {
+      console.warn('[ColdStorageSync] Failed to get user ID:', error);
+      return 'anonymous';
+    }
   }
 
   /**
    * Sync a collection of records to the backend
    */
-  private async syncCollection(collectionName: string, records: any[]): Promise<void> {
+  private async syncCollection(collectionName: string, records: any[], userId: string): Promise<void> {
     if (records.length === 0) {
       console.log(`[ColdStorageSync] No new ${collectionName} to sync`);
       return;
@@ -143,11 +168,17 @@ export class ColdStorageSync {
 
     console.log(`[ColdStorageSync] Syncing ${records.length} ${collectionName} records`);
     
+    // Ensure every record has a userId
+    const enrichedRecords = records.map(record => ({
+      ...record,
+      userId: record.userId || userId // Use existing userId if present, otherwise add it
+    }));
+    
     // Split records into batches
-    for (let i = 0; i < records.length; i += BATCH_SIZE) {
-      const batch = records.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < enrichedRecords.length; i += BATCH_SIZE) {
+      const batch = enrichedRecords.slice(i, i + BATCH_SIZE);
       await this.sendBatch(collectionName, batch);
-      console.log(`[ColdStorageSync] Synced batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(records.length / BATCH_SIZE)}`);
+      console.log(`[ColdStorageSync] Synced batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(enrichedRecords.length / BATCH_SIZE)}`);
     }
   }
 

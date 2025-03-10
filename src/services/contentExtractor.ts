@@ -26,6 +26,8 @@ import { sendDoryEvent, EventTypes } from "./eventStreamer";
 console.log("[ContentExtractor] Debug: About to import session manager");
 // We still want to use the Dexie session manager to get the current session ID
 import { getCurrentSessionId } from "./dexieSessionManager";
+// Import getUserInfo for user identification
+import { getUserInfo } from "../auth/googleAuth";
 console.log("[ContentExtractor] Debug: All imports completed");
 
 console.log("[ContentExtractor] File loaded - before initialization");
@@ -356,6 +358,18 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
       console.log(`[ContentExtractor] Preparing to send event to backend: pageId=${currentPageId}, visitId=${currentVisitId}`);
       try {
         console.log(`[ContentExtractor] Sending CONTENT_EXTRACTED event to API instead of local storage`);
+        
+        // Get current user info for proper attribution
+        let userId = 'anonymous';
+        try {
+          const userInfo = await getUserInfo();
+          if (userInfo && userInfo.id) {
+            userId = userInfo.id;
+          }
+        } catch (userError) {
+          console.warn('[ContentExtractor] Could not get user info:', userError);
+        }
+        
         await sendDoryEvent({
           operation: EventTypes.CONTENT_EXTRACTED,
           sessionId: sessionId.toString(),
@@ -363,6 +377,7 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
           data: {
             pageId: currentPageId,
             visitId: currentVisitId,
+            userId: userId, // Add userId to data object for cold storage
             url: currentUrl,
             content: {
               title: title,

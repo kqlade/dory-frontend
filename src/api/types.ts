@@ -119,7 +119,8 @@ export interface PageVisitStartedData {
 export interface ContentExtractedData {
   pageId: string;
   visitId: string;
-  url?: string;  // Optional URL for the page
+  userId: string;    // User who visited the page
+  url?: string;      // Optional URL for the page
   content: {
     title: string;
     markdown: string;
