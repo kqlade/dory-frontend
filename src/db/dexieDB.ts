@@ -1,226 +1,272 @@
 /**
- * Dory Local Storage implementation using Dexie.js
- * 
- * This file provides a simplified IndexedDB implementation that maintains
- * user data isolation with significantly less code using Dexie.js
+ * @file dexieDB.ts
+ *
+ * A full rewrite that:
+ *  1) Uses auto-incremented primary keys on edges/sessions (`++edgeId`, `++sessionId`).
+ *  2) Adds compound index [fromPageId+toPageId+sessionId] on edges, fixing "KeyPath not indexed" errors.
  */
 
 import Dexie from 'dexie';
+import { getUserInfo } from '../auth/googleAuth';
 
-/**
- * Types for our database tables
- */
-export interface Page {
+/** PageRecord: same as before */
+export interface PageRecord {
   pageId: string;
   url: string;
   title: string;
   domain: string;
-  favicon?: string;
   firstVisit: number;
   lastVisit: number;
   visitCount: number;
-  hasExtractedContent: boolean;
-  contentAvailability: 'local' | 'server' | 'both' | 'none';
+  totalActiveTime: number;
   personalScore: number;
-  tags?: string[];
-  category?: string;
   syncStatus: 'synced' | 'pending' | 'conflict';
   updatedAt: number;
-}
-
-export interface Visit {
-  id?: number;
-  pageId: string;
-  timestamp: number;
-  dwellTime: number;
-  sessionId: string;
-  referrer?: string;
-  exitPage?: string;
-  syncStatus: 'synced' | 'pending';
-  updatedAt: number;
-}
-
-export interface ActiveTime {
-  id?: number;
-  pageId: string;
-  startTime: number;
-  endTime: number;
-  duration: number;
-  sessionId: string;
-  syncStatus: 'synced' | 'pending';
-  updatedAt: number;
-}
-
-export interface Session {
-  sessionId: string;
-  startTime: number;
-  endTime?: number;
-  deviceInfo: string;
-  syncStatus: 'synced' | 'pending';
-  updatedAt: number;
-}
-
-export interface SearchHistory {
-  id?: number;
-  query: string;
-  timestamp: number;
-  resultCount: number;
-  selectedResult?: string;
-  selectedIndex?: number;
-  sessionId: string;
-  syncStatus: 'synced' | 'pending';
-  updatedAt: number;
-}
-
-export interface PageContent {
-  pageId: string;
-  snippets?: string[];
-  headings?: string[];
-  keywords?: string[];
-  summary?: string;
-  wordCount?: number;
-  extractedAt: number;
-  contentSentToServer: boolean;
-  syncStatus: 'synced' | 'pending';
-  updatedAt: number;
-}
-
-export interface SyncLog {
-  id?: number;
-  operation: 'push' | 'pull' | 'merge';
-  startTime: number;
-  endTime: number;
-  status: 'success' | 'failure' | 'partial' | 'inProgress';
-  itemsSynced: number;
-  error?: string;
-  details?: object;
+  favicon?: string;
+  tags?: string[];
+  category?: string;
+  hasExtractedContent?: boolean;
+  contentAvailability?: 'local' | 'server' | 'both' | 'none';
 }
 
 /**
- * Dory Database class that extends Dexie
+ * EdgeRecord: 
+ *  - `edgeId?: number` is auto-increment so Dexie sets it.
+ *  - We define a compound index in the schema so we can do 
+ *    db.edges.where(['fromPageId','toPageId','sessionId'])
  */
+export interface EdgeRecord {
+  edgeId?: number; // auto-increment
+  fromPageId: string;
+  toPageId: string;
+  sessionId: number;
+  timestamp: number;
+  count: number;
+  firstTraversal: number;
+  lastTraversal: number;
+  isBackNavigation?: boolean;
+}
+
+/**
+ * VisitRecord:
+ * We already supply `visitId` ourselves, so it's not auto-increment.
+ */
+export interface VisitRecord {
+  visitId: string;
+  pageId: string;
+  sessionId: number;
+  startTime: number;
+  totalActiveTime: number;
+  fromPageId?: string;
+  endTime?: number;
+  isBackNavigation?: boolean;
+}
+
+/**
+ * BrowsingSession:
+ *  - `sessionId?: number` is now auto-increment
+ */
+export interface BrowsingSession {
+  sessionId?: number;   // auto-increment
+  startTime: number;
+  endTime?: number;
+  lastActivityAt: number;
+  totalActiveTime: number;
+  isActive: boolean;
+}
+
+/**
+ * DoryEvent:
+ *  - eventId is `++eventId` so Dexie auto-increments it
+ */
+export interface DoryEvent {
+  eventId?: number;
+  operation: string;
+  sessionId: string;  // or number cast to string
+  userId?: string;
+  userEmail?: string;
+  timestamp: number;
+  data: any;
+  loggedAt: number;
+}
+
+/** Our Dexie subclass */
 export class DoryDatabase extends Dexie {
-  // Define table properties
-  pages!: Dexie.Table<Page, string>;
-  visits!: Dexie.Table<Visit, number>;
-  activeTime!: Dexie.Table<ActiveTime, number>;
-  sessions!: Dexie.Table<Session, string>;
-  searchHistory!: Dexie.Table<SearchHistory, number>;
-  pageContent!: Dexie.Table<PageContent, string>;
-  syncLog!: Dexie.Table<SyncLog, number>;
+  // Dexie tables
+  pages!: Dexie.Table<PageRecord, string>;
+  edges!: Dexie.Table<EdgeRecord, number>;
+  sessions!: Dexie.Table<BrowsingSession, number>;
+  visits!: Dexie.Table<VisitRecord, string>;
+  events!: Dexie.Table<DoryEvent, number>;
 
   constructor(userId: string) {
-    // Create database with user-specific name
+    // Each user has a separate DB
     super(`doryLocalDB_${userId}`);
 
-    // Define database schema
+    /**
+     *  Single version(1) schema that does:
+     *   - edges: '++edgeId, [fromPageId+toPageId+sessionId], ...'
+     *   - sessions: '++sessionId, ...'
+     *   - visits: 'visitId, ...'
+     *   - pages: 'pageId, ...'
+     *   - events: '++eventId, ...'
+     */
     this.version(1).stores({
-      // Table name: primary key + indexed properties
-      pages: 'pageId, url, domain, lastVisit, visitCount, personalScore, syncStatus, *tags, [personalScore+lastVisit], [domain+lastVisit]',
-      visits: '++id, pageId, timestamp, sessionId, syncStatus, [pageId+timestamp]',
-      activeTime: '++id, pageId, startTime, sessionId, syncStatus',
-      sessions: 'sessionId, startTime, syncStatus',
-      searchHistory: '++id, query, timestamp, sessionId, syncStatus',
-      pageContent: 'pageId, extractedAt, syncStatus',
-      syncLog: '++id, startTime, status'
+      pages: `
+        pageId,
+        url,
+        domain,
+        lastVisit,
+        visitCount,
+        personalScore,
+        syncStatus,
+        *tags
+      `,
+      /**
+       * edges store:
+       *  - `++edgeId` means auto-increment PK
+       *  - `[fromPageId+toPageId+sessionId]` is a compound index
+       *  - We also list single-field indexes: fromPageId, toPageId, sessionId, etc.
+       */
+      edges: `
+        ++edgeId,
+        [fromPageId+toPageId+sessionId],
+        fromPageId,
+        toPageId,
+        sessionId,
+        timestamp,
+        count,
+        firstTraversal,
+        lastTraversal,
+        *isBackNavigation
+      `,
+      /**
+       * sessions store:
+       *  - `++sessionId` means auto-increment PK
+       */
+      sessions: `
+        ++sessionId,
+        startTime,
+        endTime,
+        lastActivityAt,
+        totalActiveTime,
+        isActive
+      `,
+      /**
+       * visits store:
+       *  - We supply `visitId` ourselves, so it's the PK
+       */
+      visits: `
+        visitId,
+        pageId,
+        sessionId,
+        fromPageId,
+        startTime,
+        endTime,
+        totalActiveTime,
+        *isBackNavigation
+      `,
+      /**
+       * events store:
+       *  - `++eventId` auto-increment
+       */
+      events: `
+        ++eventId,
+        operation,
+        sessionId,
+        timestamp,
+        loggedAt
+      `
     });
   }
 }
 
-// Store active database instances by user ID
+/** Active instances keyed by userId */
 const dbInstances: Record<string, DoryDatabase> = {};
+
+/** Track current user ID in memory */
 let currentUserId: string | null = null;
 
 /**
- * Gets a database instance for the specified user
- * @param userId The user's ID
- * @returns A Dexie database instance
+ * If no DB instance for the user, create it.
  */
 export function getUserDB(userId: string): DoryDatabase {
   if (!userId) {
     throw new Error('User ID is required to access the database');
   }
-
   if (!dbInstances[userId]) {
     dbInstances[userId] = new DoryDatabase(userId);
   }
-
   return dbInstances[userId];
 }
 
 /**
- * Sets the current active user
- * @param userId The user's ID or null when logging out
+ * Get DB for the currently authenticated user
  */
-export function setCurrentUser(userId: string | null): void {
-  if (userId === currentUserId) return;
-  currentUserId = userId;
-}
-
-/**
- * Gets the current user's database
- * @returns The current user's database instance
- * @throws Error if no user is authenticated
- */
-export function getCurrentDB(): DoryDatabase {
+export function getDB(): DoryDatabase {
   if (!currentUserId) {
-    throw new Error('No authenticated user: User must be logged in to access the database');
+    throw new Error('No authenticated user. Call initializeDexieDB first.');
   }
-  
   return getUserDB(currentUserId);
 }
 
 /**
- * Closes all database connections
+ * Initialize Dexie DB system based on whichever user is authenticated.
+ */
+export async function initializeDexieDB(): Promise<void> {
+  try {
+    const userInfo = await getUserInfo();
+    if (userInfo?.id) {
+      currentUserId = userInfo.id;
+      console.log(`[DexieDB] Initialized for user: ${userInfo.id}`);
+      getDB(); // ensures creation
+    } else {
+      console.log('[DexieDB] No authenticated user => using "anonymous" DB');
+      currentUserId = 'anonymous';
+      getDB();
+    }
+  } catch (error) {
+    console.error('[DexieDB] Error initializing database:', error);
+    currentUserId = 'anonymous';
+    getDB();
+  }
+}
+
+/**
+ * Switch to a new user ID at runtime, if needed
+ */
+export function setCurrentUser(userId: string): void {
+  currentUserId = userId;
+}
+
+/**
+ * Close the DB for the current user, if open
+ */
+export function handleUserLogout(): void {
+  if (currentUserId && dbInstances[currentUserId]) {
+    dbInstances[currentUserId].close();
+    delete dbInstances[currentUserId];
+  }
+  currentUserId = null;
+}
+
+/**
+ * Close ALL open DBs (for all users)
  */
 export function closeAllDatabases(): void {
-  for (const userId in dbInstances) {
+  for (const userId of Object.keys(dbInstances)) {
     dbInstances[userId].close();
     delete dbInstances[userId];
   }
 }
 
-/**
- * Initializes the database after successful authentication
- * @param userId The authenticated user's ID
- */
-export async function initializeUserDatabase(userId: string): Promise<void> {
-  if (!userId) {
-    throw new Error('User ID is required to initialize the database');
-  }
-
-  try {
-    setCurrentUser(userId);
-    // Just accessing the DB will initialize it
-    const db = getCurrentDB();
-    console.log(`Database initialized for user: ${userId}`);
-    return;
-  } catch (error) {
-    console.error('Failed to initialize database:', error);
-    throw new Error(`Database initialization failed for user: ${userId}`);
-  }
-}
-
-/**
- * Handles cleanup when a user logs out
- */
-export function handleUserLogout(): void {
-  if (!currentUserId) return;
-  
-  // Close the database but keep the instance in case they log back in
-  if (dbInstances[currentUserId]) {
-    dbInstances[currentUserId].close();
-  }
-  
-  currentUserId = null;
-}
-
+// Optionally export a default object if you like:
 export default {
+  getDB,
   getUserDB,
-  getCurrentDB,
+  initializeDexieDB,
   setCurrentUser,
-  initializeUserDatabase,
   handleUserLogout,
   closeAllDatabases,
   DoryDatabase
-}; 
+};

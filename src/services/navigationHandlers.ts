@@ -1,21 +1,21 @@
 /**
  * @file navigationHandlers.ts
  * 
- * Houses logic for handling onCommitted and onCreatedNavigationTarget 
- * in a separate module to improve code organization and testability.
+ * Logic for handling onCommitted & onCreatedNavigationTarget 
+ * in a separate module for clarity.
  */
 
-import { createOrGetPage, createOrUpdateEdge } from './dexieBrowsingStore';
-import { getCurrentSessionId } from './dexieSessionManager';
+import { createOrGetPage, createOrUpdateEdge } from '../utils/dexieBrowsingStore';
+import { getCurrentSessionId } from '../utils/dexieSessionManager';
 
 export interface TabTracking {
   tabToCurrentUrl: Record<number, string | undefined>;
-  tabToPageId: Record<number, number>;
+  tabToPageId: Record<number, string>;
   tabToVisitId: Record<number, string>;
   startNewVisit: (
     tabId: number,
-    pageId: number,
-    fromPageId?: number,
+    pageId: string,
+    fromPageId?: string,
     isBackNav?: boolean
   ) => Promise<string>;
   ensureActiveSession: () => Promise<void>;
@@ -23,8 +23,7 @@ export interface TabTracking {
 }
 
 /**
- * Handle completed navigations (after redirects).
- * Moved from the inline onCommitted listener.
+ * Handle completed navigations in the main frame.
  */
 export async function handleOnCommitted(
   details: {
@@ -37,63 +36,51 @@ export async function handleOnCommitted(
   },
   tracking: TabTracking
 ): Promise<void> {
-  // Only handle main frame
-  if (details.frameId !== 0) return;
+  if (details.frameId !== 0) return; // only main frame
+
+  const { tabId, url, timeStamp, transitionType, transitionQualifiers } = details;
+  console.log('[DORY] onCommitted =>', { tabId, url, transitionType, transitionQualifiers });
 
   try {
-    const { tabId, url, timeStamp, transitionType, transitionQualifiers } = details;
-    console.log('[DORY] INFO:', 'onCommitted => navigation', { tabId, url, transitionType, transitionQualifiers });
-
     await tracking.ensureActiveSession();
 
-    // Check if it's a back/forward navigation
     const isBackNav = transitionQualifiers.includes('forward_back');
-    console.log('[DORY] INFO:', 'Navigation type:', isBackNav ? 'BACK/FORWARD' : transitionType.toUpperCase());
-
-    // Get title
-    const title = await tracking.getTabTitle(tabId) || url;
-
-    // Get current URL for this tab
+    console.log('[DORY] => Navigation type:', isBackNav ? 'BACK/FORWARD' : transitionType.toUpperCase());
+    
+    const title = (await tracking.getTabTitle(tabId)) || url;
     const currentTabValue = tracking.tabToCurrentUrl[tabId];
     
-    // Create/get the destination page
+    // Create the "toPageId"
     const toPageId = await createOrGetPage(url, title, timeStamp);
-
-    // Update tab-URL mapping
     tracking.tabToCurrentUrl[tabId] = url;
 
-    // 1. Handle pending navigation from a new tab
     if (currentTabValue && currentTabValue.startsWith('pending:')) {
-      const fromPageId = parseInt(currentTabValue.substring(8));
+      // new tab scenario
+      const fromPageId = currentTabValue.substring(8);
       const sessionId = await getCurrentSessionId();
       if (sessionId) {
         await createOrUpdateEdge(fromPageId, toPageId, sessionId, timeStamp, isBackNav);
-        console.log('[DORY] INFO:', 'Created/updated new-tab-edge', { fromPageId, toPageId, title, isBackNav });
         await tracking.startNewVisit(tabId, toPageId, fromPageId, isBackNav);
       }
-    } 
-    // 2. Handle same-tab navigation
-    else if (currentTabValue && currentTabValue !== url) {
+    } else if (currentTabValue && currentTabValue !== url) {
+      // same tab navigation scenario
       const fromPageId = await createOrGetPage(currentTabValue, currentTabValue, timeStamp);
       const sessionId = await getCurrentSessionId();
       if (sessionId) {
         await createOrUpdateEdge(fromPageId, toPageId, sessionId, timeStamp, isBackNav);
-        console.log('[DORY] INFO:', 'Created/updated same-tab-edge', { fromPageId, toPageId, title, isBackNav });
         await tracking.startNewVisit(tabId, toPageId, fromPageId, isBackNav);
       }
-    }
-    // 3. Otherwise direct nav (typed/bookmark/etc.)
-    else {
+    } else {
+      // Direct or typed nav
       await tracking.startNewVisit(tabId, toPageId);
     }
   } catch (err) {
-    console.error('[DORY] ERROR:', 'handleOnCommitted threw an error', { details, error: err });
+    console.error('[DORY] handleOnCommitted error =>', err);
   }
 }
 
 /**
  * Handle new tab creation from a link (target="_blank", etc.).
- * Moved from the inline onCreatedNavigationTarget listener.
  */
 export async function handleOnCreatedNavigationTarget(
   details: {
@@ -104,19 +91,19 @@ export async function handleOnCreatedNavigationTarget(
   },
   tracking: TabTracking
 ): Promise<void> {
-  const { sourceTabId, tabId, timeStamp } = details;
-  try {
-    console.log('[DORY] INFO:', 'onCreatedNavigationTarget => details', { sourceTabId, tabId });
+  const { sourceTabId, tabId, timeStamp, url } = details;
+  console.log('[DORY] onCreatedNavigationTarget =>', { sourceTabId, tabId, url });
 
+  try {
     await tracking.ensureActiveSession();
 
     const oldUrl = tracking.tabToCurrentUrl[sourceTabId];
     if (oldUrl && !oldUrl.startsWith('pending:')) {
       const fromPageId = await createOrGetPage(oldUrl, oldUrl, timeStamp);
       tracking.tabToCurrentUrl[tabId] = `pending:${fromPageId}`;
-      console.log('[DORY] INFO:', 'Stored pending navigation', { fromPageId, tabId });
+      console.log('[DORY] => stored pending nav from pageId:', fromPageId);
     }
   } catch (err) {
-    console.error('[DORY] ERROR:', 'handleOnCreatedNavigationTarget threw an error', { details, error: err });
+    console.error('[DORY] handleOnCreatedNavigationTarget error =>', err);
   }
 }

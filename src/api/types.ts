@@ -1,7 +1,7 @@
+// src/api/types.ts
+
 /**
- * src/api/types.ts
- *
- * Define request/response shapes and error types.
+ * Request/response shapes, errors, event types, etc.
  */
 
 // Search result types
@@ -11,8 +11,8 @@ export interface SearchResult {
   url: string;
   score?: number;
   searchSessionId?: string;
-  
-  // Additional fields we support
+
+  // Additional fields you track
   docId?: string;
   chunkText?: string;
   isHighlighted?: boolean;
@@ -22,6 +22,7 @@ export interface SearchResult {
     status?: string;
     chunkIndex?: number;
     totalChunks?: number;
+    [key: string]: any;
   };
   explanation?: string;
 }
@@ -71,10 +72,12 @@ export interface SearchResponse {
   };
 }
 
-// API Error type
+/**
+ * Custom error class for API calls
+ */
 export class ApiError extends Error {
   status: number;
-  
+
   constructor(message: string, status: number) {
     super(message);
     this.name = 'ApiError';
@@ -82,7 +85,9 @@ export class ApiError extends Error {
   }
 }
 
-// Event streaming types
+/**
+ * Event Types
+ */
 export enum EventType {
   SESSION_STARTED = 'SESSION_STARTED',
   PAGE_VISIT_STARTED = 'PAGE_VISIT_STARTED',
@@ -90,18 +95,24 @@ export enum EventType {
   PAGE_VISIT_ENDED = 'PAGE_VISIT_ENDED',
   ACTIVE_TIME_UPDATED = 'ACTIVE_TIME_UPDATED',
   SESSION_ENDED = 'SESSION_ENDED',
-  SEARCH_CLICK = 'SEARCH_CLICK'
+  SEARCH_CLICK = 'SEARCH_CLICK',
 }
 
+/**
+ * Generic Dory event shape
+ */
 export interface DoryEvent {
   operation: EventType | string;
   sessionId: string;
-  userId?: string;    // Optional to handle not-yet-authenticated state
-  userEmail?: string; // Optional to handle not-yet-authenticated state
+  userId?: string;
+  userEmail?: string;
   timestamp: number;
   data: Record<string, any>;
 }
 
+/**
+ * Example event-specific shapes (optional)
+ */
 export interface SessionStartedData {
   userAgent: string;
   platform: string;
@@ -120,8 +131,8 @@ export interface PageVisitStartedData {
 export interface ContentExtractedData {
   pageId: string;
   visitId: string;
-  userId: string;    // User who visited the page
-  url?: string;      // Optional URL for the page
+  userId: string;
+  url?: string;
   content: {
     title: string;
     markdown: string;
@@ -135,8 +146,8 @@ export interface ContentExtractedData {
 export interface PageVisitEndedData {
   pageId: string;
   visitId: string;
-  toPageId?: string;   // Optional, the pageId of the next page if applicable
-  timeSpent: number;   // Required, total time spent on the page in seconds
+  toPageId?: string;
+  timeSpent: number;
 }
 
 export interface ActiveTimeUpdatedData {
@@ -151,7 +162,6 @@ export interface SessionEndedData {
   pagesVisited: number;
 }
 
-// Add SearchClickData interface after the other event data interfaces
 export interface SearchClickData {
   searchSessionId: string;
   pageId: string;

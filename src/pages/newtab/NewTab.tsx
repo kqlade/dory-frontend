@@ -3,7 +3,7 @@ import NewTabSearchBar from '../../components/NewTabSearchBar';
 import ThemeToggle from './ThemeToggle';
 import styled from 'styled-components';
 import { trackSearchClick } from '../../services/eventService';
-import { useHybridSearch } from '../../hooks/useSearch';
+import { useHybridSearch } from '../../utils/useSearch';
 
 const Container = styled.div`
   width: 100%;
@@ -192,7 +192,7 @@ const NewTab: React.FC = () => {
           value={inputValue}
           onChange={handleQueryChange}
           onKeyDown={handleKeyDown}
-          placeholder="Search your history..."
+          placeholder="Find what you forgot..."
         />
         
         {inputValue.trim() && (

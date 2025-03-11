@@ -1,357 +1,319 @@
 /**
+ * @file coldStorageSync.ts
+ * 
  * Cold Storage Sync Service
- * 
- * This service handles syncing local IndexedDB data to backend cold storage.
- * It runs once per day to efficiently batch-upload browsing data.
- * 
- * Design principles:
- * - KISS: Simple implementation with clear scheduling and error handling
- * - DRY: Reuses existing IndexedDB access code
- * - Efficient: Uses batching and low-priority background processing
+ * Runs roughly once per day to batch-upload data from IndexedDB to the backend.
  */
 
-import { getDB } from './dexieDB';
+import { getDB } from '../db/dexieDB';
 import { getUserInfo } from '../auth/googleAuth';
 import { API_BASE_URL, ENDPOINTS } from '../config';
-import { sendSessionEvent, sendVisitEvent } from './eventService';
 import { EventType } from '../api/types';
 
-// Configuration
-const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const BATCH_SIZE = 500; // Number of records to send in a single batch
+// Typical daily interval in minutes
+const SYNC_INTERVAL_MINUTES = 24 * 60; // 24 hours
 const LAST_SYNC_KEY = 'lastColdStorageSync';
+const BATCH_SIZE = 500; // Number of records per batch
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
 
 /**
- * Cold Storage Sync Service
+ * A class that orchestrates cold-storage syncing in a background context.
+ * In Manifest V3, you likely won't keep it instantiated; rather,
+ * you might create it on-demand in your service worker or have a static usage.
  */
 export class ColdStorageSync {
-  private syncTimeoutId: number | null = null;
   private isSyncing = false;
 
   constructor() {
-    console.log('[ColdStorageSync] Service initialized');
+    console.log('[ColdStorageSync] Service constructed');
   }
 
   /**
-   * Initialize the sync service and schedule the first sync
+   * Initialize daily alarm-based scheduling for MV3
+   * (called from the background service worker).
    */
-  public initialize(): void {
-    this.scheduleNextSync();
-    console.log('[ColdStorageSync] Scheduled first sync');
+  public static initializeScheduling(): void {
+    // Clear any old alarm
+    chrome.alarms.clear('doryColdStorageSync');
+    // Create a new daily alarm
+    chrome.alarms.create('doryColdStorageSync', {
+      periodInMinutes: SYNC_INTERVAL_MINUTES,
+      when: Date.now() + 60_000 // start ~1 min from now
+    });
+    console.log('[ColdStorageSync] Alarm scheduled for daily sync');
   }
 
   /**
-   * Schedule the next sync based on the last sync time
-   */
-  private scheduleNextSync(): void {
-    // Clear any existing timeout
-    if (this.syncTimeoutId !== null) {
-      clearTimeout(this.syncTimeoutId);
-    }
-
-    // Get the last sync time
-    const lastSync = localStorage.getItem(LAST_SYNC_KEY);
-    const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
-    const now = Date.now();
-
-    // Calculate the time until next sync
-    const timeSinceLastSync = now - lastSyncTime;
-    const timeUntilNextSync = Math.max(0, SYNC_INTERVAL_MS - timeSinceLastSync);
-
-    // Schedule the next sync
-    this.syncTimeoutId = window.setTimeout(() => {
-      this.performSync();
-    }, timeUntilNextSync);
-
-    const nextSyncDate = new Date(now + timeUntilNextSync);
-    console.log(`[ColdStorageSync] Next sync scheduled for ${nextSyncDate.toLocaleString()}`);
-  }
-
-  /**
-   * Perform the sync operation
+   * This is your main entry point from the alarm listener or a manual trigger.
    */
   public async performSync(): Promise<void> {
     if (this.isSyncing) {
-      console.log('[ColdStorageSync] Sync already in progress, skipping');
+      console.log('[ColdStorageSync] Sync already in progress; skipping');
       return;
     }
 
     try {
       this.isSyncing = true;
-      console.log('[ColdStorageSync] Starting sync');
+      console.log('[ColdStorageSync] Starting sync operation...');
 
-      // Use IdleCallback if available to minimize impact on user experience
-      if ('requestIdleCallback' in window) {
-        await new Promise<void>(resolve => {
-          window.requestIdleCallback(
-            () => {
-              this.syncData().then(resolve);
-            },
-            { timeout: 60000 } // 1 minute timeout
-          );
-        });
-      } else {
-        // Fall back to direct execution if IdleCallback is not available
-        await this.syncData();
-      }
+      // Update last sync time in storage when completed successfully
+      await this.syncData();
 
-      // Record the successful sync time
-      localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+      await chrome.storage.local.set({ [LAST_SYNC_KEY]: Date.now() });
       console.log('[ColdStorageSync] Sync completed successfully');
     } catch (error) {
       console.error('[ColdStorageSync] Sync failed:', error);
     } finally {
       this.isSyncing = false;
-      this.scheduleNextSync();
     }
   }
 
   /**
-   * Actually perform the data sync to cold storage
+   * The core logic that fetches data from Dexie and sends it in batches.
    */
   private async syncData(): Promise<void> {
     const db = await getDB();
-    
-    // Get the last sync timestamp or use a very old date as the default
-    const lastSync = localStorage.getItem(LAST_SYNC_KEY);
-    const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
-    
-    // Get current user ID for attaching to all records
+
+    // Get last sync time from chrome.storage.local
+    const store = await chrome.storage.local.get(LAST_SYNC_KEY);
+    const lastSyncTime: number = store[LAST_SYNC_KEY] ?? 0;
+
+    // Current user ID for stamping records
     const userId = await this.getCurrentUserId();
-    
-    // Sync pages
-    await this.syncCollection(
-      'pages', 
-      await db.pages.where('lastModified').above(lastSyncTime).toArray(),
-      userId
-    );
-    
-    // Sync visits
-    await this.syncCollection(
-      'visits',
-      await db.visits.where('startTime').above(lastSyncTime).toArray(),
-      userId
-    );
-    
-    // Sync sessions
-    await this.syncCollection(
-      'sessions',
-      await db.sessions.where('startTime').above(lastSyncTime).toArray(),
-      userId
-    );
-    
-    // Sync search click events
-    await this.syncEvents(
-      EventType.SEARCH_CLICK,
-      await db.events
+
+    // Example: sync pages
+    {
+      const pages = await db.pages
+        // Assuming you have a field like `updatedAt` or `lastModified`.
+        // If you use `lastModified`, change below accordingly.
+        .where('updatedAt')
+        .above(lastSyncTime)
+        .toArray();
+
+      await this.syncCollection('pages', pages, userId);
+    }
+
+    // Example: sync visits
+    {
+      const visits = await db.visits
+        .where('startTime')
+        .above(lastSyncTime)
+        .toArray();
+
+      await this.syncCollection('visits', visits, userId);
+    }
+
+    // sessions, events, search clicks, etc.
+    {
+      const sessions = await db.sessions
+        .where('startTime')
+        .above(lastSyncTime)
+        .toArray();
+
+      await this.syncCollection('sessions', sessions, userId);
+    }
+
+    // Example: sync search click events
+    {
+      const clickEvents = await db.events
         .where('operation')
         .equals(EventType.SEARCH_CLICK)
-        .and(event => event.timestamp > lastSyncTime)
-        .toArray(),
-      userId
-    );
-    
-    // Note: Content extraction events are sent directly to the backend
-    // in real-time, so they are NOT included in the cold storage sync process.
+        .and(e => e.timestamp > lastSyncTime)
+        .toArray();
+
+      await this.syncEvents(EventType.SEARCH_CLICK, clickEvents, userId);
+    }
+
+    // Add more collections as needed...
   }
 
   /**
-   * Get the current user ID, with fallback to anonymous
-   * Authentication is already verified at the extension level
+   * Get current user ID or 'anonymous' if not available.
    */
   private async getCurrentUserId(): Promise<string> {
     try {
-      // User should already be authenticated at the extension level,
-      // so we can expect a valid user ID in most cases
-      const userInfo = await getUserInfo();
+      const userInfo = await getUserInfo(false);
       return userInfo?.id || 'anonymous';
     } catch (error) {
-      console.warn('[ColdStorageSync] Failed to get user ID:', error);
+      console.warn('[ColdStorageSync] getCurrentUserId failed:', error);
       return 'anonymous';
     }
   }
 
   /**
-   * Sync a collection of records to the backend
+   * Sync a collection by splitting into BATCH_SIZE chunks and sending.
    */
   private async syncCollection(collectionName: string, records: any[], userId: string): Promise<void> {
-    if (records.length === 0) {
-      console.log(`[ColdStorageSync] No new ${collectionName} to sync`);
+    if (!records.length) {
+      console.log(`[ColdStorageSync] No new ${collectionName} records to sync`);
       return;
     }
-
     console.log(`[ColdStorageSync] Syncing ${records.length} ${collectionName} records`);
-    
-    // Ensure every record has a userId
-    const enrichedRecords = records.map(record => ({
-      ...record,
-      userId: record.userId || userId // Use existing userId if present, otherwise add it
-    }));
-    
-    // Split records into batches
-    for (let i = 0; i < enrichedRecords.length; i += BATCH_SIZE) {
-      const batch = enrichedRecords.slice(i, i + BATCH_SIZE);
+
+    const enriched = records.map(r => ({ ...r, userId: r.userId || userId }));
+
+    for (let i = 0; i < enriched.length; i += BATCH_SIZE) {
+      const batch = enriched.slice(i, i + BATCH_SIZE);
       await this.sendBatch(collectionName, batch);
-      console.log(`[ColdStorageSync] Synced batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(enrichedRecords.length / BATCH_SIZE)}`);
+      console.log(`[ColdStorageSync] Synced batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(enriched.length / BATCH_SIZE)} for ${collectionName}`);
     }
   }
 
   /**
-   * Send a batch of records to the backend using the appropriate specialized function
+   * Actually POST a batch of data to your cold-storage endpoints.
    */
   private async sendBatch(collectionName: string, batch: any[]): Promise<void> {
-    try {
-      // Use the appropriate specialized function based on collection type
-      switch (collectionName) {
-        case 'sessions':
-          // For sessions, use sendSessionEvent for each record
-          for (const session of batch) {
-            // Determine if it's a session start or end event
-            const operation = session.endTime ? 'SESSION_ENDED' : 'SESSION_STARTED';
-            await sendSessionEvent({
-              sessionId: session.sessionId.toString(),
-              operation,
-              startTime: session.startTime,
-              endTime: session.endTime,
-              data: session
-            });
-          }
-          break;
-          
-        case 'visits':
-          // For visits, use sendVisitEvent for each record
-          for (const visit of batch) {
-            // Determine the operation based on visit state
-            let operation: 'PAGE_VISIT_STARTED' | 'PAGE_VISIT_ENDED' | 'ACTIVE_TIME_UPDATED';
-            if (!visit.endTime) {
-              operation = 'PAGE_VISIT_STARTED';
-            } else if (visit.totalActiveTime > 0) {
-              operation = 'ACTIVE_TIME_UPDATED';
-            } else {
-              operation = 'PAGE_VISIT_ENDED';
-            }
-            
-            await sendVisitEvent({
-              pageId: visit.pageId.toString(),
-              visitId: visit.visitId,
-              sessionId: visit.sessionId.toString(),
-              url: visit.url || '',
-              operation,
-              startTime: visit.startTime,
-              endTime: visit.endTime,
-              data: visit
-            });
-          }
-          break;
-          
-        default:
-          // For other collections, use the generic endpoint
-          const endpoint = `${ENDPOINTS.COLD_STORAGE.BASE}/${collectionName}`;
-          const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(batch),
-            credentials: 'include',
-          });
-          
-          if (!response.ok) {
-            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
-          }
-      }
-    } catch (error) {
-      console.error(`[ColdStorageSync] Failed to sync ${collectionName} batch:`, error);
-      throw error; // Re-throw to handle in the calling function
+    if (!batch.length) return;
+
+    let endpoint: string;
+    let transformed: any[];
+
+    switch (collectionName) {
+      case 'sessions':
+        endpoint = ENDPOINTS.COLD_STORAGE.SESSIONS;
+        transformed = batch.map(s => ({
+          sessionId: String(s.sessionId),
+          userId: s.userId,
+          startTime: s.startTime,
+          endTime: s.endTime ?? null,
+          totalActiveTime: s.totalActiveTime,
+          isActive: s.isActive
+        }));
+        break;
+
+      case 'visits':
+        endpoint = ENDPOINTS.COLD_STORAGE.VISITS;
+        transformed = batch.map(v => ({
+          visitId: String(v.visitId),
+          userId: v.userId,
+          pageId: String(v.pageId),
+          sessionId: String(v.sessionId),
+          startTime: v.startTime,
+          endTime: v.endTime ?? null,
+          totalActiveTime: v.totalActiveTime,
+          fromPageId: v.fromPageId ?? null,
+          isBackNavigation: !!v.isBackNavigation
+        }));
+        break;
+
+      case 'pages':
+        endpoint = ENDPOINTS.COLD_STORAGE.PAGES;
+        transformed = batch.map(p => ({
+          pageId: String(p.pageId),
+          userId: p.userId,
+          url: p.url,
+          title: p.title,
+          domain: p.domain,
+          firstVisit: p.firstVisit,
+          lastVisit: p.lastVisit,
+          visitCount: p.visitCount,
+          totalActiveTime: p.totalActiveTime
+          // etc...
+        }));
+        break;
+
+      default:
+        // Generic fallback if you have a catch-all
+        endpoint = `${ENDPOINTS.COLD_STORAGE.BASE}/${collectionName}`;
+        transformed = batch;
     }
-  }
 
-  /**
-   * Force an immediate sync
-   */
-  public async forceSyncNow(): Promise<void> {
-    console.log('[ColdStorageSync] Forcing immediate sync');
-    return this.performSync();
-  }
-
-  /**
-   * Stop the sync service
-   */
-  public stop(): void {
-    if (this.syncTimeoutId !== null) {
-      clearTimeout(this.syncTimeoutId);
-      this.syncTimeoutId = null;
+    // Debug
+    if (DEBUG_MODE) {
+      console.log(`[ColdStorageSync] POSTing ${transformed.length} ${collectionName} items to ${endpoint}`, 
+        transformed.length > 5 
+          ? [transformed[0], '(...omitted...)', transformed[transformed.length - 1]]
+          : transformed
+      );
     }
-    console.log('[ColdStorageSync] Service stopped');
+
+    // Send
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(transformed)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} from server: ${response.statusText}`);
+    }
+    const respData = await response.json();
+    console.log(`[ColdStorageSync] Synced batch => server ack:`, respData);
   }
 
   /**
-   * Sync events of a specific type to the backend
+   * Sync events of a specific type, e.g. SEARCH_CLICK
    */
   private async syncEvents(eventType: EventType, events: any[], userId: string): Promise<void> {
-    if (events.length === 0) {
-      console.log(`[ColdStorageSync] No new ${eventType} events to sync`);
+    if (!events.length) {
+      console.log(`[ColdStorageSync] No ${eventType} events to sync`);
       return;
     }
-
     console.log(`[ColdStorageSync] Syncing ${events.length} ${eventType} events`);
-    
-    // Ensure every event has a userId
-    const enrichedEvents = events.map(event => ({
-      ...event,
-      userId: event.userId || userId // Use existing userId if present, otherwise add it
-    }));
-    
-    // Split events into batches
-    for (let i = 0; i < enrichedEvents.length; i += BATCH_SIZE) {
-      const batch = enrichedEvents.slice(i, i + BATCH_SIZE);
-      
-      // Handle different event types
-      switch (eventType) {
-        case EventType.SEARCH_CLICK:
-          await this.sendSearchClickBatch(batch);
-          break;
-        // Add cases for other event types as needed
-        default:
-          console.warn(`[ColdStorageSync] Unhandled event type: ${eventType}`);
+
+    const enriched = events.map(e => ({ ...e, userId: e.userId || userId }));
+
+    for (let i = 0; i < enriched.length; i += BATCH_SIZE) {
+      const batch = enriched.slice(i, i + BATCH_SIZE);
+      if (eventType === EventType.SEARCH_CLICK) {
+        await this.sendSearchClickBatch(batch);
+      } else {
+        console.warn(`[ColdStorageSync] No direct sync logic for ${eventType}, skipping`);
       }
-      
-      console.log(`[ColdStorageSync] Synced ${eventType} batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(enrichedEvents.length / BATCH_SIZE)}`);
+      console.log(`[ColdStorageSync] Synced ${eventType} batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(enriched.length / BATCH_SIZE)}`);
     }
   }
-  
+
   /**
-   * Send a batch of search click events to the backend
+   * Example specialized method for search click events
    */
   private async sendSearchClickBatch(events: any[]): Promise<void> {
-    try {
-      const response = await fetch(`${API_BASE_URL}${ENDPOINTS.COLD_STORAGE.SEARCH_CLICKS}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(events.map(event => ({
-          clickId: `click_${event.data.searchSessionId}_${event.data.pageId}_${event.timestamp}`, // Generate a unique clickId
-          userId: event.userId,
-          searchSessionId: event.data.searchSessionId,
-          pageId: event.data.pageId,
-          position: event.data.position,
-          url: event.data.url,
-          query: event.data.query,
-          timestamp: event.timestamp
-        }))),
-        credentials: 'include',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
-      }
-    } catch (error) {
-      console.error(`[ColdStorageSync] Failed to sync search click batch:`, error);
-      throw error; // Re-throw to handle in the calling function
+    const endpoint = ENDPOINTS.COLD_STORAGE.SEARCH_CLICKS;
+    const transformed = events.map(e => ({
+      clickId: `click_${e.data?.searchSessionId}_${e.data?.pageId}_${e.timestamp}`,
+      userId: e.userId,
+      pageId: e.data?.pageId,
+      query: e.data?.query,
+      position: e.data?.position,
+      timestamp: e.timestamp
+      // etc...
+    }));
+
+    if (DEBUG_MODE) {
+      console.log('[ColdStorageSync] Posting search clicks =>', transformed);
     }
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(transformed)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} from server: ${response.statusText}`);
+    }
+    const data = await response.json();
+    console.log(`[ColdStorageSync] Synced search clicks => server ack:`, data);
   }
 }
 
-// Export a singleton instance
-export const coldStorageSync = new ColdStorageSync(); 
+/**
+ * In your background service worker, you might do:
+ *
+ *  import { ColdStorageSync } from './coldStorageSync';
+ *
+ *  // On extension startup:
+ *  ColdStorageSync.initializeScheduling();
+ *
+ *  // On alarm:
+ *  chrome.alarms.onAlarm.addListener(alarm => {
+ *    if (alarm.name === 'doryColdStorageSync') {
+ *      const syncer = new ColdStorageSync();
+ *      syncer.performSync();
+ *    }
+ *  });
+ */
+
+export const coldStorageSync = new ColdStorageSync(); // optional singleton

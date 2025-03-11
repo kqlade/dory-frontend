@@ -9,6 +9,7 @@ This document provides comprehensive details on the DORY backend API endpoints, 
    - [Pages API](#pages-api)
    - [Visits API](#visits-api)
    - [Sessions API](#sessions-api)
+   - [Search Clicks API](#search-clicks-api)
    - [Implementation Notes](#cold-storage-implementation-notes)
 3. [Content API](#content-api)
    - [Content Extraction](#content-extraction)
@@ -26,7 +27,7 @@ Authentication details should be included in all requests. The specific authenti
 
 ## Cold Storage API
 
-The Cold Storage API allows the frontend to sync browsing history data once per day, including pages, visits, and sessions.
+The Cold Storage API allows the frontend to sync browsing history data once per day, including pages, visits, sessions, and search clicks.
 
 ### Pages API
 
@@ -184,6 +185,53 @@ Fields:
 }
 ```
 
+### Search Clicks API
+
+```
+POST /api/cold-storage/search-clicks
+```
+
+#### Request Payload
+
+```json
+[
+  {
+    "clickId": "click_12345abc",
+    "userId": "user123",
+    "searchSessionId": "user123-1647823456789-xyz",
+    "pageId": "12345",
+    "position": 2,
+    "url": "https://example.com/page",
+    "query": "search query text",
+    "timestamp": 1647823456789
+  },
+  {
+    // Additional search click records...
+  }
+]
+```
+
+Fields:
+- `clickId`: (Required) Unique identifier for the click
+- `userId`: (Required) Identifier for the user who clicked the result
+- `searchSessionId`: (Required) Search session ID from the search results
+- `pageId`: (Required) ID of the clicked page
+- `position`: (Required) Position in results (0-based index)
+- `url`: (Required) URL of the clicked result
+- `query`: (Required) Search query that produced this result
+- `timestamp`: (Required) When the click occurred (ms)
+
+#### Response
+
+```json
+{
+  "success": true,
+  "syncedCount": 8,
+  "serverTimestamp": 1648023456789,
+  "nextSyncAfter": 1648109856789
+}
+```
+
 ### Cold Storage Implementation Notes
 
 #### Sync Frequency
@@ -201,6 +249,113 @@ Fields:
 
 - If a sync fails, the client should retry during the next sync window
 - Failed records remain eligible for future syncs since the last sync timestamp is only updated after successful syncs
+
+### Click Tracking
+
+Search clicks are now handled exclusively through the Cold Storage API. The frontend should collect click events locally and sync them in batches using the `/api/cold-storage/search-clicks` endpoint.
+
+```
+POST /api/cold-storage/search-clicks
+```
+
+#### Request Payload
+
+```json
+[
+  {
+    "clickId": "click_12345abc",
+    "userId": "user123",
+    "searchSessionId": "user123-1647823456789-xyz",
+    "pageId": "12345",
+    "position": 2,
+    "url": "https://example.com/page",
+    "query": "search query text",
+    "timestamp": 1647823456789
+  }
+]
+```
+
+Fields:
+- `clickId`: (Required) Unique identifier for the click
+- `userId`: (Required) Identifier for the user who clicked the result
+- `searchSessionId`: (Required) The session ID received with the search results
+- `pageId`: (Required) The ID of the clicked result
+- `position`: (Required) The position/index of the result in the list (0-based)
+- `url`: (Required) URL of the clicked result
+- `query`: (Required) Search query that produced this result
+- `timestamp`: (Required) When the click occurred
+
+#### Response
+
+```json
+{
+  "success": true,
+  "syncedCount": 8,
+  "serverTimestamp": 1648023456789,
+  "nextSyncAfter": 1648109856789
+}
+```
+
+> **Note**: The previous `/api/unified-search/click` endpoint is deprecated and will be removed in a future version. All implementations should use the Cold Storage API for search click tracking.
+
+#### Frontend Implementation
+
+When a user clicks on a search result, store the click event locally and sync it with other cold storage data:
+
+```javascript
+function handleResultClick(result, position) {
+  // First, navigate to the result URL
+  window.location.href = result.url;
+  
+  // Then store the click in local storage for later syncing
+  const clickEvent = {
+    clickId: generateUniqueId(), // Generate a unique ID
+    userId: getCurrentUserId(),
+    searchSessionId: result.searchSessionId,
+    pageId: result.pageId,
+    position: position,
+    url: result.url,
+    query: getCurrentSearchQuery(),
+    timestamp: Date.now()
+  };
+  
+  // Add to local storage queue
+  storeClickForSync(clickEvent);
+}
+
+// Later, during cold storage sync
+async function syncSearchClicks() {
+  const pendingClicks = getPendingClicksFromStorage();
+  
+  if (pendingClicks.length === 0) return;
+  
+  try {
+    const response = await fetch('/api/cold-storage/search-clicks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(pendingClicks)
+    });
+    
+    if (response.ok) {
+      // Clear synced clicks from storage
+      clearSyncedClicks(pendingClicks);
+    }
+  } catch (error) {
+    console.error('Error syncing search clicks:', error);
+    // Will retry on next sync
+  }
+}
+```
+
+#### Implementation Notes
+
+- Click events should be stored locally and synced in batches with other cold storage data
+- The `searchSessionId` correlates clicks with specific search queries and results
+- Click data is stored in the same database as other cold storage data
+- Unlike the deprecated real-time endpoint, there's no validation against active search sessions
+- This approach is more resilient to network issues and provides consistent analytics data
 
 ---
 
@@ -451,9 +606,9 @@ When both QuickLaunch and semantic search results are returned (`triggerSemantic
   - Merge and resort by score
   - Apply custom UI treatments based on score ranges
 
-### Click Tracking
+### Click Tracking API (Deprecated)
 
-When a user clicks on a search result, send a click tracking event to help analyze which results are most useful.
+> **DEPRECATED**: This endpoint is maintained for backward compatibility only and will be removed in a future version. Please use the [Search Clicks API](#search-clicks-api) in the Cold Storage API section for all new implementations.
 
 ```
 POST /api/unified-search/click
@@ -484,9 +639,9 @@ Fields:
 }
 ```
 
-#### Frontend Implementation
+#### Frontend Implementation (Deprecated)
 
-When a user clicks on a search result, send a request to the click tracking endpoint:
+> **Note**: This implementation is deprecated. Please use the Cold Storage API implementation described in the [Search Clicks API](#search-clicks-api) section.
 
 ```javascript
 function handleResultClick(result, position) {
@@ -512,12 +667,71 @@ function handleResultClick(result, position) {
 }
 ```
 
-#### Implementation Notes
+## Working with Server-Sent Events
 
-- Click tracking is independent of page navigation - the request should be sent as the user clicks, but doesn't need to complete before navigation
-- The `searchSessionId` correlates clicks with specific search queries and results
-- Click data is stored separately from search events for analytics purposes
-- Sessions expire after 24 hours, so clicks should be tracked promptly
+The Unified Search API uses Server-Sent Events (SSE) to provide a streaming response. This allows the frontend to:
+
+1. Display initial results immediately (typically within milliseconds)
+2. Then enhance the results with deeper content-based results as they become available
+3. Provide a responsive UX without waiting for the slower semantic search to complete
+
+### Key Advantages
+
+- **Progressive Enhancement**: Users see relevant results immediately
+- **Perceived Performance**: The interface feels faster and more responsive
+- **Optimized Resource Usage**: Expensive semantic search only runs when needed (final queries)
+- **Deduplication**: The backend handles deduplication of results automatically
+- **Error Handling**: Each phase of the search can report errors independently
+
+## Key Implementation Details
+
+1. **Two-Phase Search**:
+   - Fast results always run on every query (when typing)
+   - Semantic search only runs on final queries (controlled by `triggerSemantic`)
+
+2. **Enhanced Matching**:
+   - Search checks both page titles and URLs for matches
+   - Returns the best match without duplicating results
+
+3. **Results Ordering**:
+   - Initial results are always delivered first
+   - Deep content results follow, already deduplicated against initial results
+   - All results include their relevance score for custom sorting if needed
+
+4. **Analytics Storage**:
+   - Only final queries with `triggerSemantic: true` are stored for analytics
+   - The timestamp of these final queries represents when the user completed their search
+   - Intermediate typing queries (`triggerSemantic: false`) are processed but not logged
+   - This prevents analytics pollution with partial search queries
+
+5. **Click Tracking**:
+   - Search clicks are now handled through the Cold Storage API
+   - The frontend should store click events locally and sync them in batches
+   - This approach is more resilient to network issues and provides consistent analytics data
+   - Each result includes a `searchSessionId` that should be stored with the click event
+   - See the [Search Clicks API](#search-clicks-api) section for implementation details
+
+---
+
+## Error Handling
+
+All API endpoints return standard HTTP status codes:
+
+- `200` - Success
+- `400` - Bad request (invalid parameters)
+- `401` - Unauthorized
+- `404` - Resource not found
+- `500` - Server error
+
+Error responses include a JSON object with details:
+
+```json
+{
+  "error": "Error message"
+}
+```
+
+For the SSE-based Unified Search, errors are sent as events with type "error". 
 
 ### Frontend Integration Example
 
@@ -673,64 +887,4 @@ searchInput.addEventListener('keydown', (e) => {
     deepSearch(query, userId);
   }
 });
-```
-
-## Working with Server-Sent Events
-
-The Unified Search API uses Server-Sent Events (SSE) to provide a streaming response. This allows the frontend to:
-
-1. Display initial results immediately (typically within milliseconds)
-2. Then enhance the results with deeper content-based results as they become available
-3. Provide a responsive UX without waiting for the slower semantic search to complete
-
-### Key Advantages
-
-- **Progressive Enhancement**: Users see relevant results immediately
-- **Perceived Performance**: The interface feels faster and more responsive
-- **Optimized Resource Usage**: Expensive semantic search only runs when needed (final queries)
-- **Deduplication**: The backend handles deduplication of results automatically
-- **Error Handling**: Each phase of the search can report errors independently
-
-## Key Implementation Details
-
-1. **Two-Phase Search**:
-   - Fast results always run on every query (when typing)
-   - Semantic search only runs on final queries (controlled by `triggerSemantic`)
-
-2. **Enhanced Matching**:
-   - Search checks both page titles and URLs for matches
-   - Returns the best match without duplicating results
-
-3. **Results Ordering**:
-   - Initial results are always delivered first
-   - Deep content results follow, already deduplicated against initial results
-   - All results include their relevance score for custom sorting if needed
-
-4. **Analytics Storage**:
-   - Only final queries with `triggerSemantic: true` are stored for analytics
-   - The timestamp of these final queries represents when the user completed their search
-   - Intermediate typing queries (`triggerSemantic: false`) are processed but not logged
-   - This prevents analytics pollution with partial search queries
-   - Click tracking provides insights into which results users interact with
-
----
-
-## Error Handling
-
-All API endpoints return standard HTTP status codes:
-
-- `200` - Success
-- `400` - Bad request (invalid parameters)
-- `401` - Unauthorized
-- `404` - Resource not found
-- `500` - Server error
-
-Error responses include a JSON object with details:
-
-```json
-{
-  "error": "Error message"
-}
-```
-
-For the SSE-based Unified Search, errors are sent as events with type "error". 
+``` 

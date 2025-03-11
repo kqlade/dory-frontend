@@ -24,7 +24,7 @@ export default defineConfig({
       input: {
         background: 'src/background/serviceWorker.ts',
         contentExtractor: 'src/services/contentExtractor.ts',
-        activityTracker: 'src/services/activityTracker.ts',
+        activityTracker: 'src/background/activityTracker.ts',
         newtab: 'src/pages/newtab/index.tsx',
         newtabHtml: 'src/pages/newtab/newtab.html'
       },

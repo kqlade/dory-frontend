@@ -1,207 +1,228 @@
+// src/hooks/useSearch.ts
 import { useQuery } from '@tanstack/react-query';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
 import { quickLaunch } from '../services/localQuickLauncher';
 
-// Define result types
+/**
+ * A standard shape for search results in your React UI.
+ */
 interface SearchResult {
   id: string;
   title: string;
   url: string;
   score: number;
-  source?: string;
+  source?: string;  // e.g. 'local', 'quicklaunch', 'semantic'
 }
 
-// 1. Hook for local search
+/**
+ * useLocalSearch: Hook for "instant" local search via Dexie (quickLaunch).
+ * 
+ * Because quickLaunch uses Dexie, and Dexie is valid in a web DOM environment
+ * (popup or options page), this is MV3-safe. We do not run this code in the
+ * background service worker.
+ */
 export function useLocalSearch(query: string) {
   return useQuery({
     queryKey: ['local-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
       
-      // Use the quickLaunch service to search local IndexedDB
+      // Calls the quickLaunch service to do local Dexie-based ranking
       const results = await quickLaunch.search(query);
-      
-      // Convert to our standard result format
-      return results.map(result => ({
-        id: result.pageId,
-        title: result.title,
-        url: result.url,
-        score: result.score
+
+      // Convert to a uniform shape
+      return results.map((r) => ({
+        id: r.pageId,
+        title: r.title,
+        url: r.url,
+        score: r.score
       }));
     },
+    // Only run if there's enough query length to matter
     enabled: query.length >= 2,
   });
 }
 
-// 2. Hook for backend streaming search that matches the backend SSE flow
+/**
+ * useBackendStreamingSearch: Hook that uses SSE (EventSource) to fetch results
+ * from a remote "unified-search" endpoint. 
+ * 
+ * This code is safe in a typical React extension page (popup, new tab, or options),
+ * but not in the background service worker (which doesn't have a DOM or window).
+ */
 export function useBackendStreamingSearch(query: string) {
   const [quickResults, setQuickResults] = useState<SearchResult[]>([]);
   const [semanticResults, setSemanticResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+
   const eventSourceRef = useRef<EventSource | null>(null);
-  
-  // Reset and start search when query changes
+
+  // On query change, reset old SSE, start fresh
   useEffect(() => {
-    // Clean up previous search
+    // Cleanup any previous SSE
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    
-    // Reset state for new search
+
+    // Reset states
     setQuickResults([]);
     setSemanticResults([]);
     setIsComplete(false);
-    
-    // Don't start a new search if query is too short
+
+    // If query too short, skip SSE
     if (!query || query.length < 2) {
       setIsLoading(false);
       return;
     }
-    
-    // Start new search
+
     setIsLoading(true);
-    
-    // Set up connection to backend search endpoint
+
+    // Build the SSE URL. `window.location.origin` is valid in a DOM environment:
     const url = new URL('/api/unified-search/stream', window.location.origin);
     url.searchParams.append('query', query);
-    url.searchParams.append('userId', 'current-user-id'); // Replace with actual userId
+    url.searchParams.append('userId', 'current-user-id'); // Replace with real user ID
     url.searchParams.append('timestamp', Date.now().toString());
     url.searchParams.append('triggerSemantic', 'true');
-    
+
     const source = new EventSource(url.toString());
     eventSourceRef.current = source;
-    
-    // Handle incoming SSE events based on type
+
     source.addEventListener('message', (event) => {
       try {
         const data = JSON.parse(event.data);
-        
-        // Handle event based on its type
-        switch(data.type) {
-          case 'quicklaunch':
+
+        switch (data.type) {
+          case 'quicklaunch': {
             const quickData = Array.isArray(data.results) ? data.results : [data];
-            setQuickResults(prev => [...prev, ...quickData]);
+            setQuickResults((prev) => [...prev, ...quickData]);
             break;
-            
-          case 'semantic':
+          }
+          case 'semantic': {
             const semanticData = Array.isArray(data.results) ? data.results : [data];
-            setSemanticResults(prev => [...prev, ...semanticData]);
+            setSemanticResults((prev) => [...prev, ...semanticData]);
             break;
-            
-          case 'complete':
+          }
+          case 'complete': {
             setIsComplete(true);
             setIsLoading(false);
             source.close();
             eventSourceRef.current = null;
             break;
-            
-          case 'error':
+          }
+          case 'error': {
             console.error('Search error:', data.message, 'Source:', data.source);
             break;
-            
+          }
           default:
-            // Handle any other events or malformed data
-            console.log('Unknown event type:', data);
+            console.log('Unknown SSE event type:', data);
         }
-      } catch (error) {
-        console.error('Error parsing SSE data:', error);
+      } catch (err) {
+        console.error('Error parsing SSE data:', err);
       }
     });
-    
-    // Handle connection open
+
     source.addEventListener('open', () => {
       setIsLoading(true);
     });
-    
-    // Handle errors
+
     source.addEventListener('error', () => {
       console.error('SSE connection error');
       setIsLoading(false);
       source.close();
       eventSourceRef.current = null;
     });
-    
-    // Clean up on unmount or when query changes
+
+    // Cleanup if unmounted or query changed
     return () => {
+      setIsLoading(false);
       if (source) {
         source.close();
       }
-      setIsLoading(false);
     };
   }, [query]);
-  
-  return { 
-    quickResults, 
-    semanticResults, 
+
+  return {
+    quickResults,
+    semanticResults,
     isLoading,
     isComplete
   };
 }
 
-// 3. Hybrid search hook combining local and backend results
+/**
+ * useHybridSearch: Combined hook that merges results from local Dexie-based
+ * search and a backend SSE-based search.
+ */
 export function useHybridSearch() {
   const [inputValue, setInputValue] = useState('');
   const [debouncedQuery] = useDebounce(inputValue, 300);
   const [immediateQuery, setImmediateQuery] = useState('');
-  
-  // For local search: Use raw inputValue for instant results with each keystroke
+
+  // Local search is immediate
   const localSearchQuery = inputValue;
-  
-  // For backend search: Use debounced query (or immediate when Enter is pressed)
+
+  // Backend search is debounced or triggered by Enter
   const backendSearchQuery = immediateQuery || debouncedQuery;
-  
-  // Get local search results - INSTANT with each keystroke
-  const { 
-    data: localResults = [], 
-    isLoading: isLocalLoading 
+
+  // Local query hook
+  const {
+    data: localResults = [],
+    isLoading: isLocalLoading
   } = useLocalSearch(localSearchQuery);
-  
-  // Get backend streaming results - DEBOUNCED
-  const { 
+
+  // Backend SSE hook
+  const {
     quickResults,
     semanticResults,
     isLoading: isBackendLoading,
     isComplete
   } = useBackendStreamingSearch(backendSearchQuery);
-  
-  // Combine and deduplicate all results
+
+  // Merge + de-dupe all results
   const allResults = useMemo(() => {
     const combined = [
-      ...localResults.map(r => ({ ...r, source: 'local' })),
-      ...quickResults.map(r => ({ ...r, source: 'quicklaunch' })),
-      ...semanticResults.map(r => ({ ...r, source: 'semantic' }))
+      ...localResults.map((r) => ({ ...r, source: 'local' })),
+      ...quickResults.map((r) => ({ ...r, source: 'quicklaunch' })),
+      ...semanticResults.map((r) => ({ ...r, source: 'semantic' })),
     ];
-    
-    // Deduplicate by page/document ID
+
+    // Deduplicate by ID
     return combined
-      .filter((result, index, self) => 
-        index === self.findIndex(r => r.id === result.id)
+      .filter(
+        (result, index, self) =>
+          index === self.findIndex((r) => r.id === result.id)
       )
       .sort((a, b) => {
-        // Sort results by source type first
-        const sourceOrder: Record<string, number> = { local: 0, quicklaunch: 1, semantic: 2 };
-        const sourceCompare = sourceOrder[a.source || ''] - sourceOrder[b.source || ''];
-        
-        // If same source, sort by score
-        return sourceCompare !== 0 ? sourceCompare : b.score - a.score;
+        // Sort by source priority first
+        const sourceOrder: Record<string, number> = {
+          local: 0,
+          quicklaunch: 1,
+          semantic: 2
+        };
+        const sourceDiff = (sourceOrder[a.source ?? ''] ?? 99) - (sourceOrder[b.source ?? ''] ?? 99);
+        if (sourceDiff !== 0) {
+          return sourceDiff;
+        }
+        // Then by descending score
+        return b.score - a.score;
       });
   }, [localResults, quickResults, semanticResults]);
-  
-  // Handle Enter key for immediate search
+
+  // If user presses Enter, run immediate search
   const handleEnterKey = useCallback((value: string) => {
     setImmediateQuery(value);
   }, []);
-  
-  // Reset immediate query when debounced query catches up
+
+  // When debounced query catches up, reset immediateQuery
   useEffect(() => {
     if (immediateQuery && immediateQuery === debouncedQuery) {
       setImmediateQuery('');
     }
   }, [immediateQuery, debouncedQuery]);
-  
+
   return {
     inputValue,
     setInputValue,
@@ -209,10 +230,10 @@ export function useHybridSearch() {
     isSearching: isLocalLoading || isBackendLoading,
     isComplete,
     results: allResults,
-    
-    // For debugging or specialized UI
+
+    // Expose these if needed for debugging
     localResults,
     quickResults,
-    semanticResults
+    semanticResults,
   };
-} 
+}

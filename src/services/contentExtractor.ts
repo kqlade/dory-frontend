@@ -1,311 +1,183 @@
-// [IMPROVEMENT] Using strict mode for safer JavaScript
-"use strict";
-
 // src/services/contentExtractor.ts
 
-console.log("[ContentExtractor] Debug: Starting import process");
-console.log("[ContentExtractor] Debug: About to import DefaultMarkdownGenerator");
+"use strict";
+
 import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
-console.log("[ContentExtractor] Debug: About to import PruningContentFilter");
 import { PruningContentFilter } from "../html2text/content_filter_strategy";
-console.log("[ContentExtractor] Debug: About to import config values");
 import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from "../config";
-console.log("[ContentExtractor] Debug: About to import message system");
-import { createMessage, MessageType, ExtractionData } from "./messageSystem";
-console.log("[ContentExtractor] Debug: About to import event service");
-
-/**
- * IMPORTANT: Content extraction events are special-cased to be sent directly to the backend API
- * instead of being stored in the local Dexie database. This is why we're importing from the 
- * dedicated event service that sends directly to the content API endpoint.
- */
+import { createMessage, MessageType, ExtractionData } from "../background/messageSystem";
 import { sendContentEvent } from "../services/eventService";
-
-console.log("[ContentExtractor] Debug: About to import session manager");
-// We still want to use the Dexie session manager to get the current session ID
-import { getCurrentSessionId } from "./dexieSessionManager";
-// Import getUserInfo for user identification
+import { getCurrentSessionId } from "../utils/dexieSessionManager";
 import { getUserInfo } from "../auth/googleAuth";
-console.log("[ContentExtractor] Debug: All imports completed");
 
-console.log("[ContentExtractor] File loaded - before initialization");
-console.log("[ContentExtractor] Starting initialization...");
+console.log("[ContentExtractor] Loading content script...");
 
-// Store the current page and visit IDs for extraction context
+// Tracking IDs set via background -> content messaging
 let currentPageId: string | null = null;
 let currentVisitId: string | null = null;
 
-console.log("[ContentExtractor] Variables initialized");
+// A promise to resolve once the context is set
+let contextReadyPromise: Promise<void>;
+let contextReadyResolver: (() => void) | null = null;
 
-// Add a Promise that resolves when context is set
-let contextReadyPromise: Promise<void> | null = null;
-let resolveContextPromise: (() => void) | null = null;
-
-// Initialize the context Promise
 function initContextPromise() {
-  if (!contextReadyPromise) {
-    contextReadyPromise = new Promise<void>((resolve) => {
-      // If we already have context, resolve immediately
-      if (currentPageId && currentVisitId) {
-        resolve();
-      } else {
-        // Otherwise store the resolver for later
-        resolveContextPromise = resolve;
-      }
-    });
-  }
+  contextReadyPromise = new Promise<void>((resolve) => {
+    // If context is already known, resolve immediately
+    if (currentPageId && currentVisitId) {
+      return resolve();
+    }
+    contextReadyResolver = resolve;
+  });
 }
-
-/**
- * Set the current page and visit context for extraction
- */
-export function setExtractionContext(pageId: string, visitId: string): void {
-  console.log(`[ContentExtractor] setExtractionContext called with pageId=${pageId}, visitId=${visitId}`);
-  currentPageId = pageId;
-  currentVisitId = visitId;
-  console.log(`[ContentExtractor] Context set: pageId=${currentPageId}, visitId=${currentVisitId}`);
-  
-  // Resolve the context promise if it exists
-  if (resolveContextPromise) {
-    console.log(`[ContentExtractor] Resolving context promise`);
-    resolveContextPromise();
-    resolveContextPromise = null;
-  }
-}
-
-// Initialize the context promise when the module loads
 initContextPromise();
 
 /**
- * Extraction-related configuration pulled from QUEUE_CONFIG:
- * - DOM_IDLE_TIMEOUT_MS, DOM_IDLE_CHECK_DELAY_MS: used to detect a "stable" DOM.
- * - PROCESSING_TIMEOUT_MS: the maximum time we allow for extraction before declaring a timeout.
- * - RETRY_DELAY_MS, MAX_RETRIES: controls how we retry failed extractions.
+ * Called by background to set the context (pageId, visitId).
  */
-const DOM_IDLE_TIMEOUT_MS = QUEUE_CONFIG.DOM_IDLE_TIMEOUT_MS;
-const DOM_IDLE_CHECK_DELAY_MS = QUEUE_CONFIG.DOM_IDLE_CHECK_DELAY_MS;
-const PROCESSING_TIMEOUT_MS = QUEUE_CONFIG.PROCESSING_TIMEOUT_MS;
-const RETRY_DELAY_MS = QUEUE_CONFIG.RETRY_DELAY_MS;
-const MAX_RETRIES = QUEUE_CONFIG.MAX_RETRIES;
+export function setExtractionContext(pageId: string, visitId: string): void {
+  console.log("[ContentExtractor] setExtractionContext => ", { pageId, visitId });
+  currentPageId = pageId;
+  currentVisitId = visitId;
 
-/** Markdown generator defaults */
+  if (contextReadyResolver) {
+    contextReadyResolver();
+    contextReadyResolver = null;
+  }
+}
+
+/** 
+ * Settings from your QUEUE_CONFIG or defaults 
+ */
+const {
+  DOM_IDLE_TIMEOUT_MS,
+  DOM_IDLE_CHECK_DELAY_MS,
+  PROCESSING_TIMEOUT_MS,
+  RETRY_DELAY_MS,
+  MAX_RETRIES
+} = QUEUE_CONFIG;
+
 const MARKDOWN_BODY_WIDTH = 80;
 const CONTENT_FILTER_MIN_BLOCKS = 5;
 const CONTENT_FILTER_STRATEGY = "dynamic";
 const CONTENT_FILTER_THRESHOLD = 0.5;
 const CONTENT_FILTER_LANGUAGE = "english";
-
-/** Default metadata values if none are provided */
 const DEFAULT_TITLE = "Untitled";
-const DEFAULT_STATUS = "processed";
 
-/** Track the extraction timeout globally */
-let extractionTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let extractionTimeoutId: number | null = null;
 
 /**
- * Waits for the DOM to be "idle" — meaning no new mutations for
- * `idleCheckDelayMs`, or until `maxTimeoutMs` has passed.
+ * Wait for DOM to become stable, or time out after DOM_IDLE_TIMEOUT_MS
  */
 function waitForDomIdle(
   maxTimeoutMs = DOM_IDLE_TIMEOUT_MS,
   idleCheckDelayMs = DOM_IDLE_CHECK_DELAY_MS
 ): Promise<void> {
-  console.log(`[ContentExtractor] waitForDomIdle called with maxTimeoutMs=${maxTimeoutMs}, idleCheckDelayMs=${idleCheckDelayMs}`);
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     let observer: MutationObserver | null = null;
     let lastMutationTime = Date.now();
-    console.log(`[ContentExtractor] waitForDomIdle: initializing observer`);
 
     const checkIdle = () => {
       const now = Date.now();
-      const timeSinceLastMutation = now - lastMutationTime;
-      console.log(`[ContentExtractor] checkIdle: timeSinceLastMutation=${timeSinceLastMutation}`);
-
-      if (timeSinceLastMutation >= idleCheckDelayMs) {
-        console.log(`[ContentExtractor] DOM is idle (${timeSinceLastMutation}ms since last mutation)`);
+      if (now - lastMutationTime >= idleCheckDelayMs) {
         if (observer) observer.disconnect();
         resolve();
       }
     };
 
-    // Set up mutation observer to track DOM changes
     try {
-      console.log(`[ContentExtractor] Setting up MutationObserver`);
       observer = new MutationObserver(() => {
         lastMutationTime = Date.now();
-        console.log(`[ContentExtractor] DOM mutation detected at ${lastMutationTime}`);
       });
-
       observer.observe(document.body, {
         childList: true,
         attributes: true,
         characterData: true,
         subtree: true,
       });
-      console.log(`[ContentExtractor] MutationObserver started`);
-    } catch (error) {
-      console.error(`[ContentExtractor] Error setting up MutationObserver:`, error);
-      resolve(); // Continue even if observer setup fails
+    } catch (err) {
+      console.error("[ContentExtractor] MutationObserver error:", err);
+      resolve(); // fallback
     }
 
-    // Fallback in case "truly idle" never occurs
-    console.log(`[ContentExtractor] Setting up timeout fallback for ${maxTimeoutMs}ms`);
+    // Fallback: forcibly resolve after maxTimeoutMs
     setTimeout(() => {
-      console.log(`[ContentExtractor] Maximum idle time (${maxTimeoutMs}ms) reached`);
       if (observer) observer.disconnect();
       resolve();
     }, maxTimeoutMs);
 
-    // [IMPROVEMENT] We set up a repeated check of DOM idle state
-    // but also ensure we clear it at the same time as fallback expires.
-    console.log(`[ContentExtractor] Setting up idle check interval`);
+    // Periodic check
     const intervalId = setInterval(() => {
       checkIdle();
-    }, Math.min(idleCheckDelayMs / 2, 1000));
+    }, Math.min(1000, idleCheckDelayMs / 2));
 
-    // Clean up interval when we resolve (or after fallback)
+    // Clean up after maxTimeoutMs
     setTimeout(() => {
-      console.log(`[ContentExtractor] Cleaning up idle check interval`);
       clearInterval(intervalId);
     }, maxTimeoutMs + 100);
   });
 }
 
-/** Basic utility to pause code execution. */
-function delay(ms: number): Promise<void> {
-  console.log(`[ContentExtractor] Delaying for ${ms}ms`);
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Utility to pause. */
+function delay(ms: number) {
+  return new Promise<void>(res => setTimeout(res, ms));
 }
 
 /**
- * Sends an EXTRACTION_COMPLETE message to the background in a fire-and-forget pattern.
+ * Send a message to the background about extraction complete.
  */
 function sendExtractionComplete(title: string, url: string, timestamp: number): void {
-  console.log(`[ContentExtractor] Sending extraction complete message: ${title}`);
-  
-  // [IMPROVEMENT] Check for valid extension context a bit more explicitly
-  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
-    console.error("[ContentExtractor] Cannot send extraction complete - extension context invalid");
+  if (!chrome?.runtime?.id) {
+    console.error("[ContentExtractor] No extension context");
     return;
   }
-
-  const extractionMessage = createMessage<ExtractionData>(MessageType.EXTRACTION_COMPLETE, {
-    title: title,
-    url: url,
+  const msg = createMessage<ExtractionData>(MessageType.EXTRACTION_COMPLETE, {
+    title,
+    url,
     timestamp
   });
-
-  try {
-    chrome.runtime.sendMessage(extractionMessage)
-      .then(response => {
-        console.log(`[ContentExtractor] Extraction complete message acknowledged:`, response);
-      })
-      .catch(err => {
-        console.error("[ContentExtractor] Error sending extraction data:", err);
-      });
-  } catch (err) {
-    console.error("[ContentExtractor] Failed to send extraction complete message:", err);
-  }
+  chrome.runtime.sendMessage(msg).catch(err => {
+    console.error("[ContentExtractor] ExtractionComplete sendMessage error:", err);
+  });
 }
 
 /**
- * Sends an EXTRACTION_ERROR message to the background in case of
- * unrecoverable or repeated failures.
+ * Notify background of an extraction error
  */
-function sendExtractionError(code: string, message: string, url: string, stack?: string): void {
-  console.log(`[ContentExtractor] sendExtractionError: code=${code}, message=${message}`);
-  
-  // [IMPROVEMENT] Same stronger check for extension context
-  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
-    console.error("[ContentExtractor] Cannot send error - extension context invalid");
+function sendExtractionError(code: string, message: string, url: string, stack?: string) {
+  if (!chrome?.runtime?.id) {
+    console.error("[ContentExtractor] No extension context for error");
     return;
   }
-
-  const errorMessage = createMessage(MessageType.EXTRACTION_ERROR, {
-    code,
-    message,
-    stack,
-    context: { url },
+  const errorMsg = createMessage(MessageType.EXTRACTION_ERROR, {
+    code, message, stack,
+    context: { url }
   });
-
-  try {
-    chrome.runtime.sendMessage(errorMessage)
-      .then(response => {
-        console.log(`[ContentExtractor] Error message acknowledged:`, response);
-      })
-      .catch(err => {
-        console.error("[ContentExtractor] Failed to send error message:", err);
-      });
-  } catch (err) {
-    console.error("[ContentExtractor] Failed to send error message:", err);
-  }
+  chrome.runtime.sendMessage(errorMsg).catch(err => {
+    console.error("[ContentExtractor] ExtractionError sendMessage error:", err);
+  });
 }
 
-// Initialize content extractor directly - authentication is already checked at extension level
-console.log("[ContentExtractor] Initializing content extractor");
-initializeExtractor();
-
-// Move initialization logic to a function
-function initializeExtractor() {
-  console.log("[ContentExtractor] Starting content extractor initialization");
-  
-  // Initialize extraction if in the right context
-  if (chrome.runtime && chrome.runtime.onMessage) {
-    // ... existing message handling code ...
-  }
-}
-
-/** Public function to initiate extraction. */
+/**
+ * Public function to start extraction
+ */
 export function extract(): void {
-  console.log("[ContentExtractor] extract() called");
   setupExtractionTimeout();
-  console.log("[ContentExtractor] Starting content extraction");
   void extractAndSendContent();
 }
 
 /**
- * Main function that does:
- *  1) Wait for DOM idle
- *  2) Generate Markdown
- *  3) Send extracted content via event streaming
- *  4) Retry if extraction fails
+ * Main extraction logic with optional retries
  */
 async function extractAndSendContent(retryCount = 0): Promise<void> {
-  console.log(`[ContentExtractor] extractAndSendContent started (retryCount=${retryCount})`);
-  
-  // [IMPROVEMENT] Check for extension context more explicitly
-  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
-    console.error("[ContentExtractor] Extension context invalid - cannot start extraction");
-    return;
-  }
-  console.log(`[ContentExtractor] Chrome runtime ID valid: ${chrome.runtime.id}`);
-
-  if (!document.body) {
-    console.error("[ContentExtractor] Document body not available");
-    return;
-  }
-  console.log(`[ContentExtractor] Document body available`);
-
   const currentUrl = window.location.href;
-  console.log(`[ContentExtractor] Current URL: ${currentUrl}`);
+  console.log(`[ContentExtractor] extractAndSendContent: url=${currentUrl}, retry=${retryCount}`);
 
   try {
-    // 1) Wait for DOM to stabilize
-    console.log(`[ContentExtractor] Waiting for DOM to stabilize...`);
     await waitForDomIdle();
-    console.log(`[ContentExtractor] DOM is now stable`);
+    const rawHTMLString = document.body?.innerHTML || "";
+    if (!rawHTMLString) throw new Error("Empty document body");
 
-    // 2) Gather raw HTML
-    console.log(`[ContentExtractor] Gathering raw HTML...`);
-    const rawHTMLString = document.body.innerHTML || "";
-    if (!rawHTMLString) {
-      console.error("[ContentExtractor] Empty innerHTML");
-      throw new Error("Empty innerHTML");
-    }
-    console.log(`[ContentExtractor] Raw HTML collected (${rawHTMLString.length} characters)`);
-
-    // 3) Convert HTML -> Markdown
-    console.log(`[ContentExtractor] Creating PruningContentFilter...`);
+    // Generate markdown
     const filter = new PruningContentFilter(
       undefined,
       CONTENT_FILTER_MIN_BLOCKS,
@@ -313,209 +185,112 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
       CONTENT_FILTER_THRESHOLD,
       CONTENT_FILTER_LANGUAGE
     );
-    console.log(`[ContentExtractor] Creating DefaultMarkdownGenerator...`);
-    const mdGenerator = new DefaultMarkdownGenerator(filter, {
-      body_width: MARKDOWN_BODY_WIDTH,
-    });
+    const mdGenerator = new DefaultMarkdownGenerator(filter, { body_width: MARKDOWN_BODY_WIDTH });
 
-    console.log(`[ContentExtractor] Generating markdown...`);
-    const result = mdGenerator.generateMarkdown(
-      rawHTMLString,
-      currentUrl,
-      { body_width: MARKDOWN_BODY_WIDTH },
-      undefined,
-      true
-    );
-    console.log(`[ContentExtractor] Markdown generation complete`);
-
+    const result = mdGenerator.generateMarkdown(rawHTMLString, currentUrl, { body_width: MARKDOWN_BODY_WIDTH }, undefined, true);
     const sourceMarkdown = USE_FIT_MARKDOWN
       ? result.fitMarkdown
-      : result.markdownWithCitations || result.rawMarkdown;
+      : (result.markdownWithCitations || result.rawMarkdown);
 
-    if (!sourceMarkdown) {
-      console.error("[ContentExtractor] Failed to generate markdown");
-      throw new Error("Failed to generate markdown");
-    }
-    console.log(`[ContentExtractor] Final markdown length: ${sourceMarkdown.length} characters`);
-
-    // Use integer milliseconds since epoch for timestamp
-    const timestamp = Math.floor(Date.now());
+    if (!sourceMarkdown) throw new Error("Markdown generation failed");
+    const timestamp = Date.now();
     const title = document.title || DEFAULT_TITLE;
-    console.log(`[ContentExtractor] Page title: "${title}"`);
 
-    // If we succeed, clear the extraction timeout
+    // Clear any existing timeout
     if (extractionTimeoutId !== null) {
-      console.log(`[ContentExtractor] Clearing extraction timeout`);
       clearTimeout(extractionTimeoutId);
       extractionTimeoutId = null;
     }
 
-    // 4) Notify background that extraction is complete - using the one-way pattern
+    // Notify background of success
     sendExtractionComplete(title, currentUrl, timestamp);
 
-    // 5) Wait for context if needed before sending to backend
+    // Wait for context if not set
     if (!currentPageId || !currentVisitId) {
-      console.log(`[ContentExtractor] Context not set yet, waiting for context...`);
-      try {
-        await Promise.race([
-          contextReadyPromise,
-          // Add a maximum wait time to avoid hanging forever
-          new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Context timeout")), 30000))
-        ]);
-        console.log(`[ContentExtractor] Context is now available: pageId=${currentPageId}, visitId=${currentVisitId}`);
-      } catch (contextError) {
-        console.error(`[ContentExtractor] Error waiting for context:`, contextError);
-        // Continue anyway - we'll check again below if context is available
-      }
+      await Promise.race([
+        contextReadyPromise,
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Context Timeout")), 30000))
+      ]);
     }
-    
-    // 6) Send extracted content to backend
-    console.log(`[ContentExtractor] Sending extracted content to backend API`);
+
+    // Optionally send content to backend
     const sessionId = await getCurrentSessionId();
-    
     if (sessionId && currentPageId && currentVisitId) {
       try {
-        // Get user info - authentication is already verified at extension level
-        const userInfo = await getUserInfo();
+        const userInfo = await getUserInfo(false);
         const userId = userInfo?.id;
-        
-        // Send content directly to the dedicated content API endpoint
         await sendContentEvent({
           pageId: currentPageId,
           visitId: currentVisitId,
           url: currentUrl,
-          title: title,
+          title,
           markdown: sourceMarkdown,
-          metadata: {
-            language: "en"
-          }
+          metadata: { language: 'en' },
         });
-        
-        console.log(`[ContentExtractor] Content extraction event successfully sent to API backend`);
-      } catch (eventError) {
-        console.error("[ContentExtractor] Error sending content to backend:", eventError);
+        console.log("[ContentExtractor] Content sent to backend successfully.");
+      } catch (err) {
+        console.error("[ContentExtractor] sendContentEvent error:", err);
       }
     } else {
-      console.warn(`[ContentExtractor] Cannot send content: sessionId=${sessionId}, pageId=${currentPageId}, visitId=${currentVisitId}`);
+      console.warn("[ContentExtractor] Missing session or context => skipping immediate backend send");
     }
-
-  } catch (error) {
-    // If something went wrong, decide whether to retry or emit final failure
-    console.error("[ContentExtractor] Extraction failed:", error);
-
+  } catch (err: any) {
+    console.error("[ContentExtractor] Extraction error:", err);
     if (retryCount < MAX_RETRIES) {
-      console.log(`[ContentExtractor] Retrying extraction (${retryCount + 1}/${MAX_RETRIES})`);
+      console.log(`[ContentExtractor] Retrying... attempt ${retryCount + 1}`);
       await delay(RETRY_DELAY_MS);
       return extractAndSendContent(retryCount + 1);
     }
-
-    // Out of retries => send final extraction error
-    const errMsg = error instanceof Error ? error.message : String(error);
-    const errStack = error instanceof Error ? error.stack : undefined;
-    console.error(`[ContentExtractor] Out of retries, sending final error: ${errMsg}`);
-    sendExtractionError("EXTRACTION_FAILED", errMsg, currentUrl, errStack);
+    sendExtractionError("EXTRACTION_FAILED", String(err?.message || err), currentUrl, err?.stack);
   }
-  console.log(`[ContentExtractor] extractAndSendContent complete`);
 }
 
 /**
- * Sets up a safety timeout to ensure we don't hang forever
- * if extraction takes too long.
+ * Setup a safety timeout to avoid indefinite hanging
  */
-function setupExtractionTimeout(): void {
-  console.log(`[ContentExtractor] Setting up extraction timeout (${PROCESSING_TIMEOUT_MS}ms)`);
-  // Clear any existing timeout
+function setupExtractionTimeout() {
   if (extractionTimeoutId !== null) {
-    console.log(`[ContentExtractor] Clearing existing extraction timeout`);
     clearTimeout(extractionTimeoutId);
   }
-
-  extractionTimeoutId = setTimeout(() => {
-    console.warn(`[ContentExtractor] Extraction timeout triggered after ${PROCESSING_TIMEOUT_MS}ms`);
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
-      sendExtractionError("EXTRACTION_TIMEOUT", "Extraction timed out", window.location.href);
-    }
+  extractionTimeoutId = window.setTimeout(() => {
+    console.warn("[ContentExtractor] Extraction timed out");
+    sendExtractionError("EXTRACTION_TIMEOUT", "Extraction took too long", window.location.href);
   }, PROCESSING_TIMEOUT_MS);
 
-  // Replace unload with pagehide to clear the timeout when page is unloaded
-  console.log(`[ContentExtractor] Adding pagehide event listener for cleanup`);
-  window.addEventListener("pagehide", (event) => {
-    console.log(`[ContentExtractor] pagehide event triggered, persisted=${event.persisted}`);
-    // Only clear if the page is truly unloading, not just being put in bfcache
-    if (!event.persisted && extractionTimeoutId !== null) {
-      console.log(`[ContentExtractor] Clearing timeout on pagehide`);
+  // Clear on pagehide if page is actually unloading
+  window.addEventListener("pagehide", (ev) => {
+    if (!ev.persisted && extractionTimeoutId !== null) {
       clearTimeout(extractionTimeoutId);
       extractionTimeoutId = null;
     }
   });
 }
 
-// Listen for extraction trigger messages from the background script
-console.log("[ContentExtractor] Setting up message listener");
-// [IMPROVEMENT] Check chrome.runtime.onMessage before adding listener
-if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+// Listen for messages (TRIGGER_EXTRACTION, SET_EXTRACTION_CONTEXT)
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log(`[ContentExtractor] Message received:`, message);
-    
     if (message.type === MessageType.TRIGGER_EXTRACTION) {
-      console.log("[ContentExtractor] Received extraction trigger");
-      
-      // Respond immediately to close the message channel
       sendResponse({ received: true });
-      
-      // If the page is already loaded, wait a short delay then extract
       if (document.readyState === 'complete') {
-        console.log(`[ContentExtractor] Document ready state: ${document.readyState}`);
-        setTimeout(() => {
-          console.log("[ContentExtractor] Page already loaded, starting extraction after delay");
-          extract();
-        }, 1000); // 1 second delay to ensure any redirects have settled
-      } 
-      // Otherwise wait for the load event
-      else {
-        console.log(`[ContentExtractor] Document ready state: ${document.readyState}, waiting for load`);
+        setTimeout(() => extract(), 1000);
+      } else {
         window.addEventListener('load', () => {
-          console.log("[ContentExtractor] Page load event fired, waiting before extraction");
-          // Add a short delay after load to ensure everything is stable
-          setTimeout(() => {
-            console.log("[ContentExtractor] Starting extraction after page load");
-            extract();
-          }, 1000); // 1 second delay after load
+          setTimeout(() => extract(), 1000);
         }, { once: true });
       }
-      
-      // Return false to avoid keeping the channel open
       return false;
-    }
-    
-    // Handle SET_EXTRACTION_CONTEXT message
-    if (message.type === MessageType.SET_EXTRACTION_CONTEXT) {
-      console.log("[ContentExtractor] Received extraction context");
+    } else if (message.type === MessageType.SET_EXTRACTION_CONTEXT) {
       const { pageId, visitId } = message.data;
-      console.log(`[ContentExtractor] Context data: pageId=${pageId}, visitId=${visitId}`);
-      
-      // Respond immediately to close the message channel
+      setExtractionContext(pageId, visitId);
       sendResponse({ received: true });
-      
-      // Set the context asynchronously
-      setTimeout(() => {
-        setExtractionContext(pageId, visitId);
-        console.log("[ContentExtractor] Context set successfully");
-      }, 0);
-      
-      // Return false to avoid keeping the channel open
       return false;
     }
-    
-    console.log(`[ContentExtractor] Unhandled message type: ${message.type}`);
-    // Always respond to close the message channel
-    sendResponse({ received: false, error: "Unhandled message type" });
+    // Fallback
+    sendResponse({ received: false, error: 'Unhandled message type' });
     return false;
   });
 } else {
-  console.warn("[ContentExtractor] chrome.runtime.onMessage is unavailable in this context.");
+  console.warn("[ContentExtractor] chrome.runtime.onMessage not available");
 }
 
-console.log("[ContentExtractor] Module initialization complete");
-// Remove automatic extraction on script load
-// extract();
+console.log("[ContentExtractor] contentExtractor script loaded.");

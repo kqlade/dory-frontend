@@ -1,110 +1,85 @@
+// src/auth/dexieAuth.ts
+
+import { setCurrentUser, handleUserLogout } from '../db/dexieDB';
+
+// Example of storing user data in Chrome storage
+async function storeAuthenticatedUser(userId: string, userObj: any): Promise<void> {
+  const userInfo = {
+    id: userId,
+    name: userObj?.getName?.() || 'Unknown',
+    email: userObj?.getEmail?.() || 'unknown@example.com',
+    authTime: Date.now(),
+  };
+
+  await chrome.storage.local.set({
+    dory_current_user_id: userId,
+    dory_user_info: userInfo,
+  });
+}
+
+async function clearAuthenticatedUser(): Promise<void> {
+  await chrome.storage.local.remove(['dory_current_user_id', 'dory_user_info']);
+}
+
 /**
- * Google Auth Integration for Dory
- * 
- * This file handles Google authentication integration with the Dexie.js
- * database implementation for Dory.
+ * Get current user ID if any
  */
-
-import { initializeUserDatabase, handleUserLogout } from '../db';
+export async function getCurrentAuthenticatedUserId(): Promise<string | null> {
+  const stored = await chrome.storage.local.get('dory_current_user_id');
+  return stored.dory_current_user_id || null;
+}
 
 /**
- * Handles successful Google authentication
- * @param googleUser The authenticated Google user
+ * Check if user is authenticated
+ */
+export async function isUserAuthenticated(): Promise<boolean> {
+  const userId = await getCurrentAuthenticatedUserId();
+  return userId !== null;
+}
+
+/**
+ * On Google auth success
  */
 export async function onGoogleAuthSuccess(googleUser: any): Promise<void> {
   try {
-    // Extract the user ID from the Google user object
-    const userId = googleUser.getId(); // or appropriate method based on your Google Auth library
-    
-    // Store the authenticated user information
-    storeAuthenticatedUser(userId, googleUser);
-    
-    // Initialize the database for this authenticated user
-    await initializeUserDatabase(userId);
-    
-    console.log(`User ${userId} successfully authenticated and database initialized`);
-  } catch (error) {
-    console.error('Error during authentication:', error);
-    // Handle authentication errors
+    const userId = googleUser.getId(); // or the correct method from your library
+    await storeAuthenticatedUser(userId, googleUser);
+
+    // Initialize Dexie for this user
+    await setCurrentUser(userId);
+
+    console.log(`[DORY] INFO: Auth success for user ${userId}, DB ready.`);
+  } catch (err) {
+    console.error('[DORY] ERROR: onGoogleAuthSuccess:', err);
   }
 }
 
 /**
- * Handles Google authentication failure
- * @param error The authentication error
+ * On Google auth failure
  */
 export function onGoogleAuthFailure(error: any): void {
-  console.error('Google authentication failed:', error);
-  // Handle the authentication failure
+  console.error('[DORY] ERROR: Google auth failed:', error);
 }
 
 /**
- * Handles user logout
+ * Logout user
  */
 export async function logoutUser(): Promise<void> {
   try {
-    // Close the database connections
-    handleUserLogout();
-    
-    // Clear any stored user information
-    clearAuthenticatedUser();
-    
-    // Here you would call the Google Auth logout method
-    // googleAuth.signOut();
-    
-    console.log('User logged out successfully');
-  } catch (error) {
-    console.error('Error during logout:', error);
-    // Handle logout errors
+    handleUserLogout(); // Dexie cleanup
+    await clearAuthenticatedUser(); // remove from chrome.storage
+    // If you use a library: googleAuth.signOut(); ...
+    console.log('[DORY] INFO: User logged out');
+  } catch (err) {
+    console.error('[DORY] ERROR: logoutUser failed:', err);
   }
 }
 
-/**
- * Stores authenticated user information
- * @param userId The user's ID
- * @param userInfo The user's information
- */
-function storeAuthenticatedUser(userId: string, userInfo: any): void {
-  // Store in memory
-  sessionStorage.setItem('dory_current_user_id', userId);
-  
-  // Store more user information if needed
-  sessionStorage.setItem('dory_user_info', JSON.stringify({
-    id: userId,
-    name: userInfo.getName?.() || 'Unknown',
-    email: userInfo.getEmail?.() || 'unknown@example.com',
-    authTime: Date.now()
-  }));
-}
-
-/**
- * Clears authenticated user information
- */
-function clearAuthenticatedUser(): void {
-  sessionStorage.removeItem('dory_current_user_id');
-  sessionStorage.removeItem('dory_user_info');
-}
-
-/**
- * Gets the currently authenticated user's ID
- * @returns The user ID or null if not authenticated
- */
-export function getCurrentAuthenticatedUserId(): string | null {
-  return sessionStorage.getItem('dory_current_user_id');
-}
-
-/**
- * Checks if a user is currently authenticated
- * @returns true if a user is authenticated, false otherwise
- */
-export function isUserAuthenticated(): boolean {
-  return getCurrentAuthenticatedUserId() !== null;
-}
-
+// Optional default export grouping
 export default {
   onGoogleAuthSuccess,
   onGoogleAuthFailure,
   logoutUser,
   getCurrentAuthenticatedUserId,
-  isUserAuthenticated
-}; 
+  isUserAuthenticated,
+};

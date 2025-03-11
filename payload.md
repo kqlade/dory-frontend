@@ -1,205 +1,290 @@
-# Cold Storage Sync Payload Documentation
+# Dory Frontend-Backend Payload Documentation
 
-This document describes the data payloads that are sent from the DORY browser extension to the backend cold storage service on a daily basis, as well as real-time content extraction events.
+This document outlines the required structure for each type of data the frontend sends to the backend. It serves as a reference for frontend developers to ensure proper data formatting and communication between the frontend and backend systems.
 
-## Overview
+## Table of Contents
 
-The DORY extension sends data to the backend through two primary channels:
+1. [Cold Storage API](#cold-storage-api)
+   - [Pages](#pages)
+   - [Visits](#visits)
+   - [Sessions](#sessions)
+   - [Search Clicks](#search-clicks)
+2. [Content API](#content-api)
+   - [Content Extraction](#content-extraction)
+3. [Unified Search API](#unified-search-api)
+   - [Search Query](#search-query)
+   - [Search Click (Deprecated)](#search-click-deprecated)
 
-1. **Cold Storage Sync**: Browsing history data synced once per day, including:
-   - **Pages** - Information about web pages visited
-   - **Visits** - Individual page visit events and session information
-   - **Sessions** - Browsing session metadata
+---
 
-2. **Real-time Events**: Content extraction data sent immediately when a page is visited:
-   - **Content** - Extracted content from web pages (sent in real-time, not through cold storage)
+## Cold Storage API
 
-Each cold storage sync operation sends only data that has been created or modified since the last successful sync, making the process efficient and minimizing data transfer.
+The Cold Storage API is used for batch synchronization of browsing history data. The frontend should collect data locally and sync it periodically (typically once per day) to the backend.
 
-## Sync Schedule and Process
+### Pages
 
-- **Frequency**: Once every 24 hours for cold storage sync; immediately in real-time for content extraction
-- **Batching**: Cold storage data sent in batches of up to 500 records at a time
-- **Incremental**: Only records modified since the last sync are transmitted
-- **Operation**: Cold storage runs in the background during browser idle time when possible
+**Endpoint:** `POST /api/cold-storage/pages`
 
-## API Endpoints
-
-The payloads are sent to the following endpoints:
-
-### Cold Storage Endpoints (Daily Sync)
-- `/api/cold-storage/pages`
-- `/api/cold-storage/visits`
-- `/api/cold-storage/sessions`
-
-### Real-time Endpoint
-- `/api/content` (for content extraction events, sent immediately)
-
-## Payload Structures
-
-### Pages Collection
-
-Each record in the pages collection represents a web page that the user has visited.
-
+**Payload Structure:**
 ```json
-{
-  "pageId": 12345,                    // Unique identifier for the page
-  "userId": "user123",                // Identifier for the user who visited the page
-  "title": "Example Website Title",   // Page title
-  "url": "https://example.com/path",  // Full URL
-  "firstVisit": 1647823456789,        // First visit timestamp (ms)
-  "lastVisit": 1648023456789,         // Most recent visit timestamp (ms)
-  "visitCount": 5,                    // Number of times visited
-  "totalActiveTime": 450,             // Total time spent active on page (seconds)
-  "totalDuration": 580,               // Total time page was open (seconds)
-  "lastModified": 1648023456789       // Last modified timestamp (ms)
-}
+[
+  {
+    "pageId": "unique-page-identifier",
+    "userId": "user-identifier",
+    "title": "Page Title",
+    "url": "https://example.com/page",
+    "firstVisit": 1647823456789,
+    "lastVisit": 1648023456789,
+    "visitCount": 5,
+    "totalActiveTime": 450,
+    "totalDuration": 580,
+    "lastModified": 1648023456789
+  },
+  // Additional page records...
+]
 ```
 
-### Visits Collection
+**Field Descriptions:**
+- `pageId` (Required): Unique identifier for the page
+- `userId` (Required): Identifier for the user who visited the page
+- `title` (Required): Page title
+- `url` (Required): Full URL
+- `firstVisit` (Required): First visit timestamp (ms since epoch)
+- `lastVisit` (Required): Most recent visit timestamp (ms since epoch)
+- `visitCount` (Required): Number of times visited
+- `totalActiveTime` (Required): Total time spent active on page (seconds)
+- `totalDuration` (Required): Total time page was open (seconds)
+- `lastModified` (Required): Last modified timestamp (ms since epoch)
 
-Each record in the visits collection represents a single visit to a web page.
+### Visits
 
+**Endpoint:** `POST /api/cold-storage/visits`
+
+**Payload Structure:**
 ```json
-{
-  "visitId": "visit_12345abc",        // Unique identifier for the visit
-  "userId": "user123",                // Identifier for the user who made the visit
-  "pageId": 12345,                    // Reference to the page
-  "sessionId": "session_67890xyz",    // Reference to the browsing session
-  "startTime": 1647823456789,         // Visit start timestamp (ms)
-  "endTime": 1647823556789,           // Visit end timestamp (ms), may be null if ongoing
-  "duration": 100.0,                  // Total time page was open (seconds)
-  "fromPageId": 12344,                // Reference to the referrer page, if any
-  "totalActiveTime": 98.5,            // Time actively engaged with the page (seconds)
-  "isBackNavigation": false           // Whether this was a back navigation
-}
+[
+  {
+    "visitId": "unique-visit-identifier",
+    "userId": "user-identifier",
+    "pageId": "page-identifier",
+    "sessionId": "session-identifier",
+    "startTime": 1647823456789,
+    "endTime": 1647823556789,
+    "duration": 100.0,
+    "fromPageId": "previous-page-id",
+    "totalActiveTime": 98.5,
+    "isBackNavigation": false
+  },
+  // Additional visit records...
+]
 ```
 
-### Sessions Collection
+**Field Descriptions:**
+- `visitId` (Required): Unique identifier for the visit
+- `userId` (Required): Identifier for the user who made the visit
+- `pageId` (Required): Reference to the page
+- `sessionId` (Required): Reference to the browsing session
+- `startTime` (Required): Visit start timestamp (ms since epoch)
+- `endTime` (Required/Null): Visit end timestamp (ms since epoch), null if ongoing
+- `duration` (Required): Total time page was open (seconds)
+- `fromPageId` (Optional): Reference to the referrer page, if any
+- `totalActiveTime` (Required): Time actively engaged with the page (seconds)
+- `isBackNavigation` (Required): Whether this was a back navigation
 
-Each record in the sessions collection represents a browsing session.
+### Sessions
 
+**Endpoint:** `POST /api/cold-storage/sessions`
+
+**Payload Structure:**
 ```json
-{
-  "sessionId": "session_67890xyz",    // Unique identifier for the session
-  "userId": "user123",                // Identifier for the user who created the session
-  "startTime": 1647823456000,         // Session start timestamp (ms)
-  "endTime": 1647833456000,           // Session end timestamp (ms), may be null if ongoing
-  "totalActiveTime": 3540,            // Total active time across all pages (seconds)
-  "totalDuration": 3600,              // Total session duration (seconds)
-  "deviceInfo": {                     // Device information
-    "browser": "Chrome",
-    "browserVersion": "98.0.4758.102",
-    "os": "Windows",
-    "osVersion": "10"
-  }
-}
+[
+  {
+    "sessionId": "unique-session-identifier",
+    "userId": "user-identifier",
+    "startTime": 1647823456000,
+    "endTime": 1647833456000,
+    "totalActiveTime": 3540,
+    "totalDuration": 3600,
+    "deviceInfo": {
+      "browser": "Chrome",
+      "browserVersion": "98.0.4758.102",
+      "os": "Windows",
+      "osVersion": "10"
+    }
+  },
+  // Additional session records...
+]
 ```
 
-### Content Extraction Events (Real-time)
+**Field Descriptions:**
+- `sessionId` (Required): Unique identifier for the session
+- `userId` (Required): Identifier for the user who created the session
+- `startTime` (Required): Session start timestamp (ms since epoch)
+- `endTime` (Required/Null): Session end timestamp (ms since epoch), null if ongoing
+- `totalActiveTime` (Required): Total active time across all pages (seconds)
+- `totalDuration` (Required): Total session duration (seconds)
+- `deviceInfo` (Required): Object containing device information
+  - `browser` (Required): Browser name
+  - `browserVersion` (Required): Browser version
+  - `os` (Required): Operating system
+  - `osVersion` (Required): Operating system version
 
-Content extraction data is sent directly to the backend in real-time when a page is visited, not through the cold storage sync process.
+### Search Clicks
 
+**Endpoint:** `POST /api/cold-storage/search-clicks`
+
+**Payload Structure:**
+```json
+[
+  {
+    "clickId": "unique-click-identifier",
+    "userId": "user-identifier",
+    "searchSessionId": "search-session-identifier",
+    "pageId": "page-identifier",
+    "position": 2,
+    "url": "https://example.com/page",
+    "query": "search query text",
+    "timestamp": 1647823456789
+  },
+  // Additional search click records...
+]
+```
+
+**Field Descriptions:**
+- `clickId` (Required): Unique identifier for the click
+- `userId` (Required): Identifier for the user who clicked the result
+- `searchSessionId` (Required): Search session ID from the search results
+- `pageId` (Required): ID of the clicked page
+- `position` (Required): Position in results (0-based index)
+- `url` (Required): URL of the clicked result
+- `query` (Required): Search query that produced this result
+- `timestamp` (Required): When the click occurred (ms since epoch)
+
+---
+
+## Content API
+
+The Content API is used for real-time content extraction events that need immediate processing for search functionality.
+
+### Content Extraction
+
+**Endpoint:** `POST /api/content`
+
+**Payload Structure:**
 ```json
 {
-  "contentId": "content_12345abc",    // Unique identifier for the content
-  "sessionId": "session_67890xyz",    // Session when content was extracted
-  "userId": "user123",                // Identifier for the user who visited the page
-  "timestamp": 1647823456789,         // When the event occurred (ms)
-  "data": {                           // Event-specific data
-    "pageId": "12345",                // Reference to the page
-    "visitId": "visit_67890xyz",      // Reference to the visit
-    "userId": "user123",              // User ID (duplicated for data consistency)
-    "url": "https://example.com/path",// URL of the page
-    "content": {                      // Extracted content
-      "title": "Example Page Title",  // Page title
+  "contentId": "unique-content-identifier",
+  "sessionId": "session-identifier",
+  "userId": "user-identifier",
+  "timestamp": 1647823456789,
+  "data": {
+    "pageId": "page-identifier",
+    "visitId": "visit-identifier",
+    "userId": "user-identifier",
+    "url": "https://example.com/page",
+    "content": {
+      "title": "Page Title",
       "markdown": "# Heading\n\nThis is the extracted content...",
-      "metadata": {                   // Additional metadata
-        "language": "en"              // Language of the content
+      "metadata": {
+        "language": "en"
       }
     }
   }
 }
 ```
 
-## Batch Request Example
+**Field Descriptions:**
+- `contentId` (Required): Unique identifier for the content
+- `sessionId` (Required): Session when content was extracted
+- `userId` (Required): Identifier for the user who visited the page
+- `timestamp` (Required): When the event occurred (ms since epoch)
+- `data` (Required): Object containing content data
+  - `pageId` (Required): Reference to the page
+  - `visitId` (Required): Reference to the visit
+  - `userId` (Required): User ID (duplicated for data consistency)
+  - `url` (Required): URL of the page
+  - `content` (Required): Object containing the extracted content
+    - `title` (Required): Page title
+    - `markdown` (Required): Page content in markdown format
+    - `metadata` (Optional): Additional metadata
+      - `language` (Optional): Detected language of the content
 
-A typical batch request to the cold storage API would look like:
+---
 
-```http
-POST /api/cold-storage/visits HTTP/1.1
-Content-Type: application/json
-Cookie: [authentication cookies]
+## Unified Search API
 
-[
-  {
-    "visitId": "visit_12345abc",
-    "userId": "user123",
-    "pageId": 12345,
-    "sessionId": "session_67890xyz",
-    "startTime": 1647823456789,
-    "endTime": 1647823556789,
-    "duration": 100.0,
-    "fromPageId": 12344,
-    "totalActiveTime": 98.5,
-    "isBackNavigation": false
-  },
-  {
-    "visitId": "visit_12346def",
-    "userId": "user123",
-    "pageId": 12346,
-    "sessionId": "session_67890xyz",
-    "startTime": 1647823556800,
-    "endTime": 1647823656800,
-    "duration": 100.0,
-    "fromPageId": 12345,
-    "totalActiveTime": 86.2,
-    "isBackNavigation": false
-  },
-  // ... up to 500 records per batch
-]
+The Unified Search API provides search functionality across browsing history and content.
+
+### Search Query
+
+**Endpoint:** `POST /api/unified-search`
+
+**Payload Structure:**
+```json
+{
+  "query": "search query text",
+  "userId": "user-identifier",
+  "timestamp": 1682541285123,
+  "triggerSemantic": false
+}
 ```
 
-## User ID Handling
+**Field Descriptions:**
+- `query` (Required): The search text to find
+- `userId` (Required): User identifier for personalized results
+- `timestamp` (Optional): When the query was entered (ms since epoch)
+- `triggerSemantic` (Optional, default: false): Whether to run the more expensive semantic search
 
-Every record sent to the backend includes a `userId` field for proper attribution:
+**Usage Notes:**
+- Use `triggerSemantic: false` for live suggestions as the user types (after a short debounce)
+- Use `triggerSemantic: true` when typing pauses or the user presses Enter (after longer idle time)
+- Always cancel previous SSE connections when starting a new search
 
-- All records automatically have a userId added before they're sent to the backend
-- This ensures proper data ownership and makes user-specific queries possible
-- If a user is not logged in, an anonymous ID is used as a fallback
+### Search Click (Deprecated)
 
-## Content Extraction Process
+> **DEPRECATED**: This endpoint is maintained for backward compatibility only and will be removed in a future version. Please use the [Search Clicks](#search-clicks) Cold Storage API for all new implementations.
 
-Content extraction events are special in that they are:
+**Endpoint:** `POST /api/unified-search/click`
 
-1. **Processed in real-time** when a user visits a page
-2. **Sent directly to the backend API immediately**
-3. **NOT part of the cold storage sync process**
+**Payload Structure:**
+```json
+{
+  "searchSessionId": "search-session-identifier",
+  "pageId": "page-identifier",
+  "position": 2,
+  "timestamp": 1682541290456
+}
+```
 
-The content extractor:
-- Converts page HTML to clean, readable markdown
-- Extracts key metadata (title, language, etc.)
-- Removes ads, navigation, and other non-content elements
-- Preserves important semantic structure (headings, lists, etc.)
+**Field Descriptions:**
+- `searchSessionId` (Required): The session ID received with the search results
+- `pageId` (Required): The ID of the clicked result
+- `position` (Optional): The position/index of the result in the list (0-based)
+- `timestamp` (Optional): When the click occurred (ms since epoch)
 
-## Error Handling
+---
 
-If a sync fails for any reason:
-- The system will retry during the next scheduled sync
+## Implementation Notes
+
+### Cold Storage Sync Frequency
+
+- Cold storage data should be synced once per day, typically during browser idle time
+- Only records modified since the last successful sync should be transmitted
+- The `nextSyncAfter` field in responses indicates when the next sync should occur
+
+### Batching
+
+- Data should be sent in batches of up to 500 records at a time
+- If more records need to be synced, send multiple batches
+
+### Error Handling
+
+- If a sync fails, the client should retry during the next sync window
 - Failed records remain eligible for future syncs since the last sync timestamp is only updated after successful syncs
-- The system logs details about failed sync attempts
 
-## Privacy Considerations
+### Content Extraction Behavior
 
-- All payloads include authentication credentials to ensure data is associated with the correct user
-- No personal data beyond browsing history is included in the sync
-- Data is only synced when the user has enabled history sync in the DORY extension settings
-- Browsing in incognito/private mode is never synced to cold storage
-
-## Data Retention
-
-The backend retains browsing history data according to the following policy:
-- Standard retention: 90 days by default
-- Users can configure longer retention periods in their account settings
-- Users can manually trigger deletion of their data at any time
-
+Unlike cold storage data, content extraction events:
+- Are sent immediately when content is extracted, not in daily batch syncs
+- Trigger immediate processing for search indexing and embeddings
+- Are processed in real-time to make content searchable as quickly as possible 

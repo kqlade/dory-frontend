@@ -6,10 +6,11 @@
  * Events are NOT sent directly to the backend - they are synced later via cold storage.
  */
 
-import * as dexieDb from './dexieDB';
-import { BrowsingSession } from './dexieDB';
+import * as dexieDb from '../db/dexieDB';
+import { BrowsingSession } from '../db/dexieDB';
 import { logEvent } from './dexieEventLogger';
 import { EventType } from '../api/types';
+import { getUserInfo } from '../auth/googleAuth';
 
 // Track the current session ID
 let currentSessionId: number | null = null;
@@ -32,11 +33,16 @@ export async function startNewSession(): Promise<number> {
   const id = await db.sessions.add(session);
   currentSessionId = id;
   
+  // Get user info for the event
+  const userInfo = await getUserInfo();
+  
   // Log session started event locally - will be synced to backend via cold storage
   await logEvent({
     operation: EventType.SESSION_STARTED,
     sessionId: id.toString(),
     timestamp: Math.floor(now),
+    userId: userInfo?.id,
+    userEmail: userInfo?.email,
     data: {
       sessionId: id.toString(),
       startTime: now
@@ -77,11 +83,16 @@ export async function endCurrentSession(): Promise<void> {
       console.error('Error getting page visit count:', e);
     }
     
+    // Get user info for the event
+    const userInfo = await getUserInfo();
+    
     // Log session ended event locally - will be synced to backend via cold storage
     await logEvent({
       operation: EventType.SESSION_ENDED,
       sessionId: currentSessionId.toString(),
       timestamp: now,
+      userId: userInfo?.id,
+      userEmail: userInfo?.email,
       data: {
         totalDuration: now - session.startTime,
         pagesVisited: pagesVisited
