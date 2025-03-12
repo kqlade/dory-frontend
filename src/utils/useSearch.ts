@@ -3,54 +3,37 @@ import { useQuery } from '@tanstack/react-query';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
 import { quickLaunch } from '../services/localQuickLauncher';
+import { API_BASE_URL } from '../config';
 
-/**
- * A standard shape for search results in your React UI.
- */
+/** Standard shape for displayed results */
 interface SearchResult {
   id: string;
   title: string;
   url: string;
   score: number;
-  source?: string;  // e.g. 'local', 'quicklaunch', 'semantic'
+  source?: string;  
 }
 
-/**
- * useLocalSearch: Hook for "instant" local search via Dexie (quickLaunch).
- * 
- * Because quickLaunch uses Dexie, and Dexie is valid in a web DOM environment
- * (popup or options page), this is MV3-safe. We do not run this code in the
- * background service worker.
- */
+/** 1) useLocalSearch => Dexie quickLaunch */
 export function useLocalSearch(query: string) {
   return useQuery({
     queryKey: ['local-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
-      
-      // Calls the quickLaunch service to do local Dexie-based ranking
       const results = await quickLaunch.search(query);
-
-      // Convert to a uniform shape
-      return results.map((r) => ({
+      return results.map(r => ({
         id: r.pageId,
         title: r.title,
         url: r.url,
-        score: r.score
+        score: r.score,
+        source: 'local'
       }));
     },
-    // Only run if there's enough query length to matter
     enabled: query.length >= 2,
   });
 }
 
-/**
- * useBackendStreamingSearch: Hook that uses SSE (EventSource) to fetch results
- * from a remote "unified-search" endpoint. 
- * 
- * This code is safe in a typical React extension page (popup, new tab, or options),
- * but not in the background service worker (which doesn't have a DOM or window).
- */
+/** 2) useBackendStreamingSearch => SSE approach */
 export function useBackendStreamingSearch(query: string) {
   const [quickResults, setQuickResults] = useState<SearchResult[]>([]);
   const [semanticResults, setSemanticResults] = useState<SearchResult[]>([]);
@@ -59,68 +42,78 @@ export function useBackendStreamingSearch(query: string) {
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // On query change, reset old SSE, start fresh
   useEffect(() => {
-    // Cleanup any previous SSE
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
 
-    // Reset states
     setQuickResults([]);
     setSemanticResults([]);
     setIsComplete(false);
 
-    // If query too short, skip SSE
     if (!query || query.length < 2) {
       setIsLoading(false);
       return;
     }
-
     setIsLoading(true);
 
-    // Build the SSE URL. `window.location.origin` is valid in a DOM environment:
-    const url = new URL('/api/unified-search/stream', window.location.origin);
+    // Use API_BASE_URL instead of window.location.origin to ensure proper connection in extension context
+    const url = new URL('/api/unified-search', API_BASE_URL);
     url.searchParams.append('query', query);
-    url.searchParams.append('userId', 'current-user-id'); // Replace with real user ID
+    url.searchParams.append('userId', 'current-user-id');
     url.searchParams.append('timestamp', Date.now().toString());
     url.searchParams.append('triggerSemantic', 'true');
 
     const source = new EventSource(url.toString());
     eventSourceRef.current = source;
 
-    source.addEventListener('message', (event) => {
+    source.addEventListener('message', (evt) => {
       try {
-        const data = JSON.parse(event.data);
-
+        const data = JSON.parse(evt.data);
         switch (data.type) {
           case 'quicklaunch': {
-            const quickData = Array.isArray(data.results) ? data.results : [data];
-            setQuickResults((prev) => [...prev, ...quickData]);
+            const arr = Array.isArray(data.results) ? data.results : [data];
+            setQuickResults(prev => [
+              ...prev,
+              ...arr.map((x: { id?: string; pageId?: string; title: string; url: string; score?: number }) => ({
+                id: x.id || x.pageId || `${Date.now()}-q`,
+                title: x.title,
+                url: x.url,
+                score: x.score || 1,
+                source: 'quicklaunch'
+              }))
+            ]);
             break;
           }
           case 'semantic': {
-            const semanticData = Array.isArray(data.results) ? data.results : [data];
-            setSemanticResults((prev) => [...prev, ...semanticData]);
+            const arr = Array.isArray(data.results) ? data.results : [data];
+            setSemanticResults(prev => [
+              ...prev,
+              ...arr.map((x: { id?: string; pageId?: string; title: string; url: string; score?: number }) => ({
+                id: x.id || x.pageId || `${Date.now()}-s`,
+                title: x.title,
+                url: x.url,
+                score: x.score || 1,
+                source: 'semantic'
+              }))
+            ]);
             break;
           }
-          case 'complete': {
+          case 'complete':
             setIsComplete(true);
             setIsLoading(false);
             source.close();
             eventSourceRef.current = null;
             break;
-          }
-          case 'error': {
-            console.error('Search error:', data.message, 'Source:', data.source);
+          case 'error':
+            console.error('[SSE Error]', data.message);
             break;
-          }
           default:
-            console.log('Unknown SSE event type:', data);
+            console.log('[SSE] Unknown event type =>', data);
         }
       } catch (err) {
-        console.error('Error parsing SSE data:', err);
+        console.error('Error parsing SSE data =>', err);
       }
     });
 
@@ -129,94 +122,58 @@ export function useBackendStreamingSearch(query: string) {
     });
 
     source.addEventListener('error', () => {
-      console.error('SSE connection error');
+      console.error('[SSE] Connection error');
       setIsLoading(false);
       source.close();
       eventSourceRef.current = null;
     });
 
-    // Cleanup if unmounted or query changed
     return () => {
       setIsLoading(false);
-      if (source) {
-        source.close();
-      }
+      if (source) source.close();
     };
   }, [query]);
 
-  return {
-    quickResults,
-    semanticResults,
-    isLoading,
-    isComplete
-  };
+  return { quickResults, semanticResults, isLoading, isComplete };
 }
 
-/**
- * useHybridSearch: Combined hook that merges results from local Dexie-based
- * search and a backend SSE-based search.
- */
+/** 3) useHybridSearch => merges local + SSE results */
 export function useHybridSearch() {
   const [inputValue, setInputValue] = useState('');
+  // Debounce the typed input
   const [debouncedQuery] = useDebounce(inputValue, 300);
   const [immediateQuery, setImmediateQuery] = useState('');
 
-  // Local search is immediate
-  const localSearchQuery = inputValue;
+  // Local search => immediate
+  const { data: localResults = [], isLoading: isLocalLoading } = useLocalSearch(inputValue);
 
-  // Backend search is debounced or triggered by Enter
-  const backendSearchQuery = immediateQuery || debouncedQuery;
-
-  // Local query hook
-  const {
-    data: localResults = [],
-    isLoading: isLocalLoading
-  } = useLocalSearch(localSearchQuery);
-
-  // Backend SSE hook
+  // SSE backend => debounced or immediate
+  const backendQuery = immediateQuery || debouncedQuery;
   const {
     quickResults,
     semanticResults,
     isLoading: isBackendLoading,
     isComplete
-  } = useBackendStreamingSearch(backendSearchQuery);
+  } = useBackendStreamingSearch(backendQuery);
 
-  // Merge + de-dupe all results
-  const allResults = useMemo(() => {
-    const combined = [
-      ...localResults.map((r) => ({ ...r, source: 'local' })),
-      ...quickResults.map((r) => ({ ...r, source: 'quicklaunch' })),
-      ...semanticResults.map((r) => ({ ...r, source: 'semantic' })),
-    ];
-
-    // Deduplicate by ID
-    return combined
-      .filter(
-        (result, index, self) =>
-          index === self.findIndex((r) => r.id === result.id)
-      )
-      .sort((a, b) => {
-        // Sort by source priority first
-        const sourceOrder: Record<string, number> = {
-          local: 0,
-          quicklaunch: 1,
-          semantic: 2
-        };
-        const sourceDiff = (sourceOrder[a.source ?? ''] ?? 99) - (sourceOrder[b.source ?? ''] ?? 99);
-        if (sourceDiff !== 0) {
-          return sourceDiff;
-        }
-        // Then by descending score
-        return b.score - a.score;
-      });
+  // Combine / deduplicate
+  const results = useMemo(() => {
+    const combined = [...localResults, ...quickResults, ...semanticResults];
+    return combined.filter((r, idx, self) =>
+      idx === self.findIndex(x => x.id === r.id)
+    );
   }, [localResults, quickResults, semanticResults]);
 
-  // If user presses Enter, run immediate search
+  // Single "is searching" flag
+  const isSearching = (isLocalLoading || isBackendLoading);
+
+  // If user presses enter, do an immediate SSE search 
+  // (bypassing the 300ms debounce)
   const handleEnterKey = useCallback((value: string) => {
     setImmediateQuery(value);
   }, []);
 
-  // When debounced query catches up, reset immediateQuery
+  // Once our debounced query matches the immediateQuery, we reset
   useEffect(() => {
     if (immediateQuery && immediateQuery === debouncedQuery) {
       setImmediateQuery('');
@@ -227,13 +184,11 @@ export function useHybridSearch() {
     inputValue,
     setInputValue,
     handleEnterKey,
-    isSearching: isLocalLoading || isBackendLoading,
+    isSearching,
     isComplete,
-    results: allResults,
-
-    // Expose these if needed for debugging
+    results,
     localResults,
     quickResults,
-    semanticResults,
+    semanticResults
   };
 }

@@ -1,6 +1,6 @@
 // src/services/activityTracker.ts
 
-import { createMessage, MessageType } from './messageSystem';
+import { createMessage, MessageType } from '../utils/messageSystem';
 
 console.log('[ActivityTracker] Running...');
 

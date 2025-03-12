@@ -1,19 +1,18 @@
+// src/components/NewTabSearchBar.tsx
 import React, { ChangeEvent, KeyboardEvent, RefObject, forwardRef } from 'react';
 import styled from 'styled-components';
 
 interface NewTabSearchBarProps {
-  onSearch?: (query: string) => void;
+  value: string;
+  onChange: (query: string) => void;  // unified callback
+  onSearch?: (query: string) => void; // triggered on Enter
   isLoading?: boolean;
   inputRef?: RefObject<HTMLInputElement>;
-  query?: string;
-  value?: string;
-  onQueryChange?: (query: string) => void;
-  onChange?: (query: string) => void;
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
   placeholder?: string;
 }
 
-// Custom Dory Logo component that works well with themes
+// Simple DoryLogo as you had
 const DoryLogo = ({ size = 24 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 576 512" xmlns="http://www.w3.org/2000/svg">
     <path 
@@ -44,8 +43,7 @@ const SearchInput = styled.input`
   border: none;
   color: var(--text-color);
   font-size: 18px;
-  font-weight: 400;
-  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   line-height: 28px;
   width: 100%;
   padding: 0;
@@ -84,44 +82,35 @@ const Spinner = styled.div`
   animation: spin 0.8s linear infinite;
 `;
 
-const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>((
-  { 
-    onSearch, 
-    isLoading = false,
-    inputRef,
-    query,
-    value,
-    onQueryChange,
-    onChange,
-    onKeyDown,
-    placeholder = "Find what you forgot..."
-  }, 
-  ref
-) => {
+const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>(({
+  value,
+  onChange,
+  onSearch,
+  isLoading = false,
+  inputRef,
+  onKeyDown,
+  placeholder = "Find what you forgot..."
+}, ref) => {
+  // If parent gave us an inputRef, use that, otherwise use forwarded ref
+  const inputRefToUse = inputRef || ref;
+
+  // Handle text changes
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    if (onChange) {
-      onChange(e.target.value);
-    }
-    if (onQueryChange) {
-      onQueryChange(e.target.value);
-    }
+    onChange(e.target.value);
   };
 
+  // Handle key presses
   const handleKeyPress = async (e: KeyboardEvent<HTMLInputElement>) => {
     if (onKeyDown) {
       onKeyDown(e);
     }
-    
     if (e.key === 'Enter' && !isLoading && onSearch) {
-      const searchQuery = query || value || '';
-      if (searchQuery.trim()) {
-        await onSearch(searchQuery);
+      const trimmedQuery = value.trim();
+      if (trimmedQuery) {
+        await onSearch(trimmedQuery);
       }
     }
   };
-
-  // Use either the passed inputRef or the forwarded ref
-  const inputRefToUse = inputRef || ref;
 
   return (
     <SearchContainer>
@@ -131,7 +120,7 @@ const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>((
       <SearchInput
         ref={inputRefToUse}
         type="text"
-        value={value || query || ''}
+        value={value}
         onChange={handleInputChange}
         onKeyDown={handleKeyPress}
         placeholder={placeholder}
@@ -146,7 +135,5 @@ const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>((
   );
 });
 
-// Add display name for React DevTools
 NewTabSearchBar.displayName = 'NewTabSearchBar';
-
 export default NewTabSearchBar;

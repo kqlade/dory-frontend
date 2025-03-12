@@ -20,11 +20,11 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/services/contentExtractor.ts"]
+      "js": ["src/content/contentExtractor.ts"]
     },
     {
       "matches": ["<all_urls>"],
-      "js": ["src/background/activityTracker.ts"]
+      "js": ["src/content/activityTracker.ts"]
     }
   ],
   "icons": {

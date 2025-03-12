@@ -1,5 +1,4 @@
 // src/services/eventService.ts
-
 import { API_BASE_URL, ENDPOINTS } from '../config';
 import { getUserInfo, UserInfo } from '../auth/googleAuth';
 
@@ -11,6 +10,7 @@ export interface ContentEvent {
   title: string;
   markdown: string;
   metadata?: Record<string, any>;
+  sessionId?: string | null;
 }
 
 export interface SessionEvent {
@@ -32,7 +32,7 @@ export interface VisitEvent {
   data?: any;
 }
 
-// For local caching
+// Local caching
 let currentUser: UserInfo | null = null;
 
 /**
@@ -85,14 +85,18 @@ async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Resp
 }
 
 /**
- * Real-time content extraction event (special-cased).
+ * Real-time content extraction event.
  */
 export async function sendContentEvent(event: ContentEvent): Promise<void> {
   const user = await getCurrentUser();
   try {
-    // Optional: load session ID
-    const { getCurrentSessionId } = await import('../utils/dexieSessionManager');
-    const sessionId = await getCurrentSessionId();
+    let sessionId = event.sessionId;
+    if (!sessionId) {
+      // Optionally load session ID from Dexie
+      const { getCurrentSessionId } = await import('../utils/dexieSessionManager');
+      const numSessionId = await getCurrentSessionId();
+      sessionId = numSessionId ? String(numSessionId) : null;
+    }
 
     if (!sessionId) {
       console.warn('[EventService] No active session, skipping content event');
@@ -182,7 +186,6 @@ export async function trackSearchClick(
   query: string
 ): Promise<void> {
   try {
-    // We do a dynamic import to avoid circular dependencies
     const { logEvent } = await import('../utils/dexieEventLogger');
     const { EventType } = await import('../api/types');
     const { getCurrentSessionId } = await import('../utils/dexieSessionManager');
@@ -198,13 +201,7 @@ export async function trackSearchClick(
       operation: EventType.SEARCH_CLICK,
       sessionId: String(sessionId),
       timestamp,
-      data: {
-        searchSessionId,
-        pageId,
-        position,
-        url,
-        query
-      }
+      data: { searchSessionId, pageId, position, url, query }
     });
     console.log('[EventService] Search click logged locally');
   } catch (err) {

@@ -6,7 +6,7 @@ export enum MessageType {
   EXTRACTION_ERROR = 'EXTRACTION_ERROR',
   TRIGGER_EXTRACTION = 'TRIGGER_EXTRACTION',
   SET_EXTRACTION_CONTEXT = 'SET_EXTRACTION_CONTEXT',
-  // Add other message types as needed
+  CONTENT_DATA = 'CONTENT_DATA',
 }
 
 export interface Message<T = any> {
@@ -29,6 +29,17 @@ export interface ExtractionData {
   metadata?: any;
 }
 
+// Interface for content data message
+export interface ContentDataMessage {
+  pageId: string;
+  visitId: string;
+  sessionId: string | null;
+  url: string;
+  title: string;
+  markdown: string;
+  metadata?: Record<string, any>;
+}
+
 /**
  * Create a Message object with the given type & data.
  */
@@ -39,7 +50,7 @@ export function createMessage<T>(
 ): Message<T> {
   return {
     type,
-    timestamp: Math.floor(Date.now()),
+    timestamp: Date.now(),
     source,
     data
   };
@@ -105,18 +116,5 @@ export class MessageRouter {
   }
 }
 
-// Export a singleton instance for the entire extension to use
+// Export a singleton instance
 export const messageRouter = new MessageRouter();
-
-// Optionally, if you also use React Query:
-import { QueryClient } from '@tanstack/react-query';
-
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: false,
-      staleTime: 1000 * 60 * 5, // 5 minutes
-    },
-  },
-});

@@ -5,8 +5,8 @@
  * in a separate module for clarity.
  */
 
-import { createOrGetPage, createOrUpdateEdge } from '../utils/dexieBrowsingStore';
-import { getCurrentSessionId } from '../utils/dexieSessionManager';
+import { createOrGetPage, createOrUpdateEdge } from './dexieBrowsingStore';
+import { getCurrentSessionId } from './dexieSessionManager';
 
 export interface TabTracking {
   tabToCurrentUrl: Record<number, string | undefined>;

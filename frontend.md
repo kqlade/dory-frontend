@@ -51,9 +51,10 @@ Authentication is handled at the extension level in the background service worke
 
 ### Authentication Flow
 
-1. When the extension initializes, it checks for valid authentication
+1. When the extension initializes, it checks for valid authentication using Chrome Identity API
 2. If not authenticated, the extension shows a gray icon and disables functionality
 3. If authenticated, normal extension functionality is enabled
+4. Changes in authentication state are monitored via `chrome.identity.onSignInChanged`
 
 ### Authentication Implementation
 
@@ -65,19 +66,62 @@ async function initialize(): Promise<void> {
   // Check authentication first - gate all functionality behind auth
   try {
     const userInfo = await getUserInfo();
-    if (!userInfo || !userInfo.id) {
+    if (!userInfo?.id) {
       isAuthenticated = false;
-      // Update UI to indicate unauthenticated state
-      chrome.action.setIcon({ path: { /* Gray icons */ } });
+      // Gray out icon
+      chrome.action.setIcon({
+        path: {
+          16: '/icons/dory_logo_gray_16x16.png',
+          48: '/icons/dory_logo_gray_48x48.png',
+          128: '/icons/dory_logo_gray_128x128.png'
+        }
+      });
+      // Let user click icon to authenticate
       chrome.action.onClicked.addListener(handleUnauthenticatedClick);
-      return; // Exit early - don't initialize other functionality
+      return; // Exit early
     }
-    
     // User is authenticated - proceed with initialization
     isAuthenticated = true;
-    // Initialize extension components...
+    
+    // Initialize the rest of the extension...
+    // 1. Initialize Dexie database
+    // 2. Setup message routing
+    // 3. Start a new session
+    // 4. Initialize event streaming
   } catch (error) {
-    // Handle authentication error
+    console.error('[DORY] AUTH ERROR:', error);
+    isAuthenticated = false;
+  }
+}
+```
+
+The `getUserInfo` function uses Chrome's Identity API:
+
+```typescript
+// In src/auth/googleAuth.ts
+export async function getUserInfo(interactive = true): Promise<UserInfo | null> {
+  try {
+    const result = await chrome.identity.getAuthToken({ interactive });
+    if (!result || !result.token) {
+      throw new Error('No auth token retrieved');
+    }
+
+    const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${result.token}` },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get user info: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return {
+      id: data.id,
+      email: data.email,
+    };
+  } catch (error) {
+    console.error('[DORY] Auth error:', error);
+    return null;
   }
 }
 ```
@@ -94,18 +138,32 @@ chrome.identity.onSignInChanged.addListener((account, signedIn) => {
   } else if (!signedIn && isAuthenticated) {
     // User signed out, disable functionality
     isAuthenticated = false;
-    // Clean up and update UI...
+    
+    // Stop idle check timer
+    if (idleCheckInterval) {
+      clearInterval(idleCheckInterval);
+      idleCheckInterval = null;
+    }
+    
+    // End active session if any
+    if (isSessionActive) {
+      endCurrentSession();
+      isSessionActive = false;
+    }
+    
+    // Update icon and click handler
+    chrome.action.setIcon({
+      path: {
+        16: '/icons/dory_logo_gray_16x16.png',
+        48: '/icons/dory_logo_gray_48x48.png',
+        128: '/icons/dory_logo_gray_128x128.png'
+      }
+    });
+    chrome.action.onClicked.removeListener(handleExtensionIconClick);
+    chrome.action.onClicked.addListener(handleUnauthenticatedClick);
   }
 });
 ```
-
-### Component Auth Behavior
-
-All components assume authentication is already verified at the extension level:
-
-- Background service worker acts as gatekeeper for all functionality
-- Content scripts and UI components operate under the assumption that authentication is valid
-- Components still fetch user info when needed, but don't check if auth is valid
 
 ---
 
@@ -118,72 +176,176 @@ The background service worker (`src/background/serviceWorker.ts`) is the central
 1. **Authentication**: Verifies user authentication and gates all functionality
 2. **Session Management**: Tracks user sessions and maintains session state
 3. **Navigation Tracking**: Monitors page visits and user navigation
-4. **Event Coordination**: Triggers event tracking to the backend
-5. **Lifecycle Management**: Initializes and cleans up the extension state
+4. **Content Extraction Coordination**: Sets up extraction context and triggers content extraction
+5. **Event Coordination**: Routes messages between content scripts and the backend
+6. **Lifecycle Management**: Initializes and cleans up the extension state
 
-### Core Functions
+### Core Features
+
+#### Session Management
+
+- Sessions automatically start when the authenticated extension is initialized
+- Inactivity timer ends sessions after 15 minutes of inactivity
+- Sessions are ended cleanly when the extension is suspended
 
 ```typescript
-// Initialize the service worker with authentication check
-async function initialize() {
-  // Check authentication first
-  const userInfo = await getUserInfo();
-  if (!userInfo || !userInfo.id) {
-    // Handle unauthenticated state
-    return;
-  }
-  
-  // Proceed with normal initialization
-  await initDexieSystem();
-  messageRouter.initialize();
-  registerMessageHandlers();
-  await initEventStreaming();
-  await startNewSession();
-}
-
-// Ensure there's an active session
-async function ensureActiveSession() {
-  if (!(await getCurrentSessionId())) {
-    await startNewSession();
+// Session idle check every minute
+async function checkSessionInactivity(): Promise<void> {
+  const ended = await checkSessionIdle(SESSION_IDLE_THRESHOLD);
+  if (ended) {
+    isSessionActive = false;
+    console.log('[DORY] INFO: Session ended due to inactivity.');
   }
 }
 
-// Track user navigation
-async function startNewVisit(tabId, pageId, fromPageId, isBackNav) {
-  // Create visit record and send event
-}
-
-// Handle tab/window closure
-async function endCurrentVisit(tabId) {
-  // End visit record and send event
+// Ensure session is active before operations
+async function ensureActiveSession(): Promise<void> {
+  if (!isSessionActive) {
+    const sessionId = await startNewSession();
+    isSessionActive = true;
+    console.log('[DORY] INFO: New session started (was idle):', sessionId);
+  }
 }
 ```
 
-### Event Listeners
+#### Navigation Tracking
 
-The service worker sets up these Chrome API event listeners:
+The service worker tracks navigation using two main Chrome API events:
 
-1. **Tab events**: `chrome.tabs.onCreated`, `chrome.tabs.onUpdated`, `chrome.tabs.onRemoved`
-2. **Window events**: `chrome.windows.onCreated`, `chrome.windows.onRemoved`
-3. **Extension events**: `chrome.runtime.onMessage`, `chrome.runtime.onInstalled`, `chrome.runtime.onSuspend`
-4. **Auth events**: `chrome.identity.onSignInChanged`
+1. `chrome.webNavigation.onCommitted`: Fired when navigation to a new page has been committed
+2. `chrome.webNavigation.onCreatedNavigationTarget`: Fired when a new tab/window is created from a link
 
-### Activation
+```typescript
+// Track page visits when navigation is committed
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+  // Only handle main frame
+  if (details.frameId !== 0) return;
 
-```javascript
-// Bootstrap the extension
-initialize();
-
-// Cleanup on service worker unload
-self.addEventListener('activate', () => {
-  console.log('[DORY] Service worker activated');
+  try {
+    await ensureActiveSession();
+    
+    // Get page details and track the visit
+    const pageTitle = (await getTabTitle(tabId)) || url;
+    const pageId = await createOrGetPage(url, pageTitle, timeStamp);
+    
+    // Start a new visit => get a visitId
+    const visitId = await startNewVisit(tabId, pageId, fromPageId, isBackNav);
+    
+    // Set up content extraction (only for actual web pages)
+    if (isWebPage(url)) {
+      // Send extraction context to content script
+      chrome.tabs.sendMessage(
+        tabId,
+        createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId, visitId }, 'background')
+      );
+      
+      // Set fallback timer for extraction if onCompleted doesn't fire
+      // ...
+    }
+  } catch (err) {
+    console.error('[DORY] handleOnCommitted error =>', err);
+  }
 });
+```
 
-chrome.runtime.onSuspend.addListener(async () => {
-  console.log('[DORY] Service worker is suspending => end session');
-  await endCurrentSession();
-  if (idleCheckInterval) clearInterval(idleCheckInterval);
+#### Content Extraction Coordination
+
+The service worker coordinates content extraction by:
+1. Setting extraction context (pageId, visitId) via message to content scripts
+2. Triggering extraction after page load completes via `onCompleted` event
+3. Using a fallback timer to ensure extraction happens even if `onCompleted` doesn't fire
+4. Only extracting content from actual web pages (filtered with `isWebPage` utility)
+
+```typescript
+// Trigger extraction when page load completes
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+  // Only handle main frame
+  if (details.frameId !== 0) return;
+
+  const { tabId, url } = details;
+  
+  try {
+    // Clear fallback timer since onCompleted fired
+    delete tabToFallbackTimerActive[tabId];
+    
+    // Only extract web pages with a valid visit
+    if (tabToVisitId[tabId] && isWebPage(url)) {
+      chrome.tabs.sendMessage(
+        tabId,
+        createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
+      );
+    }
+  } catch (err) {
+    console.error('[DORY] handleOnCompleted error =>', err);
+  }
 });
+```
+
+#### Tab Management
+
+The service worker tracks tab lifecycle events to properly handle navigation and cleanup:
+
+```typescript
+// Clean up when tabs are closed
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await endCurrentVisit(tabId);
+  delete tabToCurrentUrl[tabId];
+  delete tabToPageId[tabId];
+  delete tabToVisitId[tabId];
+  delete tabToFallbackTimerActive[tabId];
+});
+```
+
+### Message Routing
+
+The service worker uses a message router to handle messages from content scripts:
+
+```typescript
+// Register message handlers
+function registerMessageHandlers(): void {
+  // ACTIVITY_EVENT: Update active time for page and session
+  messageRouter.registerHandler(MessageType.ACTIVITY_EVENT, async (msg, sender) => {
+    const { isActive, pageUrl, duration } = msg.data;
+    
+    if (isActive) {
+      await ensureActiveSession();
+    }
+    
+    if (pageUrl && duration > 0) {
+      await updateActiveTimeForPage(pageUrl, duration);
+      await updateSessionActivityTime();
+      
+      // Also update visit active time if we know the visit
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined && tabToVisitId[tabId]) {
+        const visitId = tabToVisitId[tabId];
+        await updateVisitActiveTime(visitId, duration);
+        
+        // Log activity event
+        // ...
+      }
+    }
+    return true;
+  });
+  
+  // EXTRACTION_COMPLETE: Record that content extraction finished
+  messageRouter.registerHandler(MessageType.EXTRACTION_COMPLETE, async (msg) => {
+    const { title, url, timestamp } = msg.data;
+    
+    await ensureActiveSession();
+    const pageId = await createOrGetPage(url, title, timestamp);
+    
+    // Log success
+    console.log('[DORY] ✅ Extraction finished for', title, url);
+    return true;
+  });
+  
+  // EXTRACTION_ERROR: Handle extraction failures
+  messageRouter.registerHandler(MessageType.EXTRACTION_ERROR, async (msg) => {
+    console.error('[DORY] ❌ EXTRACTION FAILED =>', msg.data);
+    return true;
+  });
+}
 ```
 
 ---
@@ -194,73 +356,146 @@ The event system tracks user behavior and page interactions, sending structured 
 
 ### Event Types and Endpoints
 
-The extension sends these event types to their corresponding dedicated endpoints:
+The extension handles these primary event types:
 
-1. `SESSION_STARTED` and `SESSION_ENDED`: Sent to `/api/cold-storage/sessions`
-2. `PAGE_VISIT_STARTED` and `PAGE_VISIT_ENDED`: Sent to `/api/cold-storage/visits`
-3. `CONTENT_EXTRACTED`: Sent to `/api/content`
-4. `ACTIVE_TIME_UPDATED`: Sent to `/api/cold-storage/visits`
-5. Search interactions: Sent to `/api/unified-search` and `/api/unified-search/click`
-
-The original generic `/api/events` endpoint has been deprecated in favor of these purpose-specific endpoints.
-
-### Event Flow
-
-1. Extension detects an action (navigation, content loaded, etc.)
-2. Creates a structured event with proper payload
-3. Event streamer adds user info from cached authentication
-4. Sends event to the appropriate dedicated backend endpoint based on event type
-5. Backend processes and stores the event according to its specific handling requirements
+1. **Session Events**: Track session start/end (`SESSION_STARTED`, `SESSION_ENDED`)
+2. **Visit Events**: Track page visits (`PAGE_VISIT_STARTED`, `PAGE_VISIT_ENDED`, `ACTIVE_TIME_UPDATED`) 
+3. **Content Events**: Send extracted page content with metadata
+4. **Search Events**: Track search interactions and clicks
+5. **User Activity**: Monitor user presence and active time
 
 ### Implementation
 
-Events are defined in `src/api/types.ts` and sent using the appropriate service based on event type:
+The event service (`src/services/eventService.ts`) provides a centralized way to send different event types:
 
 ```typescript
-// Send content extraction event
-export async function sendContentEvent(content: ExtractedContent): Promise<void> {
-  // Get current user if not already cached
-  if (!currentUser) {
-    try {
-      currentUser = await getUserInfo();
-    } catch (error) {
-      console.error('[ContentService] Failed to get user info:', error);
+// For content extraction events
+export async function sendContentEvent(event: ContentEvent): Promise<void> {
+  const user = await getCurrentUser();
+  try {
+    // Load session ID
+    const { getCurrentSessionId } = await import('../utils/dexieSessionManager');
+    const sessionId = await getCurrentSessionId();
+
+    if (!sessionId) {
+      console.warn('[EventService] No active session, skipping content event');
+      return;
     }
+
+    const payload = {
+      contentId: `content_${event.pageId}_${event.visitId}_${Date.now()}`,
+      sessionId: String(sessionId),
+      userId: user?.id,
+      timestamp: Date.now(),
+      data: {
+        pageId: event.pageId,
+        visitId: event.visitId,
+        userId: user?.id,
+        url: event.url,
+        content: {
+          title: event.title,
+          markdown: event.markdown,
+          metadata: event.metadata || { language: 'en' }
+        }
+      }
+    };
+
+    await sendToAPI(ENDPOINTS.CONTENT, payload);
+    console.log('[EventService] Content event sent successfully');
+  } catch (err) {
+    console.error('[EventService] Failed to send content event:', err);
   }
-  
-  // Send to content API endpoint
-  await fetch('/api/content', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userId: currentUser?.id,
-      pageId: content.pageId,
-      visitId: content.visitId,
-      title: content.title,
-      markdown: content.markdown,
-      url: content.url
-    })
-  });
-}
-
-// Send session event to cold storage
-export async function sendSessionEvent(sessionEvent: SessionEvent): Promise<void> {
-  // Implementation for session events using cold storage endpoint
-  // ...
-}
-
-// Send visit event to cold storage
-export async function sendVisitEvent(visitEvent: VisitEvent): Promise<void> {
-  // Implementation for visit events using cold storage endpoint
-  // ...
 }
 ```
 
-Each event follows a specific data structure as defined in the `types.ts` file, ensuring the backend receives properly formatted events for its specific endpoint.
+Events are sent to the backend using the centralized API_BASE_URL configuration:
 
-### Error Handling
+```typescript
+async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Response> {
+  const maxAttempts = 3;
+  try {
+    const resp = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    }
+    return resp;
+  } catch (error) {
+    console.error(`[EventService] sendToAPI error (attempt ${attempt + 1}):`, error);
+    if (attempt < maxAttempts - 1) {
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      return sendToAPI(endpoint, body, attempt + 1);
+    }
+    throw error;
+  }
+}
+```
 
-If an event fails to send, the API client will retry with exponential backoff (up to the configured retry limit). Different retry strategies may be employed based on the event type and priority.
+### Cold Storage Event Sync
+
+Long-term browsing data is periodically sent to cold storage endpoints, handled by the `ColdStorageSync` service:
+
+```typescript
+// In src/services/coldStorageSync.ts
+export class ColdStorageSync {
+  // ...
+  private async syncData(): Promise<void> {
+    const db = await getDB();
+    const lastSyncTime: number = store[LAST_SYNC_KEY] ?? 0;
+    const userId = await this.getCurrentUserId();
+
+    // Sync pages, visits, sessions, and events
+    // Each collection is sent to its dedicated endpoint
+    const pages = await db.pages.where('updatedAt').above(lastSyncTime).toArray();
+    await this.syncCollection('pages', pages, userId);
+
+    const visits = await db.visits.where('startTime').above(lastSyncTime).toArray();
+    await this.syncCollection('visits', visits, userId);
+    
+    const sessions = await db.sessions.where('startTime').above(lastSyncTime).toArray();
+    await this.syncCollection('sessions', sessions, userId);
+    
+    // Sync search click events separately
+    const clickEvents = await db.events
+      .where('operation')
+      .equals(EventType.SEARCH_CLICK)
+      .and(e => e.timestamp > lastSyncTime)
+      .toArray();
+    await this.syncEvents(EventType.SEARCH_CLICK, clickEvents, userId);
+  }
+  
+  private async sendBatch(collectionName: string, batch: any[]): Promise<void> {
+    // API endpoint based on collection type
+    let endpoint: string;
+    
+    switch (collectionName) {
+      case 'sessions':
+        endpoint = ENDPOINTS.COLD_STORAGE.SESSIONS;
+        break;
+      case 'visits':
+        endpoint = ENDPOINTS.COLD_STORAGE.VISITS;
+        break;
+      case 'pages':
+        endpoint = ENDPOINTS.COLD_STORAGE.PAGES;
+        break;
+      default:
+        endpoint = `${ENDPOINTS.COLD_STORAGE.BASE}/${collectionName}`;
+    }
+    
+    // Send data to backend
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(transformed)
+    });
+  }
+}
+```
 
 ---
 
@@ -270,409 +505,376 @@ Content extraction converts visited web pages into structured, searchable conten
 
 ### Extraction Process
 
-1. **Wait for DOM idle**: Ensures the page has fully loaded
-2. **HTML Parsing**: Extract relevant content from the DOM
-3. **Markdown Conversion**: Convert HTML to searchable markdown
-4. **Storage**: Send content to backend for indexing via dedicated content API endpoint
+1. **Page Load Detection**: The background service worker detects page loads via navigation events
+2. **Context Setting**: The service worker sends page context (pageId, visitId) to the content script
+3. **DOM Processing**: Content script waits for DOM to be fully loaded and idle
+4. **HTML Parsing**: HTML content is extracted and filtered to remove irrelevant content
+5. **Markdown Conversion**: HTML is converted to searchable markdown format
+6. **Storage and Notification**: Content is sent to the backend and the success is reported
 
-### Key Components
+### Extraction Implementation
 
-- **Content Filter**: `src/html2text/content_filter_strategy.ts` - Filters irrelevant content
-- **Markdown Generator**: `src/html2text/markdownGenerator.ts` - Converts HTML to markdown
-- **Content Extractor**: `src/services/contentExtractor.ts` - Coordinates the extraction process
-
-### Extraction Function
+The content extraction process is implemented in `src/services/contentExtractor.ts`:
 
 ```typescript
 async function extractAndSendContent(retryCount = 0): Promise<void> {
+  const currentUrl = window.location.href;
+  
   try {
-    // 1) Wait for DOM to be idle
+    // 1. Wait for DOM to be idle after loading
     await waitForDomIdle();
     
-    // 2) Extract content using HTML2Text
-    const { title, sourceMarkdown } = extractContent();
-    
-    // 3) Send the content message
-    const extractionMessage = createExtractionMessage({
-      pageId: currentPageId,
-      visitId: currentVisitId,
-      title,
-      markdown: sourceMarkdown,
-      url: window.location.href
-    });
-    
-    // 4) Send event to backend
-    sendDoryEvent({
-      operation: EventTypes.CONTENT_EXTRACTED,
-      sessionId: sessionId.toString(),
-      timestamp: Date.now(),
-      data: {
-        pageId: currentPageId,
-        visitId: currentVisitId,
-        url: currentUrl,
-        content: {
-          title: title,
-          markdown: sourceMarkdown,
-          metadata: {
-            language: CONTENT_FILTER_LANGUAGE
-          }
-        }
-      }
-    });
+    // 2. Extract HTML from the page
+    const rawHTMLString = document.body?.innerHTML || "";
+    if (!rawHTMLString) throw new Error("Empty document body");
 
-    // 5) Send content to dedicated content API endpoint
-    await fetch('/api/content', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pageId: currentPageId,
-        visitId: currentVisitId,
-        url: currentUrl,
-        title: title,
-        content: sourceMarkdown
-      })
-    });
-  } catch (error) {
+    // 3. Generate markdown using content filter and markdown generator
+    const filter = new PruningContentFilter(
+      undefined,
+      CONTENT_FILTER_MIN_BLOCKS,
+      CONTENT_FILTER_STRATEGY,
+      CONTENT_FILTER_THRESHOLD,
+      CONTENT_FILTER_LANGUAGE
+    );
+    const mdGenerator = new DefaultMarkdownGenerator(filter, { body_width: MARKDOWN_BODY_WIDTH });
+
+    const result = mdGenerator.generateMarkdown(rawHTMLString, currentUrl, { body_width: MARKDOWN_BODY_WIDTH }, undefined, true);
+    const sourceMarkdown = USE_FIT_MARKDOWN
+      ? result.fitMarkdown
+      : (result.markdownWithCitations || result.rawMarkdown);
+
+    if (!sourceMarkdown) throw new Error("Markdown generation failed");
+    const timestamp = Date.now();
+    const title = document.title || DEFAULT_TITLE;
+
+    // 4. Notify background service worker that extraction is complete
+    sendExtractionComplete(title, currentUrl, timestamp);
+
+    // 5. Wait for context (pageId, visitId) if not already set
+    if (!currentPageId || !currentVisitId) {
+      await Promise.race([
+        contextReadyPromise,
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Context Timeout")), 30000))
+      ]);
+    }
+
+    // 6. Send content to backend API
+    const sessionId = await getCurrentSessionId();
+    if (sessionId && currentPageId && currentVisitId) {
+      try {
+        const userInfo = await getUserInfo(false);
+        await sendContentEvent({
+          pageId: currentPageId,
+          visitId: currentVisitId,
+          url: currentUrl,
+          title,
+          markdown: sourceMarkdown,
+          metadata: { language: 'en' },
+        });
+        console.log("[ContentExtractor] Content sent to backend successfully.");
+      } catch (err) {
+        console.error("[ContentExtractor] sendContentEvent error:", err);
+      }
+    }
+  } catch (err) {
     // Handle errors and retry if needed
     if (retryCount < MAX_RETRIES) {
+      console.log(`[ContentExtractor] Retrying... attempt ${retryCount + 1}`);
       setTimeout(() => extractAndSendContent(retryCount + 1), RETRY_DELAY_MS);
+    } else {
+      sendExtractionError("EXTRACTION_FAILED", String(err?.message || err), currentUrl, err?.stack);
     }
   }
 }
 ```
 
-### Configuration
+### Filtering Non-Web Pages
 
-Extraction behavior is controlled via the `QUEUE_CONFIG` in the central configuration file:
+The extension now filters content extraction to only process actual web pages:
 
 ```typescript
-export const QUEUE_CONFIG = {
-  // Maximum number of retries for processing a URL
-  MAX_RETRIES: 3,
-  
-  // Delay between retries (in milliseconds)
-  RETRY_DELAY_MS: 3000,
-  
-  // Maximum time to process a single URL (in milliseconds)
-  PROCESSING_TIMEOUT_MS: 60000,
-
-  // Maximum time to wait for DOM to settle (in milliseconds)
-  DOM_IDLE_TIMEOUT_MS: 7000,
-
-  // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
-  DOM_IDLE_CHECK_DELAY_MS: 500
+// In src/utils/urlUtils.ts
+export function isWebPage(url: string): boolean {
+  return url.startsWith('http://') || url.startsWith('https://');
 }
 ```
+
+This prevents the extension from attempting to extract content from browser-internal pages, extension pages, devtools, and other non-extractable sources.
 
 ---
 
 ## Search Implementation
 
-The search functionality uses a hybrid approach combining local and backend search for optimal performance and user experience, implemented with TanStack Query for efficient request management, caching, and cancellation.
+The search functionality uses a hybrid approach combining local and backend search for optimal performance.
 
 ### Search Components
 
-1. **Local QuickLaunch**: `src/services/localQuickLauncher.ts` - Instant local search from IndexedDB
-2. **Backend Search**: Server-side search with streaming results via Server-Sent Events (SSE)
-3. **Search Hooks**: `src/hooks/useSearch.ts` - Custom React hooks that manage the search state
-4. **Search UI**: `src/pages/newtab/NewTab.tsx` - Search interface with unified result display
+1. **Local QuickLaunch**: Fast searching with IndexedDB via `src/services/localQuickLauncher.ts`
+2. **Backend Search**: Server-side search via SSE streaming from the backend
+3. **Hybrid Search Hook**: React hook that combines both search methods (`useHybridSearch`)
 
-### Hybrid Search Flow
+### Search Implementation
 
-1. **Instant Local Search**:
-   - Local quickLaunch results appear immediately with each keystroke
-   - No debouncing for local search to provide real-time feedback
-   - Uses `useLocalSearch` hook which leverages TanStack Query for efficient caching
-
-2. **Debounced Backend Search**:
-   - Backend search is triggered only after typing pauses (300ms debounce)
-   - Backend search is triggered immediately when Enter is pressed
-   - Properly cancels previous in-flight requests when query changes
-   - Uses `useBackendStreamingSearch` hook to manage SSE connections
-   - A POST request is made to `/api/unified-search` with a JSON body containing query, userId, timestamp, and triggerSemantic
-
-3. **Streaming Result Processing**:
-   - Backend streams both quicklaunch and semantic results through SSE
-   - Results are processed in real-time as they arrive
-   - Three event types are handled: 'quicklaunch', 'semantic', and 'complete'
-   - Results are stored separately and then combined for display
-
-4. **Result Deduplication and Display**:
-   - **IMPORTANT**: The frontend is solely responsible for all deduplication between all result sources
-   - Backend does not perform any deduplication between quicklaunch and semantic results
-   - All results (local, backend quicklaunch, semantic) are combined
-   - Duplicates are removed based on unique page/document IDs
-   - Results are sorted first by source type, then by relevance score
-   - Semantic results can be displayed in a separate section with a header
-
-### Implementation
-
-The search functionality is implemented using custom hooks in `src/hooks/useSearch.ts`:
+The search functionality is implemented with custom React hooks in `src/utils/useSearch.ts`:
 
 ```typescript
-// Custom hooks for different search types
+// 1. Local search hook - immediate results from IndexedDB
 export function useLocalSearch(query: string) {
   return useQuery({
     queryKey: ['local-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
-      
-      // Search local IndexedDB with each keystroke (no debounce)
       const results = await quickLaunch.search(query);
-      return results.map(result => ({
-        id: result.pageId,
-        title: result.title,
-        url: result.url,
-        score: result.score
+      return results.map(r => ({
+        id: r.pageId,
+        title: r.title,
+        url: r.url,
+        score: r.score,
+        source: 'local'
       }));
     },
     enabled: query.length >= 2,
   });
 }
 
+// 2. Backend streaming search via SSE
 export function useBackendStreamingSearch(query: string) {
-  // Manages SSE connection to backend search API
-  // Handles events for 'quicklaunch', 'semantic', and 'complete'
-  // Properly cancels previous connections when query changes
-  // ...
+  const [quickResults, setQuickResults] = useState<SearchResult[]>([]);
+  const [semanticResults, setSemanticResults] = useState<SearchResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
+
+  useEffect(() => {
+    if (!query || query.length < 2) return;
+    
+    // Use API_BASE_URL instead of window.location.origin
+    // This ensures proper connection in extension context
+    const url = new URL('/api/unified-search/stream', API_BASE_URL);
+    url.searchParams.append('query', query);
+    url.searchParams.append('userId', 'current-user-id');
+    url.searchParams.append('timestamp', Date.now().toString());
+    url.searchParams.append('triggerSemantic', 'true');
+
+    const source = new EventSource(url.toString());
+    
+    // Handle streaming results as they arrive
+    source.addEventListener('message', (evt) => {
+      const data = JSON.parse(evt.data);
+      
+      // Handle different result types: quicklaunch, semantic, complete
+      switch (data.type) {
+        case 'quicklaunch':
+          // Process quick results
+          break;
+        case 'semantic':
+          // Process semantic results
+          break;
+        case 'complete':
+          // Search complete
+          break;
+      }
+    });
+    
+    // Proper cleanup
+    return () => {
+      if (source) source.close();
+    };
+  }, [query]);
+
+  return { quickResults, semanticResults, isLoading, isComplete };
 }
 
+// 3. Combined hybrid search hook
 export function useHybridSearch() {
-  // Main hook that combines local and backend search
   const [inputValue, setInputValue] = useState('');
+  // Debounce backend search to avoid excessive requests
   const [debouncedQuery] = useDebounce(inputValue, 300);
   const [immediateQuery, setImmediateQuery] = useState('');
-  
-  // For local search: Use raw inputValue for instant results
-  const localSearchQuery = inputValue;
-  
-  // For backend search: Use debounced query (or immediate when Enter pressed)
-  const backendSearchQuery = immediateQuery || debouncedQuery;
-  
-  // Get local and backend results
-  const { data: localResults } = useLocalSearch(localSearchQuery);
-  const { quickResults, semanticResults } = useBackendStreamingSearch(backendSearchQuery);
-  
-  // Combine, deduplicate, and sort results
-  // ...
-}
-```
 
-### Search UI Integration
+  // Local search - immediate on each keystroke
+  const { data: localResults = [] } = useLocalSearch(inputValue);
 
-The search UI in `NewTab.tsx` uses the hybrid search hook:
+  // Backend search - debounced or immediate on Enter
+  const backendQuery = immediateQuery || debouncedQuery;
+  const { quickResults, semanticResults } = useBackendStreamingSearch(backendQuery);
 
-```typescript
-function NewTab() {
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  
-  // Use our custom hybrid search hook
-  const {
+  // Combine and deduplicate results
+  const results = useMemo(() => {
+    const combined = [...localResults, ...quickResults, ...semanticResults];
+    return combined.filter((r, idx, self) =>
+      idx === self.findIndex(x => x.id === r.id)
+    );
+  }, [localResults, quickResults, semanticResults]);
+
+  // Allow bypassing debounce by pressing Enter
+  const handleEnterKey = useCallback((value: string) => {
+    setImmediateQuery(value);
+  }, []);
+
+  return {
     inputValue,
     setInputValue,
     handleEnterKey,
     results,
-    isSearching
-  } = useHybridSearch();
-
-  // Handle input change - updates with each keystroke
-  const handleQueryChange = (newQuery: string) => {
-    setInputValue(newQuery);
+    localResults,
+    quickResults,
+    semanticResults
   };
-
-  // Handle result click with tracking
-  const handleResultClick = (result: any) => {
-    const searchSessionId = result.searchSessionId || 'local-session';
-    trackSearchClick(searchSessionId, result.id || result.pageId, 0);
-    window.location.href = result.url;
-  };
-
-  return (
-    <Container>
-      <SearchContainer>
-        <NewTabSearchBar
-          ref={searchInputRef}
-          value={inputValue}
-          onChange={handleQueryChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Search your history..."
-        />
-        
-        {/* Display unified result list with separate semantic section */}
-      </SearchContainer>
-    </Container>
-  );
 }
-```
-
-### Search Result Tracking
-
-When a user clicks on a result, a tracking event is sent for analytics:
-
-```typescript
-// Track click and navigate
-const handleResultClick = (result) => {
-  // Track the click with searchSessionId, pageId, and position
-  const searchSessionId = result.searchSessionId || 'local-session';
-  trackSearchClick(searchSessionId, result.id || result.pageId, 0);
-  
-  // Navigate to the result URL
-  window.location.href = result.url;
-};
 ```
 
 ### Search Optimization
 
 The search experience is optimized by:
 
-1. **Instant Local Feedback**: Local searches execute with each keystroke for immediate results
-2. **Efficient Backend Calls**: Backend searches only trigger after typing pauses or Enter press
-3. **Proper Cancellation**: Stale requests are cancelled when the user continues typing
-4. **Progressive Enhancement**: Results appear in stages (local → backend quick → semantic)
-5. **TanStack Query Caching**: Repeated searches benefit from caching for improved performance
-6. **Unified Deduplication**: All result sources are deduplicated in a single place
-7. **Clean Component Separation**: Each search type has its own focused hook for better maintainability
+1. **Instant Local Results**: Local search provides immediate feedback with each keystroke
+2. **Debounced Backend Search**: Backend search only triggers after typing pauses (300ms)
+3. **Immediate Backend Search**: Enter key bypasses debounce for immediate backend search
+4. **Streaming Results**: Backend results stream in progressively via Server-Sent Events
+5. **Result Deduplication**: All result sources are deduplicated based on unique IDs
+6. **Browser Extension Compatibility**: Using `API_BASE_URL` instead of `window.location.origin` ensures the search works in extension contexts
 
 ---
 
 ## Browser Storage
 
-The extension uses several storage mechanisms:
+The extension uses IndexedDB (via Dexie.js) for local storage of browsing data:
 
-### 1. IndexedDB
+### Storage Components
 
-Used for storing structured browsing data:
+1. **IndexedDB Tables**:
+   - `pages`: Stores metadata about visited pages
+   - `visits`: Records individual page visits with timestamps
+   - `sessions`: Tracks browsing sessions
+   - `edges`: Stores navigation relationships between pages
+   - `events`: Logs various events for later cold storage sync
 
-- **Sessions**: Tracks browsing sessions
-- **Pages**: Stores visited page metadata
-- **Visits**: Records individual page visits
+2. **Chrome Extension Storage**:
+   - `chrome.storage.local`: For extension settings and state
 
-Key functions in `src/services/dexieDB.ts`:
+3. **In-Memory State**:
+   - Used in the background service worker for tracking the current session
+
+### Dexie Implementation
+
+The database is defined in `src/db/dexieDB.ts` and accessed through utility modules:
 
 ```typescript
-// Get a reference to the database
-export async function getDB(): Promise<DexieDBType> {
-  return db;
-}
+// Database schema
+export class DoryDatabase extends Dexie {
+  pages!: Table<PageRecord>;
+  visits!: Table<VisitRecord>;
+  sessions!: Table<SessionRecord>;
+  edges!: Table<EdgeRecord>;
+  events!: Table<EventRecord>;
 
-// Store a new page or get an existing one
-export async function createOrGetPage(url: string, title: string): Promise<number> {
-  // Implementation
+  constructor(name: string) {
+    super(name);
+    this.version(1).stores({
+      pages: 'pageId, url, domain, lastVisit',
+      visits: 'visitId, pageId, sessionId, startTime, endTime',
+      sessions: 'sessionId, startTime, endTime',
+      edges: '++id, [fromPageId+toPageId], sessionId, timestamp',
+      events: '++id, operation, timestamp, sessionId'
+    });
+  }
 }
+```
 
-// Start a new visit
-export async function startVisit(
-  pageId: number, 
-  sessionId: number, 
-  fromPageId?: number,
-  isBackNavigation?: boolean
+### Page and Visit Tracking
+
+Pages and visits are tracked using the `dexieBrowsingStore.ts` utility:
+
+```typescript
+// Create or get page record
+export async function createOrGetPage(
+  url: string,
+  title: string,
+  timestamp: number
 ): Promise<string> {
-  // Implementation
+  const db = dexieDb.getDB();
+
+  // Try to find an existing page with this URL
+  const existingPage = await db.pages.where('url').equals(url).first();
+  if (existingPage) {
+    // Update existing page
+    await db.pages.update(existingPage.pageId, {
+      title: title || existingPage.title,
+      lastVisit: timestamp,
+      visitCount: (existingPage.visitCount || 0) + 1,
+      updatedAt: timestamp
+    });
+    return existingPage.pageId;
+  }
+
+  // Create new page record
+  const pageId = generateUUID();
+  const domain = extractDomain(url);
+  
+  await db.pages.add({
+    pageId,
+    url,
+    title,
+    domain,
+    firstVisit: timestamp,
+    lastVisit: timestamp,
+    visitCount: 1,
+    totalActiveTime: 0,
+    updatedAt: timestamp
+  });
+  
+  return pageId;
 }
-```
 
-### 2. Chrome Storage
-
-Used for persisting extension settings and state between contexts:
-
-```typescript
-// Save a setting
-chrome.storage.local.set({ key: value });
-
-// Retrieve a setting
-chrome.storage.local.get(['key'], (result) => {
-  // Use result.key
-});
-```
-
-### 3. Memory Storage
-
-Temporary in-memory storage for the current session:
-
-```typescript
-// In background service worker
-const tabToPageId: Record<number, number> = {};
-const tabToVisitId: Record<number, string> = {};
-const tabToCurrentUrl: Record<number, string> = {};
+// Start tracking a visit
+export async function startVisit(
+  pageId: string,
+  sessionId: number,
+  fromPageId?: string,
+  isBackNav?: boolean
+): Promise<string> {
+  const visitId = generateUUID();
+  const now = Date.now();
+  
+  await db.visits.add({
+    visitId,
+    pageId,
+    sessionId,
+    fromPageId,
+    startTime: now,
+    endTime: null,
+    totalActiveTime: 0,
+    isBackNavigation: !!isBackNav,
+    updatedAt: now
+  });
+  
+  return visitId;
+}
 ```
 
 ### Cold Storage Sync
 
-Long-term data is periodically synced to backend cold storage using dedicated endpoints:
+Data is periodically synced to the backend using the `ColdStorageSync` service:
 
 ```typescript
-// In src/services/coldStorageSync.ts
 export class ColdStorageSync {
+  // Initialize daily alarm-based scheduling for MV3
+  public static initializeScheduling(): void {
+    chrome.alarms.clear('doryColdStorageSync');
+    chrome.alarms.create('doryColdStorageSync', {
+      periodInMinutes: SYNC_INTERVAL_MINUTES,
+      when: Date.now() + 60_000 // start ~1 min from now
+    });
+  }
+  
+  // Sync data to backend cold storage
   public async performSync(): Promise<void> {
-    // Sync data updated since last sync
-    const lastSyncTime = localStorage.getItem(LAST_SYNC_KEY);
-    const userId = await this.getCurrentUserId();
+    // Sync pages, visits, sessions, and events that have
+    // been updated since the last sync
+    await this.syncData();
     
-    // Sync pages collection using dedicated endpoint
-    await this.syncPages(
-      await db.pages.where('lastModified').above(lastSyncTime).toArray(),
-      userId
-    );
-    
-    // Sync visits using dedicated endpoint
-    await this.syncVisits(
-      await db.visits.where('lastModified').above(lastSyncTime).toArray(),
-      userId
-    );
-    
-    // Sync sessions using dedicated endpoint
-    await this.syncSessions(
-      await db.sessions.where('lastModified').above(lastSyncTime).toArray(),
-      userId
-    );
-  }
-  
-  private async syncPages(pages: Page[], userId: string): Promise<void> {
-    if (pages.length === 0) return;
-    
-    try {
-      const response = await fetch('/api/cold-storage/pages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, pages })
-      });
-      
-      // Handle response...
-    } catch (error) {
-      console.error('Failed to sync pages:', error);
-    }
-  }
-  
-  private async syncVisits(visits: Visit[], userId: string): Promise<void> {
-    if (visits.length === 0) return;
-    
-    try {
-      const response = await fetch('/api/cold-storage/visits', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, visits })
-      });
-      
-      // Handle response...
-    } catch (error) {
-      console.error('Failed to sync visits:', error);
-    }
-  }
-  
-  private async syncSessions(sessions: Session[], userId: string): Promise<void> {
-    if (sessions.length === 0) return;
-    
-    try {
-      const response = await fetch('/api/cold-storage/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, sessions })
-      });
-      
-      // Handle response...
-    } catch (error) {
-      console.error('Failed to sync sessions:', error);
-    }
+    // Update last sync time
+    await chrome.storage.local.set({ [LAST_SYNC_KEY]: Date.now() });
   }
 }
 ```
@@ -689,42 +891,57 @@ The new tab page (`src/pages/newtab/NewTab.tsx`) provides the main search interf
 
 ```typescript
 const NewTab: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [semanticResults, setSemanticResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
+  // Use the hybrid search hook
+  const {
+    inputValue,
+    setInputValue,
+    handleEnterKey,
+    results,
+    isSearching
+  } = useHybridSearch();
   
-  // Search handling
-  const handleSearch = async (finalQuery: string) => {
-    // Trigger backend search
-    triggerBackendSearch(finalQuery);
+  // Handle input changes
+  const handleQueryChange = (newQuery: string) => {
+    setInputValue(newQuery);
   };
   
-  // Result click handling
-  const handleResultClick = (result: SearchResult, index: number) => {
-    // Track click and navigate
+  // Handle key events (e.g., Enter)
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleEnterKey(inputValue);
+    }
+  };
+  
+  // Handle result click with tracking
+  const handleResultClick = (result: any) => {
+    const searchSessionId = result.searchSessionId || 'local-session';
+    trackSearchClick(searchSessionId, result.id || result.pageId, 0);
+    window.location.href = result.url;
   };
   
   return (
     <Container>
       <SearchContainer>
-        <NewTabSearchBar
-          onSearch={handleSearch}
+        <SearchBar
+          value={inputValue}
+          onChange={handleQueryChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Search your history..."
           isLoading={isSearching}
-          inputRef={searchInputRef}
-          query={query}
-          onQueryChange={handleQueryChange}
         />
-        {allResults.length > 0 && (
+        
+        {results.length > 0 && (
           <ResultsList>
-            {allResults.map((result, index) => {
-              // Render results with special handling for semantic section
-            })}
+            {results.map((result, index) => (
+              <ResultItem
+                key={result.id}
+                onClick={() => handleResultClick(result)}
+                // ...other props
+              />
+            ))}
           </ResultsList>
         )}
       </SearchContainer>
-      <ThemeToggle />
     </Container>
   );
 };
@@ -753,60 +970,43 @@ const SearchContainer = styled.div`
 `;
 ```
 
-### Theme Support
-
-The extension supports light and dark themes:
-
-```typescript
-export function useDarkMode() {
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('darkMode');
-    return saved !== null ? JSON.parse(saved) : window.matchMedia('(prefers-color-scheme: dark)').matches;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('darkMode', JSON.stringify(isDarkMode));
-  }, [isDarkMode]);
-
-  return [isDarkMode, setIsDarkMode] as const;
-}
-```
-
 ---
 
 ## Data Flow
 
-Data flows through the extension in these key paths:
-
-### 1. Authentication Flow
+### Authentication Flow
 
 ```
 Extension Load → Check Auth → If Authenticated → Initialize Extension Components → Normal Operation
                            → If Not Authenticated → Disable Functionality → Wait for Auth
 ```
 
-### 2. Content Extraction Flow
+### Navigation Tracking Flow
 
 ```
-Page Load → DOM Idle → Extract Content → Send to Background → Send to Backend
+Page Navigation (onCommitted) → Create/Update Page Record → Start Visit
+                              → Set Extraction Context → Wait for Complete Page Load (onCompleted)
+                              → Trigger Content Extraction
 ```
 
-### 3. Search Flow
+### Content Extraction Flow
 
 ```
-User Types → Local Search → Show Results → User Pauses/Presses Enter → Backend Search → Deduplicate Results
+Extraction Trigger → Wait for DOM Idle → Extract HTML → Convert to Markdown
+                   → Send Context to Background → Send Content to Backend API
 ```
 
-### 4. Navigation Flow
+### Search Flow
 
 ```
-Tab Navigation → Track Visit Start → Process Page → Track Visit End
+User Types → Immediate Local Search → Debounced Backend Search → Results Stream In
+          → User Sees Combined Results → User Clicks Result → Click Is Tracked
 ```
 
-### 5. Session Flow
+### Cold Storage Sync Flow
 
 ```
-Extension Load → Authenticated → Start Session → Track Activity → End Session on Unload
+Daily Alarm → Check Last Sync Time → Fetch Changed Records → Batch Send to Backend
 ```
 
 ---
@@ -818,14 +1018,36 @@ Extension Load → Authenticated → Start Session → Track Activity → End Se
 All configuration is centralized in `src/config.ts`:
 
 ```typescript
+// API base URL for backend communication
 export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
 
+// Available backend endpoints
 export const ENDPOINTS = {
   HEALTH: '/health',
-  ADVANCED_SEARCH: '/unified-search',
-  EVENTS: '/events'
+  UNIFIED_SEARCH: '/unified-search',
+  CONTENT: '/content',
+  COLD_STORAGE: {
+    BASE: '/cold-storage',
+    PAGES: '/cold-storage/pages',
+    VISITS: '/cold-storage/visits',
+    SESSIONS: '/cold-storage/sessions',
+    SEARCH_CLICKS: '/cold-storage/search-clicks'
+  }
 } as const;
 
+// API request settings
+export const REQUEST_TIMEOUT = 60000; // 60 seconds
+export const RETRY_ATTEMPTS = 3;
+export const RETRY_DELAY = 5000; // 5 seconds between retries
+
+// Processing options
+export const USE_FIT_MARKDOWN = true; // Whether to use fitMarkdown or regular markdown
+
+// Event streaming config
+export const EVENT_BATCH_SIZE = 50; // Maximum number of events to send in a batch
+export const EVENT_FLUSH_INTERVAL = 30000; // Flush events every 30 seconds
+
+// Queue processing configuration
 export const QUEUE_CONFIG = {
   MAX_RETRIES: 3,
   RETRY_DELAY_MS: 3000,
@@ -835,58 +1057,12 @@ export const QUEUE_CONFIG = {
 } as const;
 ```
 
-### Authentication Principles
-
-- **Global Gating**: All functionality is gated at the extension level via background service worker
-- **Component Assumption**: UI components assume authentication is already verified
-- **User Info Access**: Components still fetch user info when needed, but don't re-check authentication
-- **Clean Separation**: Auth state management is centralized in the background service worker
-
-### Search Implementation Principles
-
-- **Hybrid Approach**: Combine local and backend search for optimal UX
-- **Progressive Results**: Show local results immediately, enhance with backend results
-- **Deduplication**: Prevent duplicate results from different sources
-- **Pause Detection**: Auto-trigger backend search automatically after typing pauses
-- **Cancellation**: Prevent stale results when query changes
-
-### Build Process
-
-The extension is built using Vite:
-
-```bash
-# Development build
-npm run dev
-
-# Production build
-npm run build
-```
-
-### Debugging
-
-For debugging:
-
-1. **Background Service Worker**: Inspect via chrome://extensions
-2. **Content Scripts**: Inspect via the page's developer tools
-3. **Extension UI**: Inspect like a regular web page
-
-### Testing
-
-Testing uses Jest for unit tests and Chrome's extension testing APIs for integration tests:
-
-```bash
-# Run unit tests
-npm test
-
-# Run integration tests
-npm run test:integration
-```
-
 ### Best Practices
 
-1. **Authentication**: Gate all functionality at the extension level
-2. **Modular Design**: Keep components small and focused
-3. **Error Handling**: Implement robust error handling for all API calls
-4. **Type Safety**: Use TypeScript interfaces for all data structures
-5. **Performance**: Use hybrid search approach for optimal UX
-6. **Security**: Validate all data and follow Chrome's security best practices
+1. **Authentication**: Gate all functionality at the extension level via service worker
+2. **API Communication**: Always use `API_BASE_URL` from config instead of `window.location.origin`
+3. **URL Handling**: Use `isWebPage()` to filter processing for actual web pages only
+4. **Error Handling**: Implement proper retry logic for all API calls
+5. **Resource Cleanup**: Always clean up resources like EventSource connections
+6. **Performance**: Use hybrid search approach for optimal UX
+7. **Type Safety**: Use TypeScript interfaces for all data structures

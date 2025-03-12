@@ -2,8 +2,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { crx } from '@crxjs/vite-plugin';
-import manifest from './public/manifest.json';
 import path from 'path';
+import manifest from './public/manifest.json';
 
 export default defineConfig({
   plugins: [
@@ -22,11 +22,9 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       input: {
-        background: 'src/background/serviceWorker.ts',
-        contentExtractor: 'src/services/contentExtractor.ts',
-        activityTracker: 'src/background/activityTracker.ts',
-        newtab: 'src/pages/newtab/index.tsx',
-        newtabHtml: 'src/pages/newtab/newtab.html'
+        // Only specify your newtab HTML or page if you want to treat it
+        // as an HTML-based entry for Vite's build pipeline.
+        newtab: 'src/pages/newtab/newtab.html'
       },
       output: {
         entryFileNames: '[name].js',

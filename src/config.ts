@@ -57,4 +57,11 @@ export const QUEUE_CONFIG = {
 
   // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
   DOM_IDLE_CHECK_DELAY_MS: 500
-} as const; 
+} as const;
+
+// ============================================================================
+// Debug Configuration
+// ============================================================================
+
+// Debug mode flag - controls verbose logging
+export const DEBUG = process.env.NODE_ENV !== 'production'; 
