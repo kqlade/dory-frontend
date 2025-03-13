@@ -11,25 +11,27 @@ import {
 import {
   ApiError,
   SearchResponse,
-  DoryEvent,
-  EventType,
 } from './types';
 
 import {
   sendContentEvent,
   sendSessionEvent,
   sendVisitEvent,
-  trackSearchClick, // if you had it in eventService
+  trackSearchClick,
 } from '../services/eventService';
 
 /**
- * Helper to pause execution for ms
+ * Delays execution for the specified number of milliseconds.
  */
 const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+  new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Main API request function with retry & timeout logic
+ * Main API request function with retry and timeout logic.
+ * 
+ * @param endpoint - API endpoint (relative to API_BASE_URL).
+ * @param init - Custom Fetch configuration.
+ * @param attempt - Current retry attempt number.
  */
 export async function apiRequest<T>(
   endpoint: string,
@@ -38,16 +40,12 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
 
-  // Default JSON headers
+  // Prepare default JSON headers
   const headers = new Headers(init.headers || {});
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  if (!headers.has('Accept')) {
-    headers.set('Accept', 'application/json');
-  }
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
 
-  // AbortController for timeout
+  // Setup a timeout controller
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -69,37 +67,42 @@ export async function apiRequest<T>(
       );
     }
 
-    // If 204 => no content
+    // Handle 204 (No Content)
     if (response.status === 204) {
       return {} as T;
     }
 
-    // Otherwise parse JSON
+    // Otherwise, parse JSON response
     return (await response.json()) as T;
-  } catch (err) {
+
+  } catch (error) {
     clearTimeout(timeoutId);
     console.error(
       `[API Client] Request failed (attempt ${attempt}/${RETRY_ATTEMPTS}):`,
-      err
+      error
     );
 
+    // If we have exhausted all retry attempts, rethrow the error
     if (attempt >= RETRY_ATTEMPTS) {
-      throw err;
+      throw error;
     }
 
-    // Simple delay before next retry (could do exponential backoff if preferred)
+    // Wait briefly before retrying (could use exponential backoff instead)
     await delay(RETRY_DELAY);
     return apiRequest<T>(endpoint, init, attempt + 1);
   }
 }
 
 /**
- * Shortcuts for GET / POST
+ * Shortcut for making GET requests.
  */
 export async function apiGet<T>(endpoint: string): Promise<T> {
   return apiRequest<T>(endpoint, { method: 'GET' });
 }
 
+/**
+ * Shortcut for making POST requests.
+ */
 export async function apiPost<T>(endpoint: string, body: unknown): Promise<T> {
   return apiRequest<T>(endpoint, {
     method: 'POST',
@@ -108,7 +111,7 @@ export async function apiPost<T>(endpoint: string, body: unknown): Promise<T> {
 }
 
 /**
- * Basic search call for browser history or other data
+ * Basic search call for browser history or other data.
  */
 export async function searchHistory(
   query: string,
@@ -117,187 +120,13 @@ export async function searchHistory(
   const payload = {
     query,
     userId,
-    timestamp: Math.floor(Date.now()),
+    timestamp: Date.now(),
   };
   return apiPost<SearchResponse>(ENDPOINTS.UNIFIED_SEARCH, payload);
 }
 
 /**
- * SSE approach with manual stream reading
- */
-let currentSearchController: AbortController | null = null;
-
-/**
- * Kick off a streaming search (SSE) to the backend,
- * manually parsing chunked text/event-stream data.
- */
-export function searchWithSSE(
-  query: string,
-  userId: string,
-  triggerSemantic = false,
-  onResults: (data: any, type: string) => void
-): () => void {
-  // Cancel any previous SSE
-  if (currentSearchController) {
-    currentSearchController.abort();
-  }
-  currentSearchController = new AbortController();
-
-  fetch(`${API_BASE_URL}${ENDPOINTS.UNIFIED_SEARCH}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({
-      query,
-      userId,
-      timestamp: Date.now(),
-      triggerSemantic,
-    }),
-    signal: currentSearchController.signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No readable stream available');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      const processStream = async (): Promise<void> => {
-        try {
-          const { done, value } = await reader.read();
-          if (done) return;
-
-          // Decode chunk
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || ''; // leftover partial data
-
-          for (const event of events) {
-            const trimmed = event.trim();
-            if (!trimmed) continue;
-
-            const dataMatch = trimmed.match(/^data:\s*(.+)$/m);
-            if (!dataMatch) continue;
-
-            try {
-              const parsed = JSON.parse(dataMatch[1]);
-              onResults(parsed, parsed.type);
-              if (parsed.type === 'complete') {
-                // SSE completed
-                await reader.cancel();
-                return;
-              }
-            } catch (parseErr) {
-              console.error('[SSE] Parse error:', parseErr);
-            }
-          }
-
-          // Recurse to read next chunk
-          await processStream();
-        } catch (err) {
-          if ((err as any).name !== 'AbortError') {
-            console.error('[SSE] Stream error:', err);
-            onResults({ type: 'error', message: (err as Error).message }, 'error');
-          }
-        }
-      };
-
-      await processStream();
-    })
-    .catch((error) => {
-      if (error.name !== 'AbortError') {
-        console.error('[SSE] error:', error);
-        onResults({ type: 'error', message: error.message }, 'error');
-      }
-    });
-
-  // Return a cancel function
-  return () => {
-    if (currentSearchController) {
-      currentSearchController.abort();
-      currentSearchController = null;
-    }
-  };
-}
-
-/**
- * If you prefer using native EventSource:
- */
-export function createSearchStream(
-  query: string,
-  triggerSemantic = true
-): EventSource {
-  const url = new URL(`${API_BASE_URL}${ENDPOINTS.UNIFIED_SEARCH}`);
-  url.searchParams.append('query', query);
-  url.searchParams.append('triggerSemantic', String(triggerSemantic));
-
-  // Make sure your server & manifest handle cross-origin SSE properly
-  return new EventSource(url.toString(), { withCredentials: true });
-}
-
-/**
- * @deprecated
- * Legacy event function. Use specialized ones from eventService instead.
- */
-export async function sendEvent(event: DoryEvent): Promise<Response> {
-  console.warn(
-    '[API Client] sendEvent is deprecated. Use specialized event functions.'
-  );
-  try {
-    if (event.operation === EventType.CONTENT_EXTRACTED) {
-      await sendContentEvent({
-        pageId: event.data.pageId,
-        visitId: event.data.visitId,
-        url: event.data.url,
-        title: event.data.content.title,
-        markdown: event.data.content.markdown,
-        metadata: event.data.content.metadata,
-      });
-    } else if (
-      event.operation === EventType.SESSION_STARTED ||
-      event.operation === EventType.SESSION_ENDED
-    ) {
-      await sendSessionEvent({
-        sessionId: event.sessionId,
-        operation: event.operation,
-        data: event.data,
-      });
-    } else if (
-      event.operation === EventType.PAGE_VISIT_STARTED ||
-      event.operation === EventType.PAGE_VISIT_ENDED ||
-      event.operation === EventType.ACTIVE_TIME_UPDATED
-    ) {
-      await sendVisitEvent({
-        pageId: event.data.pageId,
-        visitId: event.data.visitId,
-        sessionId: event.sessionId,
-        url: event.data.url || '',
-        operation: event.operation,
-        data: event.data,
-      });
-    }
-
-    // Return a mock success response
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (error) {
-    console.error('[API Client] sendEvent error:', error);
-    throw error;
-  }
-}
-
-/**
- * Check backend health
+ * Checks the backend health.
  */
 export async function checkHealth(): Promise<{ status: string }> {
   try {
@@ -305,9 +134,11 @@ export async function checkHealth(): Promise<{ status: string }> {
       method: 'GET',
       credentials: 'include',
     });
+
     if (!response.ok) {
       throw new Error(`Health check failed: HTTP ${response.status}`);
     }
+
     return (await response.json()) as { status: string };
   } catch (error) {
     console.error('[API Client] Health check error:', error);
@@ -315,5 +146,49 @@ export async function checkHealth(): Promise<{ status: string }> {
   }
 }
 
-// Re-export if you want direct access to eventService functions here
+/**
+ * Standard REST API search used for semantic search.
+ * 
+ * @param query - The search query.
+ * @param userId - The user identifier.
+ * @param options - Optional parameters to control the search.
+ */
+export async function semanticSearch(
+  query: string,
+  userId: string = 'default',
+  options: {
+    limit?: number;
+    useHybridSearch?: boolean;
+    useLLMExpansion?: boolean;
+    useReranking?: boolean;
+  } = {}
+) {
+  console.log(`[API] Semantic search: "${query}"`);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${ENDPOINTS.SEARCH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        userId,
+        limit: options.limit || 20,
+        useHybridSearch: options.useHybridSearch !== false,
+        useLLMExpansion: options.useLLMExpansion !== false,
+        useReranking: options.useReranking !== false,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Search API error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('[Semantic Search] Error:', error);
+    throw error;
+  }
+}
+
+// Re-export direct access to eventService functions if needed
 export { sendContentEvent, sendSessionEvent, sendVisitEvent, trackSearchClick };

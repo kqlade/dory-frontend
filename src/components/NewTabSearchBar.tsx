@@ -10,6 +10,8 @@ interface NewTabSearchBarProps {
   inputRef?: RefObject<HTMLInputElement>;
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
   placeholder?: string;
+  semanticEnabled?: boolean;
+  onToggleSemantic?: () => void;
 }
 
 // Simple DoryLogo as you had
@@ -31,11 +33,25 @@ const SearchContainer = styled.div`
   position: relative;
 `;
 
-const IconWrapper = styled.div`
+const IconWrapper = styled.div<{ active?: boolean; clickable?: boolean }>`
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-color);
+  cursor: ${props => props.clickable ? 'pointer' : 'default'};
+  padding: 8px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  
+  ${props => props.active && `
+    background: rgba(116, 214, 255, 0.25);
+    transform: scale(1.1);
+  `}
+  
+  &:hover {
+    opacity: ${props => props.clickable ? 0.8 : 1};
+    transform: ${props => props.clickable ? 'scale(1.1)' : 'none'};
+  }
 `;
 
 const SearchInput = styled.input`
@@ -89,7 +105,9 @@ const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>(({
   isLoading = false,
   inputRef,
   onKeyDown,
-  placeholder = "Find what you forgot..."
+  placeholder = "Find what you forgot...",
+  semanticEnabled = false,
+  onToggleSemantic,
 }, ref) => {
   // If parent gave us an inputRef, use that, otherwise use forwarded ref
   const inputRefToUse = inputRef || ref;
@@ -114,7 +132,12 @@ const NewTabSearchBar = forwardRef<HTMLInputElement, NewTabSearchBarProps>(({
 
   return (
     <SearchContainer>
-      <IconWrapper>
+      <IconWrapper 
+        active={semanticEnabled} 
+        clickable={!!onToggleSemantic}
+        onClick={onToggleSemantic} 
+        title={semanticEnabled ? "Disable semantic search" : "Enable semantic search"}
+      >
         <DoryLogo size={22} />
       </IconWrapper>
       <SearchInput

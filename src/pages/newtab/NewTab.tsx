@@ -77,32 +77,30 @@ const ResultUrl = styled.div`
   text-overflow: ellipsis;
 `;
 
-const SemanticResultsHeader = styled.div`
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  margin-top: 16px;
-  margin-bottom: 8px;
-  padding: 0 12px;
-  border-top: 1px solid var(--border-color);
-  padding-top: 12px;
-`;
-
 // Replace separate message components with a unified StatusMessage
 const StatusMessage = styled.div<{ isVisible: boolean }>`
   text-align: center;
-  padding: 4px 12px; /* Match ResultItem padding */
+  padding: 10px 12px; /* Match ResultItem padding */
   color: var(--text-secondary);
-  min-height: 16px; /* Ensure consistent height */
-  display: flex;
+  min-height: 24px; /* Ensure consistent height */
+  display: ${props => props.isVisible ? 'flex' : 'none'}; /* Remove from layout when invisible */
   align-items: center;
   justify-content: center;
-  transition: opacity 0.3s ease;
-  opacity: ${props => props.isVisible ? 1 : 0};
+  transition: opacity 0.2s ease; /* Only transition opacity, not display */
   font-size: ${props => props.children === 'No results found' ? '18px' : '14px'};
   font-style: ${props => props.children === 'Searching...' ? 'italic' : 'normal'};
   border-radius: 8px; /* Match ResultItem */
   margin: 4px 0; /* Match ResultItem */
+`;
+
+const SearchModeIndicator = styled.div<{ isVisible: boolean }>`
+  margin-top: 8px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: italic;
+  opacity: ${props => props.isVisible ? 0.7 : 0};
+  transition: opacity 0.3s ease;
 `;
 
 const Footer = styled.footer`
@@ -117,124 +115,109 @@ const Footer = styled.footer`
 
 const NewTab: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
-  
-  // Use our custom hybrid search hook
   const {
     inputValue,
     setInputValue,
     handleEnterKey,
-    results,
     isSearching,
-    localResults,
-    quickResults,
-    semanticResults
+    results,
+    semanticEnabled,
+    toggleSemanticSearch
   } = useHybridSearch();
 
-  // Handle input change
+  // Handle input changes
   const handleQueryChange = (newQuery: string) => {
     setInputValue(newQuery);
   };
 
-  // Handle result click
+  // Handle result clicks
   const handleResultClick = (result: any) => {
-    // Track the click for analytics
-    // Log the search click locally for later sync via cold storage
-    const searchSessionId = result.searchSessionId || 'local-session';
-    const pageId = result.id || result.pageId;
-    const position = result.position || 0;
-    const url = result.url;
-    const query = inputValue; // Use the current search query
-    
-    trackSearchClick(searchSessionId, pageId, position, url, query);
-    
-    // Navigate to the URL
-    window.location.href = url;
+    // Track the click for learning
+    trackSearchClick(
+      result.searchSessionId || 'local-session',
+      result.id || result.pageId,
+      results.findIndex(r => r.id === result.id),
+      result.url,
+      inputValue // current search query
+    );
+
+    // Navigate to the result
+    window.location.href = result.url;
   };
 
-  // Handle key events
+  // Handle special keys
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleEnterKey(e.currentTarget.value);
+    if (e.key === 'Enter' && inputValue.trim()) {
+      handleEnterKey(inputValue);
     }
   };
 
-  // Focus input on mount and ensure that keystrokes are directed to the search input
+  // Focus the search input on mount and when pressing '/'
   useEffect(() => {
-    window.focus();
-    if (document.body) {
-      document.body.tabIndex = -1;
-      document.body.focus();
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
     }
-    
-    const focusTimer = setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 50);
 
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
-      if (document.activeElement !== searchInputRef.current) {
+      // When '/' is pressed and no input is focused, focus our search
+      if (
+        event.key === '/' &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'TEXTAREA'
+      ) {
+        event.preventDefault();
         searchInputRef.current?.focus();
       }
     };
 
-    document.addEventListener('keydown', handleGlobalKeyDown, true);
-    
+    document.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
-      clearTimeout(focusTimer);
-      document.removeEventListener('keydown', handleGlobalKeyDown, true);
+      document.removeEventListener('keydown', handleGlobalKeyDown);
     };
   }, []);
 
-  // Determine if we have any results to show
-  const hasAnyResults = results.length > 0;
-  const hasSemanticResults = semanticResults.length > 0;
-  
-  // Split results into main (local + backend quick) and semantic for display
-  const mainResults = results.filter(r => r.source !== 'semantic');
-  const displaySemanticResults = results.filter(r => r.source === 'semantic');
+  // Determine if we show the results list
+  const showResults = inputValue.length >= 2 && results.length > 0;
+  const showNoResults = inputValue.length >= 2 && results.length === 0 && !isSearching;
+  const showSearchMode = inputValue.length >= 2;
 
   return (
     <Container>
       <SearchContainer>
         <NewTabSearchBar
-          ref={searchInputRef}
           value={inputValue}
           onChange={handleQueryChange}
           onKeyDown={handleKeyDown}
-          placeholder="Find what you forgot..."
+          isLoading={isSearching}
+          inputRef={searchInputRef}
+          semanticEnabled={semanticEnabled}
+          onToggleSemantic={toggleSemanticSearch}
         />
-        
-        {inputValue.trim() && (
+
+        <SearchModeIndicator isVisible={showSearchMode}>
+          {semanticEnabled ? 'Semantic Search Mode' : 'Quick Results Mode'}
+        </SearchModeIndicator>
+
+        {showResults && (
           <ResultsList>
-            {/* Replace conditional rendering with always-present components that toggle visibility */}
-            <StatusMessage isVisible={isSearching}>Searching...</StatusMessage>
-            <StatusMessage isVisible={!isSearching && !hasAnyResults}>No results found</StatusMessage>
-            
-            {mainResults.map((result) => (
-              <ResultItem key={result.id} onClick={() => handleResultClick(result)}>
+            {results.map(result => (
+              <ResultItem 
+                key={result.id} 
+                onClick={() => handleResultClick(result)}
+              >
                 <ResultTitle>{result.title}</ResultTitle>
                 <ResultUrl>{result.url}</ResultUrl>
               </ResultItem>
             ))}
-            
-            {/* Show semantic results with a header if we have any */}
-            {displaySemanticResults.length > 0 && (
-              <>
-                <SemanticResultsHeader>Semantic Results</SemanticResultsHeader>
-                {displaySemanticResults.map((result) => (
-                  <ResultItem key={result.id} onClick={() => handleResultClick(result)}>
-                    <ResultTitle>{result.title}</ResultTitle>
-                    <ResultUrl>{result.url}</ResultUrl>
-                  </ResultItem>
-                ))}
-              </>
-            )}
           </ResultsList>
         )}
+
+        <StatusMessage isVisible={showNoResults}>
+          No results found. Try refining your search.
+        </StatusMessage>
+
       </SearchContainer>
-      
-      <Footer>
-        <ThemeToggle />
-      </Footer>
+      <ThemeToggle />
     </Container>
   );
 };

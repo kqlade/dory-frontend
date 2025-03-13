@@ -16,6 +16,7 @@ export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/a
 export const ENDPOINTS = {
   HEALTH: '/health',
   UNIFIED_SEARCH: '/unified-search',
+  SEARCH: '/search',
   CONTENT: '/content',
   COLD_STORAGE: {
     BASE: '/cold-storage',

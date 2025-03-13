@@ -87,6 +87,16 @@ export interface DoryEvent {
   loggedAt: number;
 }
 
+/**
+ * MetadataRecord:
+ * - For storing application configuration and model data
+ */
+export interface MetadataRecord {
+  key: string;        // Primary key
+  value: string;      // JSON or other string value
+  updatedAt: number;  // Last update timestamp
+}
+
 /** Our Dexie subclass */
 export class DoryDatabase extends Dexie {
   // Dexie tables
@@ -95,6 +105,7 @@ export class DoryDatabase extends Dexie {
   sessions!: Dexie.Table<BrowsingSession, number>;
   visits!: Dexie.Table<VisitRecord, string>;
   events!: Dexie.Table<DoryEvent, number>;
+  metadata!: Dexie.Table<MetadataRecord, string>;
 
   constructor(userId: string) {
     // Each user has a separate DB
@@ -107,6 +118,7 @@ export class DoryDatabase extends Dexie {
      *   - visits: 'visitId, ...'
      *   - pages: 'pageId, ...'
      *   - events: '++eventId, ...'
+     *   - metadata: 'key, ...'
      */
     this.version(1).stores({
       pages: `
@@ -172,6 +184,14 @@ export class DoryDatabase extends Dexie {
         sessionId,
         timestamp,
         loggedAt
+      `
+    });
+
+    // Updated to version 2 to add metadata table
+    this.version(2).stores({
+      metadata: `
+        key,
+        updatedAt
       `
     });
   }
