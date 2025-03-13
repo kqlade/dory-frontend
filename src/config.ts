@@ -64,4 +64,4 @@ export const QUEUE_CONFIG = {
 // ============================================================================
 
 // Debug mode flag - controls verbose logging
-export const DEBUG = process.env.NODE_ENV !== 'production'; 
+export const DEBUG = true; // Force debug logs on 

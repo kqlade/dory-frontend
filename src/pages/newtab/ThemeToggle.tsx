@@ -1,9 +1,9 @@
+// src/pages/newtab/ThemeToggle.tsx
 import React from 'react';
 import { FiSun, FiMoon } from 'react-icons/fi';
 import styled from 'styled-components';
 import useDarkMode from './useDarkMode';
 
-// Styled toggle button
 const ToggleButton = styled.button`
   position: fixed;
   bottom: 20px;
@@ -21,7 +21,7 @@ const ToggleButton = styled.button`
   padding: 0;
   z-index: 1000;
   color: var(--text-color);
-  
+
   &:hover {
     transform: scale(1.1);
     border-color: var(--border-focus-color);
@@ -39,8 +39,9 @@ const ThemeToggle: React.FC = () => {
   return (
     <ToggleButton
       onClick={toggle}
-      aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-      title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="theme-toggle"
     >
       {isDarkMode ? <FiSun size={20} /> : <FiMoon size={20} />}
     </ToggleButton>

@@ -7,6 +7,7 @@
 
 import { createOrGetPage, createOrUpdateEdge } from './dexieBrowsingStore';
 import { getCurrentSessionId } from './dexieSessionManager';
+import { isWebPage } from '../utils/urlUtils';
 
 export interface TabTracking {
   tabToCurrentUrl: Record<number, string | undefined>;
@@ -40,6 +41,12 @@ export async function handleOnCommitted(
 
   const { tabId, url, timeStamp, transitionType, transitionQualifiers } = details;
   console.log('[DORY] onCommitted =>', { tabId, url, transitionType, transitionQualifiers });
+
+  // Filter out non-web pages (chrome://, extension://, file://, etc.)
+  if (!isWebPage(url)) {
+    console.log('[DORY] Not a web page => skipping navigation tracking =>', url);
+    return;
+  }
 
   try {
     await tracking.ensureActiveSession();
@@ -93,6 +100,12 @@ export async function handleOnCreatedNavigationTarget(
 ): Promise<void> {
   const { sourceTabId, tabId, timeStamp, url } = details;
   console.log('[DORY] onCreatedNavigationTarget =>', { sourceTabId, tabId, url });
+
+  // Filter out non-web pages (chrome://, extension://, file://, etc.)
+  if (!isWebPage(url)) {
+    console.log('[DORY] Not a web page => skipping new tab tracking =>', url);
+    return;
+  }
 
   try {
     await tracking.ensureActiveSession();

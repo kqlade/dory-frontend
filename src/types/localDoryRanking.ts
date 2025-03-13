@@ -1,9 +1,6 @@
-
 export interface PageMetadata {
   title: string;
   url: string;
-  category?: string;
-  tags?: string[];
 }
 
 /**

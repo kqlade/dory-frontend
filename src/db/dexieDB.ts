@@ -22,9 +22,6 @@ export interface PageRecord {
   personalScore: number;
   syncStatus: 'synced' | 'pending' | 'conflict';
   updatedAt: number;
-  favicon?: string;
-  tags?: string[];
-  category?: string;
   hasExtractedContent?: boolean;
   contentAvailability?: 'local' | 'server' | 'both' | 'none';
 }
@@ -119,8 +116,7 @@ export class DoryDatabase extends Dexie {
         lastVisit,
         visitCount,
         personalScore,
-        syncStatus,
-        *tags
+        syncStatus
       `,
       /**
        * edges store:

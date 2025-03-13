@@ -2,7 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
-import { quickLaunch } from '../services/localQuickLauncher';
+import { localRanker } from '../services/localDoryRanking';
 import { API_BASE_URL } from '../config';
 
 /** Standard shape for displayed results */
@@ -14,13 +14,21 @@ interface SearchResult {
   source?: string;  
 }
 
-/** 1) useLocalSearch => Dexie quickLaunch */
+/** 1) useLocalSearch => Local ranking via AdvancedLocalRanker */
 export function useLocalSearch(query: string) {
   return useQuery({
     queryKey: ['local-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
-      const results = await quickLaunch.search(query);
+      console.log(`[DEBUG] Sending query for local ranking: "${query}"`);
+      
+      // Initialize the ranker if needed
+      await localRanker.initialize();
+      
+      // Get ranking results - now includes pageId, title, url, and score
+      const results = await localRanker.rank(query);
+      
+      // Map to the expected SearchResult format
       return results.map(r => ({
         id: r.pageId,
         title: r.title,

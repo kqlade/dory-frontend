@@ -8,10 +8,7 @@ import { useHybridSearch } from '../../utils/useSearch';
 const Container = styled.div`
   width: 100%;
   height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  position: relative;
 `;
 
 const SearchContainer = styled.div`
@@ -22,8 +19,12 @@ const SearchContainer = styled.div`
   padding: 16px 20px;
   border: 1px solid var(--border-color);
   transition: all 0.3s ease;
-  margin-bottom: 10vh;
-
+  
+  position: absolute;
+  left: 50%;
+  top: 40vh;
+  transform: translateX(-50%);
+  
   &:hover {
     border-color: var(--border-hover-color);
     box-shadow: 0 0 20px var(--shadow-color);
@@ -39,9 +40,11 @@ const ResultsList = styled.ul`
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  max-height: 60vh;
+  max-height: 50vh;
   overflow-y: auto;
   border-top: 1px solid var(--border-color);
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  opacity: 1;
 `;
 
 const ResultItem = styled.li`
@@ -74,13 +77,6 @@ const ResultUrl = styled.div`
   text-overflow: ellipsis;
 `;
 
-const LoadingIndicator = styled.div`
-  text-align: center;
-  padding: 10px;
-  color: var(--text-secondary);
-  font-style: italic;
-`;
-
 const SemanticResultsHeader = styled.div`
   font-size: 14px;
   font-weight: 500;
@@ -92,15 +88,27 @@ const SemanticResultsHeader = styled.div`
   padding-top: 12px;
 `;
 
-const NoResultsMessage = styled.div`
+// Replace separate message components with a unified StatusMessage
+const StatusMessage = styled.div<{ isVisible: boolean }>`
   text-align: center;
-  padding: 20px;
+  padding: 4px 12px; /* Match ResultItem padding */
   color: var(--text-secondary);
+  min-height: 16px; /* Ensure consistent height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.3s ease;
+  opacity: ${props => props.isVisible ? 1 : 0};
+  font-size: ${props => props.children === 'No results found' ? '18px' : '14px'};
+  font-style: ${props => props.children === 'Searching...' ? 'italic' : 'normal'};
+  border-radius: 8px; /* Match ResultItem */
+  margin: 4px 0; /* Match ResultItem */
 `;
 
 const Footer = styled.footer`
   position: fixed;
   bottom: 0;
+  left: 0;
   width: 100%;
   display: flex;
   justify-content: center;
@@ -197,7 +205,9 @@ const NewTab: React.FC = () => {
         
         {inputValue.trim() && (
           <ResultsList>
-            {isSearching && <LoadingIndicator>Searching...</LoadingIndicator>}
+            {/* Replace conditional rendering with always-present components that toggle visibility */}
+            <StatusMessage isVisible={isSearching}>Searching...</StatusMessage>
+            <StatusMessage isVisible={!isSearching && !hasAnyResults}>No results found</StatusMessage>
             
             {mainResults.map((result) => (
               <ResultItem key={result.id} onClick={() => handleResultClick(result)}>
@@ -217,10 +227,6 @@ const NewTab: React.FC = () => {
                   </ResultItem>
                 ))}
               </>
-            )}
-            
-            {!isSearching && !hasAnyResults && (
-              <NoResultsMessage>No results found</NoResultsMessage>
             )}
           </ResultsList>
         )}

@@ -53,5 +53,11 @@
   },
   "host_permissions": [
     "http://localhost:3000/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/*", "assets/*"],
+      "matches": ["<all_urls>"]
+    }
   ]
 } 
