@@ -184,6 +184,20 @@ body {
   text-overflow: ellipsis;
 }
 
+.result-explanation {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.4;
+  opacity: 0.9;
+  font-style: italic;
+}
+
+.explanation-label {
+  font-weight: 600;
+  font-style: normal;
+}
+
 /* Status messages */
 .status-message {
   text-align: center;

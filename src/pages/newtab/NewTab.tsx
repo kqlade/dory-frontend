@@ -5,6 +5,17 @@ import { trackSearchClick } from '../../services/eventService';
 import { useHybridSearch } from '../../utils/useSearch';
 import './newtab.css';
 
+interface SearchResult {
+  id: string;
+  title: string;
+  url: string;
+  score: number;
+  source?: string;
+  explanation?: string;
+  pageId?: string;
+  searchSessionId?: string;
+}
+
 const NewTab: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -29,17 +40,17 @@ const NewTab: React.FC = () => {
   };
 
   // Handle result clicks
-  const handleResultClick = (result: any) => {
+  const handleResultClick = (result: SearchResult) => {
     navigateToResult(result);
   };
 
   // Handle navigation to a result
-  const navigateToResult = (result: any) => {
+  const navigateToResult = (result: SearchResult) => {
     // Track the click for learning
     trackSearchClick(
       result.searchSessionId || 'local-session',
-      result.id || result.pageId,
-      results.findIndex(r => r.id === result.id),
+      result.id || result.pageId || '',  // Provide empty string as fallback
+      results.findIndex((r: SearchResult) => r.id === result.id),
       result.url,
       inputValue // current search query
     );
@@ -103,7 +114,24 @@ const NewTab: React.FC = () => {
 
   // Determine if we show the results list
   const showResults = inputValue.length >= 2 && results.length > 0;
-  const showNoResults = inputValue.length >= 2 && results.length === 0 && !isSearching;
+  
+  // Only show "No results found" if:
+  // - For quick launch: when not searching and no results
+  // - For semantic search: when not searching, no results, and it's been at least 1 second since last keystroke
+  const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
+  const timeSinceLastKeystroke = Date.now() - lastKeystrokeTime;
+  const debounceElapsed = timeSinceLastKeystroke > 1000;
+  
+  // Update lastKeystrokeTime whenever inputValue changes
+  useEffect(() => {
+    setLastKeystrokeTime(Date.now());
+  }, [inputValue]);
+  
+  const showNoResults = inputValue.length >= 2 && 
+                         results.length === 0 && 
+                         !isSearching && 
+                         (!semanticEnabled || debounceElapsed);
+                         
   const showSearchMode = inputValue.length >= 2;
 
   return (
@@ -123,7 +151,7 @@ const NewTab: React.FC = () => {
           value={inputValue}
           onChange={handleQueryChange}
           onKeyDown={handleInputKeyDown}
-          isLoading={isSearching}
+          isLoading={semanticEnabled ? (isSearching || (inputValue.length >= 2 && !debounceElapsed)) : isSearching}
           inputRef={searchInputRef}
           semanticEnabled={semanticEnabled}
           onToggleSemantic={toggleSemanticSearch}
@@ -135,7 +163,7 @@ const NewTab: React.FC = () => {
 
         {showResults && (
           <ul className="results-list">
-            {results.map((result, index) => (
+            {results.map((result: SearchResult, index: number) => (
               <li 
                 key={result.id} 
                 className={`result-item ${index === selectedIndex ? 'selected' : ''}`}
@@ -143,9 +171,22 @@ const NewTab: React.FC = () => {
               >
                 <div className="result-title">{result.title}</div>
                 <div className="result-url">{result.url}</div>
+                {result.explanation && result.source === 'semantic' && (
+                  <div className="result-explanation">
+                    <span className="explanation-label">Why: </span>
+                    {result.explanation}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Show "Searching..." message during both debounce period and actual search */}
+        {semanticEnabled && inputValue.length >= 2 && results.length === 0 && (!debounceElapsed || isSearching) && (
+          <div className="status-message searching">
+            Searching...
+          </div>
         )}
 
         <div className={`status-message ${!showNoResults ? 'hidden' : ''} ${showNoResults ? 'no-results' : ''}`}>
