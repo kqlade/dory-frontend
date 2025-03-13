@@ -95,7 +95,7 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
  */
 export function useHybridSearch() {
   const [inputValue, setInputValue] = useState('');
-  const [debouncedQuery] = useDebounce(inputValue, 300);
+  const [debouncedQuery] = useDebounce(inputValue, 1000);
   const [immediateQuery, setImmediateQuery] = useState('');
   const [semanticEnabled, setSemanticEnabled] = useState(false);
 
@@ -117,14 +117,11 @@ export function useHybridSearch() {
 
   // Merge local and semantic results if semantic is enabled
   const results = useMemo(() => {
-    if (semanticEnabled && semanticResults.length > 0) {
-      const combined = [...localResults, ...semanticResults];
-
-      // Filter out duplicates by unique 'id'
-      return combined.filter(
-        (result, index, self) => index === self.findIndex(r => r.id === result.id),
-      );
+    if (semanticEnabled) {
+      // Only return semantic results when semantic search is enabled
+      return semanticResults;
     }
+    // Return local results when semantic search is disabled
     return localResults;
   }, [localResults, semanticResults, semanticEnabled]);
 

@@ -225,6 +225,13 @@ body {
   font-style: italic;
 }
 
+.status-message.waiting {
+  font-size: 14px;
+  font-style: italic;
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
 /* Search mode indicator */
 .search-mode-indicator {
   margin-top: 8px;
