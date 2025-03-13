@@ -475,8 +475,8 @@ export class AdvancedLocalRanker {
       return { pageId: r.pageId, score: r.score + subBonus };
     });
     
-    // Filter out results with no text match
-    results = results.filter(r => r.score > 0);
+    // Filter out results with insufficient text match
+    results = results.filter(r => r.score >= 0.5);
     
     results.sort((a, b) => b.score - a.score);
 
