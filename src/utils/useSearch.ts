@@ -15,7 +15,7 @@ interface SearchResult {
   explanation?: string;
 }
 
-/** API Result from /api/search endpoint */
+/** API result from the /api/search endpoint */
 interface ApiSearchResult {
   docId: string;
   chunkText: string;
@@ -29,25 +29,23 @@ interface ApiSearchResult {
 }
 
 /**
- * Local search hook - Always active to provide immediate results
+ * Local search hook (always active) to provide immediate results.
  */
 export function useLocalSearch(query: string) {
   return useQuery({
     queryKey: ['local-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
-      
-      // Initialize the ranker and get results
+
       await localRanker.initialize();
       const results = await localRanker.rank(query);
-      
-      // Map to the standard result format
+
       return results.map(r => ({
         id: r.pageId,
         title: r.title,
         url: r.url,
         score: r.score,
-        source: 'local'
+        source: 'local',
       }));
     },
     enabled: query.length >= 2,
@@ -55,31 +53,30 @@ export function useLocalSearch(query: string) {
 }
 
 /**
- * Semantic search using standard REST API
+ * Semantic search hook using the REST API endpoint.
  */
 export function useSemanticSearch(query: string, isEnabled: boolean) {
   return useQuery({
     queryKey: ['semantic-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
-      
+
       try {
-        // Call the semantic search API
         const data = await semanticSearch(query, 'current-user-id', {
           limit: 20,
           useHybridSearch: true,
           useLLMExpansion: true,
           useReranking: true,
         });
-        
-        // Map API results to standard format
+
         return data.results.map((result: ApiSearchResult) => ({
           id: result.docId,
-          title: result.metadata.title || result.chunkText.substring(0, 50) + '...',
+          title: result.metadata.title
+            || `${result.chunkText.substring(0, 50)}...`,
           url: result.metadata.url || '',
           score: result.score,
           explanation: result.explanation,
-          source: 'semantic'
+          source: 'semantic',
         }));
       } catch (error) {
         console.error('[Semantic Search] Error:', error);
@@ -94,66 +91,64 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
 }
 
 /**
- * Main search hook that toggles between local-only and semantic search
+ * Main hook combining local and semantic search with the ability to toggle modes.
  */
 export function useHybridSearch() {
-  // Search input and state
   const [inputValue, setInputValue] = useState('');
   const [debouncedQuery] = useDebounce(inputValue, 300);
   const [immediateQuery, setImmediateQuery] = useState('');
   const [semanticEnabled, setSemanticEnabled] = useState(false);
 
-  // Determine the actual query to use
+  // Determine which query string is actually used for semantic search
   const searchQuery = immediateQuery || debouncedQuery;
-  
-  // Local search - always run
-  const { 
-    data: localResults = [], 
-    isLoading: isLocalLoading 
+
+  // Local search (always enabled)
+  const {
+    data: localResults = [],
+    isLoading: isLocalLoading,
   } = useLocalSearch(inputValue);
-  
-  // Semantic search - only when enabled
-  const { 
-    data: semanticResults = [], 
+
+  // Semantic search (enabled only when toggled on)
+  const {
+    data: semanticResults = [],
     isLoading: isSemanticLoading,
-    isError: isSemanticError
+    isError: isSemanticError,
   } = useSemanticSearch(searchQuery, semanticEnabled);
 
-  // Results based on mode
+  // Merge local and semantic results if semantic is enabled
   const results = useMemo(() => {
     if (semanticEnabled && semanticResults.length > 0) {
-      // When semantic search is enabled and has results, merge with local
       const combined = [...localResults, ...semanticResults];
-      return combined.filter((result, index, self) => 
-        index === self.findIndex(r => r.id === result.id)
+
+      // Filter out duplicates by unique 'id'
+      return combined.filter(
+        (result, index, self) => index === self.findIndex(r => r.id === result.id),
       );
-    } else {
-      // Otherwise just use local results
-      return localResults;
     }
+    return localResults;
   }, [localResults, semanticResults, semanticEnabled]);
 
   // Combined loading state
-  const isSearching = semanticEnabled 
-    ? (isLocalLoading || isSemanticLoading)
+  const isSearching = semanticEnabled
+    ? isLocalLoading || isSemanticLoading
     : isLocalLoading;
 
-  // Overall completion state
-  const isComplete = semanticEnabled 
+  // Completion state for the search
+  const isComplete = semanticEnabled
     ? !isSemanticLoading && !isSemanticError
-    : true; // Local search is always "complete" when done loading
+    : true;
 
-  // Handle immediate search (Enter key)
+  // Trigger immediate search (e.g., on pressing Enter)
   const handleEnterKey = useCallback((value: string) => {
     setImmediateQuery(value);
   }, []);
 
-  // Toggle between search modes
+  // Toggle semantic search on/off
   const toggleSemanticSearch = useCallback(() => {
     setSemanticEnabled(prev => !prev);
   }, []);
 
-  // Reset immediate query once debounce catches up
+  // Reset immediateQuery once debounce matches
   useEffect(() => {
     if (immediateQuery && immediateQuery === debouncedQuery) {
       setImmediateQuery('');
@@ -168,6 +163,6 @@ export function useHybridSearch() {
     isComplete,
     results,
     semanticEnabled,
-    toggleSemanticSearch
+    toggleSemanticSearch,
   };
 }
