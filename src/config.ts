@@ -10,12 +10,12 @@
 // ============================================================================
 
 // API base URL and endpoints
-export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
+export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api';
 
 // Available backend endpoints
 export const ENDPOINTS = {
   HEALTH: '/health',
-  UNIFIED_SEARCH: '/unified-search',
+  UNIFIED_SEARCH: '/search',
   SEARCH: '/search',
   CONTENT: '/content',
   COLD_STORAGE: {

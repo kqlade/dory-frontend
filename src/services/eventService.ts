@@ -1,6 +1,6 @@
 // src/services/eventService.ts
 import { API_BASE_URL, ENDPOINTS } from '../config';
-import { getUserInfo, UserInfo } from '../auth/googleAuth';
+import { getCurrentUser, User } from '../services/authService';
 
 // Types
 export interface ContentEvent {
@@ -33,26 +33,28 @@ export interface VisitEvent {
 }
 
 // Local caching
-let currentUser: UserInfo | null = null;
+let currentUser: User | null = null;
 
 /**
  * Initialize the event service; typically called once after user logs in.
  */
 export async function initEventService(): Promise<void> {
   try {
-    currentUser = await getUserInfo(false);
+    const user = await getCurrentUser();
+    currentUser = user || null;  // Convert undefined to null
     console.log('[EventService] init => user:', currentUser?.email);
   } catch (err) {
     console.error('[EventService] Could not get user info:', err);
   }
 }
 
-async function getCurrentUser(): Promise<UserInfo | null> {
+async function getUser(): Promise<User | null> {
   if (!currentUser) {
     try {
-      currentUser = await getUserInfo(false);
+      const user = await getCurrentUser();
+      currentUser = user || null;  // Convert undefined to null
     } catch (err) {
-      console.error('[EventService] getUserInfo error:', err);
+      console.error('[EventService] getCurrentUser error:', err);
     }
   }
   return currentUser;
@@ -88,7 +90,7 @@ async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Resp
  * Real-time content extraction event.
  */
 export async function sendContentEvent(event: ContentEvent): Promise<void> {
-  const user = await getCurrentUser();
+  const user = await getUser();
   try {
     let sessionId = event.sessionId;
     if (!sessionId) {
@@ -132,7 +134,7 @@ export async function sendContentEvent(event: ContentEvent): Promise<void> {
  * For cold storage sync only — do not call during normal browsing
  */
 export async function sendSessionEvent(event: SessionEvent): Promise<void> {
-  const user = await getCurrentUser();
+  const user = await getUser();
   const payload = {
     userId: user?.id,
     sessionId: event.sessionId,
@@ -154,7 +156,7 @@ export async function sendSessionEvent(event: SessionEvent): Promise<void> {
  * For cold storage sync only — do not call during normal browsing
  */
 export async function sendVisitEvent(event: VisitEvent): Promise<void> {
-  const user = await getCurrentUser();
+  const user = await getUser();
   const payload = {
     userId: user?.id,
     pageId: event.pageId,

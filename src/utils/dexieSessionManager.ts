@@ -10,7 +10,7 @@ import * as dexieDb from '../db/dexieDB';
 import { BrowsingSession } from '../db/dexieDB';
 import { logEvent } from './dexieEventLogger';
 import { EventType } from '../api/types';
-import { getUserInfo } from '../auth/googleAuth';
+import { getCurrentUser } from '../services/authService';
 
 // Track the current session ID
 let currentSessionId: number | null = null;
@@ -34,7 +34,7 @@ export async function startNewSession(): Promise<number> {
   currentSessionId = id;
   
   // Get user info for the event
-  const userInfo = await getUserInfo();
+  const userInfo = await getCurrentUser();
   
   // Log session started event locally - will be synced to backend via cold storage
   await logEvent({
@@ -84,7 +84,7 @@ export async function endCurrentSession(): Promise<void> {
     }
     
     // Get user info for the event
-    const userInfo = await getUserInfo();
+    const userInfo = await getCurrentUser();
     
     // Log session ended event locally - will be synced to backend via cold storage
     await logEvent({

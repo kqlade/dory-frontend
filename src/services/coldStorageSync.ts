@@ -6,7 +6,7 @@
  */
 
 import { getDB } from '../db/dexieDB';
-import { getUserInfo } from '../auth/googleAuth';
+import { getCurrentUser } from '../services/authService';
 import { API_BASE_URL, ENDPOINTS } from '../config';
 import { EventType } from '../api/types';
 
@@ -132,10 +132,10 @@ export class ColdStorageSync {
    */
   private async getCurrentUserId(): Promise<string> {
     try {
-      const userInfo = await getUserInfo(false);
+      const userInfo = await getCurrentUser();
       return userInfo?.id || 'anonymous';
     } catch (error) {
-      console.warn('[ColdStorageSync] getCurrentUserId failed:', error);
+      console.error('[ColdStorageSync] Error getting user ID:', error);
       return 'anonymous';
     }
   }

@@ -9,15 +9,15 @@ import './newtab.css';
 
 // Dexie imports
 import { initializeDexieDB, setCurrentUser } from '../../db/dexieDB';
-import { getUserInfo } from '../../auth/googleAuth';
+import { getCurrentUser } from '../../services/authService';
 
 /**
  * Try to init Dexie in the new-tab context.
  */
 async function initDexieForNewTab() {
   try {
-    // Attempt a non-interactive getUserInfo
-    const user = await getUserInfo(false);
+    // Attempt a non-interactive getCurrentUser
+    const user = await getCurrentUser();
     if (user && user.id) {
       setCurrentUser(user.id);
       await initializeDexieDB();

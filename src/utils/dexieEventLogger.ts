@@ -7,7 +7,7 @@
 
 import * as dexieDb from '../db/dexieDB';
 import { DoryEvent as ApiDoryEvent } from '../api/types';
-import { getUserInfo } from '../auth/googleAuth';
+import { getCurrentUser } from '../services/authService';
 
 // Extend the API event type with database-specific fields
 interface DexieDoryEvent extends ApiDoryEvent {
@@ -43,7 +43,7 @@ export async function logEvent(event: ApiDoryEvent): Promise<void> {
     // If userId is missing, try to get it
     if (!event.userId) {
       try {
-        const userInfo = await getUserInfo();
+        const userInfo = await getCurrentUser();
         if (userInfo?.id) {
           event.userId = userInfo.id;
           event.userEmail = userInfo.email;

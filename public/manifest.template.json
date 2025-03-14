@@ -42,7 +42,8 @@
     "alarms",
     "webNavigation",
     "idle",
-    "identity"
+    "identity",
+    "cookies"
   ],
   "oauth2": {
     "client_id": "%GOOGLE_OAUTH_CLIENT_ID%",
@@ -52,7 +53,7 @@
     ]
   },
   "host_permissions": [
-    "http://localhost:3000/*"
+    "http://localhost:8000/*"
   ],
   "web_accessible_resources": [
     {

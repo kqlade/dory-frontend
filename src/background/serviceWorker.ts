@@ -13,7 +13,7 @@ import { initDexieSystem } from '../utils/dexieInit';
 import { initEventService, sendContentEvent } from '../services/eventService';
 import { logEvent } from '../utils/dexieEventLogger';
 import { EventType } from '../api/types';
-import { getUserInfo } from '../auth/googleAuth';
+import { getCurrentUser } from '../services/authService';
 import { isWebPage } from '../utils/urlUtils';
 
 // Navigation handlers
@@ -39,7 +39,7 @@ async function initialize() {
   console.log('[DORY] Initializing extension...');
 
   try {
-    const user = await getUserInfo();
+    const user = await getCurrentUser();
     if (!user || !user.id) {
       console.log('[DORY] Not authenticated => disabling extension');
       isAuthenticated = false;
@@ -102,7 +102,7 @@ async function initialize() {
 async function handleUnauthClick() {
   console.log('[DORY] Unauth icon => start auth flow');
   try {
-    const user = await getUserInfo();
+    const user = await getCurrentUser();
     if (user?.id) {
       console.log('[DORY] Auth success => re-init');
       await initialize();
@@ -145,7 +145,7 @@ async function endCurrentVisit(tabId: number) {
     const visit = await db.visits.get(visitId);
     const sessId = await getCurrentSessionId();
     if (sessId && visit) {
-      const user = await getUserInfo();
+      const user = await getCurrentUser();
       const timeSpent = Math.round((now - visit.startTime) / 1000);
       await logEvent({
         operation: EventType.PAGE_VISIT_ENDED,

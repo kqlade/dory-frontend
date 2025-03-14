@@ -52,6 +52,7 @@ export async function apiRequest<T>(
   const config: RequestInit = {
     ...init,
     headers,
+    credentials: 'include', // Always include credentials for cookies
     signal: controller.signal,
   };
 
@@ -129,21 +130,7 @@ export async function searchHistory(
  * Checks the backend health.
  */
 export async function checkHealth(): Promise<{ status: string }> {
-  try {
-    const response = await fetch(`${API_BASE_URL}${ENDPOINTS.HEALTH}`, {
-      method: 'GET',
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Health check failed: HTTP ${response.status}`);
-    }
-
-    return (await response.json()) as { status: string };
-  } catch (error) {
-    console.error('[API Client] Health check error:', error);
-    throw error;
-  }
+  return apiGet<{ status: string }>(ENDPOINTS.HEALTH);
 }
 
 /**
@@ -166,24 +153,15 @@ export async function semanticSearch(
   console.log(`[API] Semantic search: "${query}"`);
 
   try {
-    const response = await fetch(`${API_BASE_URL}${ENDPOINTS.SEARCH}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query,
-        userId,
-        limit: options.limit || 20,
-        useHybridSearch: options.useHybridSearch !== false,
-        useLLMExpansion: options.useLLMExpansion !== false,
-        useReranking: options.useReranking !== false,
-      }),
+    // Use apiRequest instead of direct fetch
+    return await apiPost(ENDPOINTS.SEARCH, {
+      query,
+      userId,
+      limit: options.limit || 20,
+      useHybridSearch: options.useHybridSearch !== false,
+      useLLMExpansion: options.useLLMExpansion !== false,
+      useReranking: options.useReranking !== false,
     });
-
-    if (!response.ok) {
-      throw new Error(`Search API error: ${response.status}`);
-    }
-
-    return await response.json();
   } catch (error) {
     console.error('[Semantic Search] Error:', error);
     throw error;

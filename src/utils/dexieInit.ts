@@ -6,7 +6,7 @@
  */
 
 import { initializeDexieDB } from '../db/dexieDB';
-import { getUserInfo } from '../auth/googleAuth';
+import { getCurrentUser } from '../services/authService';
 
 /**
  * Initialize Dexie if user is authenticated.
@@ -15,7 +15,7 @@ import { getUserInfo } from '../auth/googleAuth';
 export async function initDexieSystem(): Promise<boolean> {
   try {
     console.log('[DexieInit] Checking user auth before Dexie init...');
-    const userInfo = await getUserInfo();
+    const userInfo = await getCurrentUser();
 
     if (!userInfo?.id) {
       console.log('[DexieInit] No user or missing user ID => Dexie init aborted.');

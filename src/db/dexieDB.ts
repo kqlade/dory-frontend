@@ -7,7 +7,7 @@
  */
 
 import Dexie from 'dexie';
-import { getUserInfo } from '../auth/googleAuth';
+import { getCurrentUser } from '../services/authService';
 
 /** PageRecord: same as before */
 export interface PageRecord {
@@ -231,7 +231,7 @@ export function getDB(): DoryDatabase {
  */
 export async function initializeDexieDB(): Promise<void> {
   try {
-    const userInfo = await getUserInfo();
+    const userInfo = await getCurrentUser();
     if (userInfo?.id) {
       currentUserId = userInfo.id;
       console.log(`[DexieDB] Initialized for user: ${userInfo.id}`);

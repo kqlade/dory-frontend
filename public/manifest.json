@@ -42,17 +42,18 @@
     "alarms",
     "webNavigation",
     "idle",
-    "identity"
+    "identity",
+    "cookies"
   ],
   "oauth2": {
-    "client_id": "893405528801-4d4nkta86hmd9si68edm8u8cf9p0f9qg.apps.googleusercontent.com",
+    "client_id": "893405528801-i4grfos1t0g8obcab9m2jejtbqg115jg.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile"
     ]
   },
   "host_permissions": [
-    "http://localhost:3000/*"
+    "http://localhost:8000/*"
   ],
   "web_accessible_resources": [
     {
