@@ -24,7 +24,8 @@ export default defineConfig({
       input: {
         // Only specify your newtab HTML or page if you want to treat it
         // as an HTML-based entry for Vite's build pipeline.
-        newtab: 'src/pages/newtab/newtab.html'
+        newtab: 'src/pages/newtab/newtab.html',
+        popup: 'src/pages/popup/popup.html'
       },
       output: {
         entryFileNames: '[name].js',

@@ -4,6 +4,7 @@
   "manifest_version": 3,
   "description": "Contextual browser history search engine",
   "action": {
+    "default_popup": "src/pages/popup/popup.html",
     "default_icon": {
       "16": "icons/dory_logo_16x16.png",
       "48": "icons/dory_logo_48x48.png",
@@ -46,14 +47,14 @@
     "cookies"
   ],
   "oauth2": {
-    "client_id": "893405528801-i4grfos1t0g8obcab9m2jejtbqg115jg.apps.googleusercontent.com",
+    "client_id": "893405528801-789i9jpdlvpg86j8tkthdv47m3joro6b.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile"
     ]
   },
   "host_permissions": [
-    "http://localhost:8000/*"
+    "http://localhost:3000/*"
   ],
   "web_accessible_resources": [
     {

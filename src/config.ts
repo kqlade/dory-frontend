@@ -1,47 +1,30 @@
-/**
- * src/config.ts
- *
- * Central configuration for the Dory extension.
- * Includes settings for the API, background service worker, and queue processing.
- */
+export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
 
-// ============================================================================
-// API Configuration
-// ============================================================================
-
-// API base URL and endpoints
-export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api';
-
-// Available backend endpoints
 export const ENDPOINTS = {
-  HEALTH: '/health',
-  UNIFIED_SEARCH: '/search',
-  SEARCH: '/search',
-  CONTENT: '/content',
+  HEALTH: '/api/health',
+  UNIFIED_SEARCH: '/api/search',
+  SEARCH: '/api/search',
+  CONTENT: '/api/content',
   COLD_STORAGE: {
-    BASE: '/cold-storage',
-    PAGES: '/cold-storage/pages',
-    VISITS: '/cold-storage/visits',
-    SESSIONS: '/cold-storage/sessions',
-    SEARCH_CLICKS: '/cold-storage/search-clicks'
+    BASE: '/api/cold-storage',
+    PAGES: '/api/cold-storage/pages',
+    VISITS: '/api/cold-storage/visits',
+    SESSIONS: '/api/cold-storage/sessions',
+    SEARCH_CLICKS: '/api/cold-storage/search-clicks'
+  },
+  AUTH: {
+    ME: '/api/auth/me',
+    TOKEN: '/api/auth/token',     // Exchange Google token for session
+    LOGOUT: '/api/auth/logout'    // Logout endpoint
   }
 } as const;
 
-// API request settings
-export const REQUEST_TIMEOUT = 60000; // 60 seconds
+export const REQUEST_TIMEOUT = 60000;
 export const RETRY_ATTEMPTS = 3;
-export const RETRY_DELAY = 5000; // 5 seconds between retries
-
-// Processing options
-export const USE_FIT_MARKDOWN = true; // Whether to use fitMarkdown (true) or regular markdown (false)
-
-// Event streaming config
-export const EVENT_BATCH_SIZE = 50; // Maximum number of events to send in a batch
-export const EVENT_FLUSH_INTERVAL = 30000; // Flush events every 30 seconds
-
-// ============================================================================
-// Queue Processing Configuration
-// ============================================================================
+export const RETRY_DELAY = 5000;
+export const USE_FIT_MARKDOWN = true;
+export const EVENT_BATCH_SIZE = 50;
+export const EVENT_FLUSH_INTERVAL = 30000;
 
 export const QUEUE_CONFIG = {
   // Maximum number of retries for processing a URL

@@ -15,8 +15,6 @@ import {
 
 import {
   sendContentEvent,
-  sendSessionEvent,
-  sendVisitEvent,
   trackSearchClick,
 } from '../services/eventService';
 
@@ -169,4 +167,4 @@ export async function semanticSearch(
 }
 
 // Re-export direct access to eventService functions if needed
-export { sendContentEvent, sendSessionEvent, sendVisitEvent, trackSearchClick };
+export { sendContentEvent, trackSearchClick };

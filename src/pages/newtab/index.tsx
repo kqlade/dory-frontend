@@ -8,23 +8,15 @@ import NewTab from './NewTab';
 import './newtab.css';
 
 // Dexie imports
-import { initializeDexieDB, setCurrentUser } from '../../db/dexieDB';
-import { getCurrentUser } from '../../services/authService';
-
+import { initializeDexieDB } from '../../db/dexieDB';
 /**
- * Try to init Dexie in the new-tab context.
+ * Initialize Dexie in the new-tab context.
  */
 async function initDexieForNewTab() {
   try {
-    // Attempt a non-interactive getCurrentUser
-    const user = await getCurrentUser();
-    if (user && user.id) {
-      setCurrentUser(user.id);
-      await initializeDexieDB();
-      console.log('[NewTab] Dexie DB initialized for user =>', user.email);
-    } else {
-      console.warn('[NewTab] No user => local Dexie search might fail.');
-    }
+    // Initialize Dexie without authentication dependency
+    await initializeDexieDB();
+    console.log('[NewTab] Dexie DB initialized');
   } catch (err) {
     console.error('[NewTab] Error initializing Dexie =>', err);
   }

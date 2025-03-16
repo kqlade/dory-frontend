@@ -4,6 +4,7 @@
   "manifest_version": 3,
   "description": "Contextual browser history search engine",
   "action": {
+    "default_popup": "src/pages/popup/popup.html",
     "default_icon": {
       "16": "icons/dory_logo_16x16.png",
       "48": "icons/dory_logo_48x48.png",
@@ -53,7 +54,7 @@
     ]
   },
   "host_permissions": [
-    "http://localhost:8000/*"
+    "http://localhost:3000/*"
   ],
   "web_accessible_resources": [
     {

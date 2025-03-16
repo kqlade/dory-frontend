@@ -6,7 +6,6 @@
  */
 
 import { getDB } from '../db/dexieDB';
-import { getCurrentUser } from '../services/authService';
 import { API_BASE_URL, ENDPOINTS } from '../config';
 import { EventType } from '../api/types';
 
@@ -15,6 +14,19 @@ const SYNC_INTERVAL_MINUTES = 24 * 60; // 24 hours
 const LAST_SYNC_KEY = 'lastColdStorageSync';
 const BATCH_SIZE = 500; // Number of records per batch
 const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+/**
+ * Service worker safe method to get user ID from storage directly
+ */
+async function getUserIdFromStorage(): Promise<string | undefined> {
+  try {
+    const data = await chrome.storage.local.get(['user']);
+    return data.user?.id || undefined;
+  } catch (error) {
+    console.error('[ColdStorageSync] Error getting user ID from storage:', error);
+    return undefined;
+  }
+}
 
 /**
  * A class that orchestrates cold-storage syncing in a background context.
@@ -128,16 +140,14 @@ export class ColdStorageSync {
   }
 
   /**
-   * Get current user ID or 'anonymous' if not available.
+   * Get the current user ID, throws error if not authenticated
    */
   private async getCurrentUserId(): Promise<string> {
-    try {
-      const userInfo = await getCurrentUser();
-      return userInfo?.id || 'anonymous';
-    } catch (error) {
-      console.error('[ColdStorageSync] Error getting user ID:', error);
-      return 'anonymous';
+    const userId = await getUserIdFromStorage();
+    if (!userId) {
+      throw new Error('User not authenticated');
     }
+    return userId;
   }
 
   /**

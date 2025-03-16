@@ -2,28 +2,22 @@
  * @file dexieInit.ts
  * 
  * Dexie Database Initialization
- * Ensures a user is authenticated before fully initializing the Dexie system.
+ * Ensures database is properly initialized.
  */
 
 import { initializeDexieDB } from '../db/dexieDB';
-import { getCurrentUser } from '../services/authService';
 
 /**
- * Initialize Dexie if user is authenticated.
- * @returns Promise<boolean> => true if successful and user is authenticated, else false.
+ * Initialize Dexie database system.
+ * @returns Promise<boolean> => true if successful, else false.
  */
 export async function initDexieSystem(): Promise<boolean> {
   try {
-    console.log('[DexieInit] Checking user auth before Dexie init...');
-    const userInfo = await getCurrentUser();
-
-    if (!userInfo?.id) {
-      console.log('[DexieInit] No user or missing user ID => Dexie init aborted.');
-      return false;
-    }
-
+    console.log('[DexieInit] Initializing Dexie database...');
+    
+    // Initialize database without authentication dependency
     await initializeDexieDB();
-    console.log('[DexieInit] Dexie DB initialized for user:', userInfo.email);
+    console.log('[DexieInit] Dexie DB initialized successfully');
     return true;
   } catch (err) {
     console.error('[DexieInit] Dexie initialization error:', err);

@@ -6,19 +6,31 @@
  */
 
 import * as dexieDb from '../db/dexieDB';
-import { DoryEvent as ApiDoryEvent } from '../api/types';
-import { getCurrentUser } from '../services/authService';
+import { DoryEvent } from '../api/types';
 
 // Extend the API event type with database-specific fields
-interface DexieDoryEvent extends ApiDoryEvent {
+interface DexieDoryEvent extends DoryEvent {
   eventId?: number;
   loggedAt: number;
 }
 
 /**
- * Log an event to the Dexie database (will be synced later).
+ * Service worker safe method to get user ID from storage directly
  */
-export async function logEvent(event: ApiDoryEvent): Promise<void> {
+async function getUserIdFromStorage(): Promise<string | undefined> {
+  try {
+    const data = await chrome.storage.local.get(['user']);
+    return data.user?.id || undefined;
+  } catch (error) {
+    console.error('[EventLogger] Error getting user ID from storage:', error);
+    return undefined;
+  }
+}
+
+/**
+ * Log a dory event to Dexie storage. Events are synced later to the backend.
+ */
+export async function logEvent(event: DoryEvent): Promise<void> {
   try {
     if (!event.sessionId) {
       console.warn('[DexieLogger] Missing sessionId, skipping log:', event);
@@ -40,20 +52,8 @@ export async function logEvent(event: ApiDoryEvent): Promise<void> {
       event.timestamp = Date.now();
     }
 
-    // If userId is missing, try to get it
-    if (!event.userId) {
-      try {
-        const userInfo = await getCurrentUser();
-        if (userInfo?.id) {
-          event.userId = userInfo.id;
-          event.userEmail = userInfo.email;
-        } else {
-          console.warn('[DexieLogger] No userId found, event may lack user info.');
-        }
-      } catch (err) {
-        console.error('[DexieLogger] getUserInfo error:', err);
-      }
-    }
+    // If userId is missing, get from storage
+    event.userId = await getUserIdFromStorage();
 
     const dexieEvent: DexieDoryEvent = {
       ...event,

@@ -56,18 +56,23 @@ export function useLocalSearch(query: string) {
  * Semantic search hook using the REST API endpoint.
  */
 export function useSemanticSearch(query: string, isEnabled: boolean) {
+  const DEFAULT_USER_ID = 'app_user'; // Default user ID instead of real authentication
+
   return useQuery({
     queryKey: ['semantic-search', query],
     queryFn: async () => {
       if (!query || query.length < 2) return [];
 
       try {
-        const data = await semanticSearch(query, 'current-user-id', {
+        const response = await semanticSearch(query, DEFAULT_USER_ID, {
           limit: 20,
           useHybridSearch: true,
           useLLMExpansion: true,
           useReranking: true,
         });
+
+        // Type assertion to handle the unknown type
+        const data = response as { results: ApiSearchResult[] };
 
         return data.results.map((result: ApiSearchResult) => ({
           id: result.docId,

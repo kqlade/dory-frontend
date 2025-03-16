@@ -1,149 +1,196 @@
 /**
- * Authentication Service for Dory Extension
- * 
- * Provides a centralized service for handling authentication with the backend.
- * Uses cookie-based authentication for simplicity and security.
+ * authService.ts
+ *
+ * Streamlined authentication service for the Dory extension.
+ * Handles Google OAuth token exchange and session management.
  */
 
-const API_URL = 'http://localhost:8000/api';
-
-export type User = {
+import { API_BASE_URL, ENDPOINTS } from '../config';
+/**
+ * User information interface returned by the backend
+ */
+export interface UserInfo {
   id: string;
   email: string;
   name?: string;
-  is_active: boolean;
-  is_verified: boolean;
-};
-
-/**
- * Get a Google OAuth token using Chrome's identity API
- */
-function getGoogleToken(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    chrome.identity.getAuthToken({ interactive: true }, (token) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      
-      if (!token) {
-        reject(new Error('Failed to get Google OAuth token'));
-        return;
-      }
-      
-      resolve(token);
-    });
-  });
+  picture?: string;
 }
 
 /**
- * Login with Google OAuth
- * 
- * 1. Gets a Google OAuth token using Chrome's identity API
- * 2. Exchanges the token with our backend for an authenticated session
- * 3. The backend sets authentication cookies automatically
- * 
- * @returns A boolean indicating if login was successful and user data if available
+ * Check if user is currently authenticated by calling /api/auth/me
+ * Returns true if authenticated, false otherwise
  */
-export async function loginWithGoogle(): Promise<{ success: boolean; user?: User }> {
+export async function checkAuth(): Promise<boolean> {
   try {
-    // Step 1: Get Google OAuth token
-    const token = await getGoogleToken();
+    // Try to get saved token
+    const storage = await chrome.storage.local.get(['auth_token']);
+    const authToken = storage.auth_token;
     
-    // Step 2: Exchange token with backend
-    const response = await fetch(`${API_URL}/auth/extension/verify-google-token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ token }),
-      credentials: 'include', // Important for cookies
-    });
-    
-    if (!response.ok) {
-      console.error('Token exchange failed:', await response.text());
-      return { success: false };
+    // Prepare headers (conditionally add Authorization if we have a token)
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
     }
     
-    const data = await response.json();
-    return { 
-      success: true, 
-      user: data.user 
-    };
-  } catch (error) {
-    console.error('Login failed:', error);
-    return { success: false };
+    const resp = await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.ME}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include', // Keep cookies for backward compatibility
+    });
+
+    if (!resp.ok) return false;
+
+    const data = await resp.json();
+    if (!data?.id) return false;
+
+    // Store user in local storage for UI access
+    await chrome.storage.local.set({ user: data });
+    return true;
+  } catch (err) {
+    console.error('[Auth] Check failed:', err);
+    return false;
   }
 }
 
 /**
- * Check if the user is authenticated
- * 
- * Makes a request to the /whoami endpoint, which will
- * return user data if authenticated or 401 if not
- * 
- * @returns A boolean indicating if the user is authenticated and user data if available
+ * Get the current user from storage
+ * Returns null if no user is stored or if there's an error
  */
-export async function isAuthenticated(): Promise<{ authenticated: boolean; user?: User }> {
+export async function getCurrentUser(): Promise<UserInfo | null> {
   try {
-    const response = await fetch(`${API_URL}/auth/extension/whoami`, {
-      credentials: 'include', // Important for cookies
-    });
-    
-    if (!response.ok) {
-      return { authenticated: false };
-    }
-    
-    const user = await response.json();
-    return { 
-      authenticated: true, 
-      user 
-    };
-  } catch (error) {
-    console.error('Authentication check failed:', error);
-    return { authenticated: false };
+    const data = await chrome.storage.local.get(['user']);
+    return data.user || null;
+  } catch (err) {
+    console.error('[Auth] Get user failed:', err);
+    return null;
   }
 }
 
 /**
- * Logout the user
- * 
- * This simply tells the backend to clear the authentication cookies
+ * Get the current user ID from storage
+ * Throws an error if no user is authenticated or if there's an error
+ */
+export async function getCurrentUserId(): Promise<string> {
+  const user = await getCurrentUser();
+  if (!user || !user.id) {
+    throw new Error('User authentication required');
+  }
+  return user.id;
+}
+
+/**
+ * Trigger the OAuth flow by sending a message to the background script
+ */
+export function login(): void {
+  chrome.runtime.sendMessage({ action: 'start_oauth' });
+}
+
+/**
+ * Log out the user by clearing the session cookie and local storage
  */
 export async function logout(): Promise<void> {
   try {
-    await fetch(`${API_URL}/auth/logout`, {
-      method: 'POST',
-      credentials: 'include', // Important for cookies
-    });
+    // Try to get saved token
+    const storage = await chrome.storage.local.get(['auth_token']);
+    const authToken = storage.auth_token;
     
-    // Also clear any local Google OAuth token
-    if (chrome.identity && chrome.identity.removeCachedAuthToken) {
-      await new Promise<void>((resolve) => {
-        chrome.identity.getAuthToken({ interactive: false }, (token) => {
-          if (token) {
-            chrome.identity.removeCachedAuthToken({ token }, () => {
-              resolve();
-            });
-          } else {
-            resolve();
-          }
-        });
-      });
+    // Prepare headers if we have a token
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
     }
-  } catch (error) {
-    console.error('Logout failed:', error);
+    
+    await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.LOGOUT}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+    });
+  } catch (err) {
+    console.error('[Auth] Logout request failed:', err);
   }
+
+  // Always clear local storage, even if the server request fails
+  await chrome.storage.local.remove(['user', 'auth_token']);
+  
+  // Notify background script
+  chrome.runtime.sendMessage({ action: 'auth_completed' });
 }
 
 /**
- * Get the current authenticated user
- * 
- * Shorthand for checking authentication and returning the user
- * 
- * @returns The user object if authenticated, undefined otherwise
+ * Exchange Google ID token for a session with our backend
+ * Returns true if authentication was successful
  */
-export async function getCurrentUser(): Promise<User | undefined> {
-  const { authenticated, user } = await isAuthenticated();
-  return authenticated ? user : undefined;
-} 
+export async function authenticateWithGoogleIdToken(idToken: string): Promise<boolean> {
+  try {
+    console.log('[Auth] Starting token exchange with backend...', {
+      tokenLength: idToken.length,
+      endpoint: `${API_BASE_URL}${ENDPOINTS.AUTH.TOKEN}`,
+      tokenPrefix: idToken.substring(0, 10) + '...'
+    });
+
+    const resp = await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.TOKEN}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+
+    console.log('[Auth] Backend response:', {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: Object.fromEntries(resp.headers.entries())
+    });
+
+    if (!resp.ok) {
+      const errorText = await resp.text();
+      console.error('[Auth] Token exchange failed:', {
+        status: resp.status,
+        error: errorText,
+        requestedWith: idToken.substring(0, 10) + '...'
+      });
+      return false;
+    }
+
+    const data = await resp.json();
+    console.log('[Auth] Token exchange response data:', {
+      hasUser: !!data.user,
+      hasToken: !!(data.access_token || data.token),
+      userData: data.user ? {
+        id: data.user.id,
+        email: data.user.email
+      } : null
+    });
+
+    if (data.user) {
+      // Save both user data and access token (if present)
+      const storageData: any = { user: data.user };
+      
+      // Check if the backend is returning a token and save it
+      if (data.access_token || data.token) {
+        storageData.auth_token = data.access_token || data.token;
+      }
+      
+      await chrome.storage.local.set(storageData);
+      return true;
+    }
+    
+    return false;
+  } catch (err: unknown) {
+    const error = err as Error;
+    console.error('[Auth] Token authentication failed:', {
+      error: error.message,
+      message: error.message,
+      stack: error.stack
+    });
+    return false;
+  }
+}
+
+export default {
+  checkAuth,
+  getCurrentUser,
+  getCurrentUserId,
+  login,
+  logout,
+  authenticateWithGoogleIdToken,
+};

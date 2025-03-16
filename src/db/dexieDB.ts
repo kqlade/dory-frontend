@@ -7,7 +7,7 @@
  */
 
 import Dexie from 'dexie';
-import { getCurrentUser } from '../services/authService';
+// AUTH CODE REMOVED: import { getCurrentUser } from '../services/authService';
 
 /** PageRecord: same as before */
 export interface PageRecord {
@@ -200,8 +200,9 @@ export class DoryDatabase extends Dexie {
 /** Active instances keyed by userId */
 const dbInstances: Record<string, DoryDatabase> = {};
 
-/** Track current user ID in memory */
-let currentUserId: string | null = null;
+// Constants
+const DEFAULT_DB_IDENTIFIER = 'app'; // Used instead of user ID
+let currentUserId = DEFAULT_DB_IDENTIFIER;
 
 /**
  * If no DB instance for the user, create it.
@@ -217,33 +218,40 @@ export function getUserDB(userId: string): DoryDatabase {
 }
 
 /**
- * Get DB for the currently authenticated user
+ * Get DB for the application
  */
 export function getDB(): DoryDatabase {
-  if (!currentUserId) {
-    throw new Error('No authenticated user. Call initializeDexieDB first.');
-  }
+  // AUTH CODE REMOVED: Authentication check
+  // if (!currentUserId) {
+  //   throw new Error('No authenticated user. Call initializeDexieDB first.');
+  // }
   return getUserDB(currentUserId);
 }
 
 /**
- * Initialize Dexie DB system based on whichever user is authenticated.
+ * Initialize Dexie DB system
  */
 export async function initializeDexieDB(): Promise<void> {
   try {
-    const userInfo = await getCurrentUser();
-    if (userInfo?.id) {
-      currentUserId = userInfo.id;
-      console.log(`[DexieDB] Initialized for user: ${userInfo.id}`);
-      getDB(); // ensures creation
-    } else {
-      console.log('[DexieDB] No authenticated user => using "anonymous" DB');
-      currentUserId = 'anonymous';
-      getDB();
-    }
+    // AUTH CODE REMOVED: Authentication-dependent initialization
+    // const userInfo = await getCurrentUser();
+    // if (userInfo?.id) {
+    //   currentUserId = userInfo.id;
+    //   console.log(`[DexieDB] Initialized for user: ${userInfo.id}`);
+    //   getDB(); // ensures creation
+    // } else {
+    //   console.log('[DexieDB] No authenticated user => using "anonymous" DB');
+    //   currentUserId = 'anonymous';
+    //   getDB();
+    // }
+    
+    // Using constant identifier instead of user ID
+    currentUserId = DEFAULT_DB_IDENTIFIER;
+    console.log(`[DexieDB] Initialized with identifier: ${currentUserId}`);
+    getDB(); // ensures creation
   } catch (error) {
     console.error('[DexieDB] Error initializing database:', error);
-    currentUserId = 'anonymous';
+    currentUserId = DEFAULT_DB_IDENTIFIER;
     getDB();
   }
 }
@@ -263,7 +271,7 @@ export function handleUserLogout(): void {
     dbInstances[currentUserId].close();
     delete dbInstances[currentUserId];
   }
-  currentUserId = null;
+  currentUserId = DEFAULT_DB_IDENTIFIER;
 }
 
 /**

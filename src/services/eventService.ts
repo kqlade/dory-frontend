@@ -1,6 +1,5 @@
 // src/services/eventService.ts
 import { API_BASE_URL, ENDPOINTS } from '../config';
-import { getCurrentUser, User } from '../services/authService';
 
 // Types
 export interface ContentEvent {
@@ -13,51 +12,47 @@ export interface ContentEvent {
   sessionId?: string | null;
 }
 
-export interface SessionEvent {
-  sessionId: string;
-  startTime?: number;
-  endTime?: number;
-  operation: 'SESSION_STARTED' | 'SESSION_ENDED';
-  data?: any;
+// Simple user type without auth dependency
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  picture?: string;
 }
-
-export interface VisitEvent {
-  pageId: string;
-  visitId: string;
-  sessionId: string;
-  url: string;
-  startTime?: number;
-  endTime?: number;
-  operation: 'PAGE_VISIT_STARTED' | 'PAGE_VISIT_ENDED' | 'ACTIVE_TIME_UPDATED';
-  data?: any;
-}
-
-// Local caching
-let currentUser: User | null = null;
 
 /**
- * Initialize the event service; typically called once after user logs in.
+ * Initialize the event service
  */
 export async function initEventService(): Promise<void> {
   try {
-    const user = await getCurrentUser();
-    currentUser = user || null;  // Convert undefined to null
-    console.log('[EventService] init => user:', currentUser?.email);
+    console.log('[EventService] Event service initialized');
   } catch (err) {
-    console.error('[EventService] Could not get user info:', err);
+    console.error('[EventService] Initialization error:', err);
   }
 }
 
-async function getUser(): Promise<User | null> {
-  if (!currentUser) {
-    try {
-      const user = await getCurrentUser();
-      currentUser = user || null;  // Convert undefined to null
-    } catch (err) {
-      console.error('[EventService] getCurrentUser error:', err);
+/**
+ * Get the authenticated user
+ */
+async function getUser(): Promise<User> {
+  try {
+    // Direct storage access, no imports that might trigger DOM-dependent code
+    const data = await chrome.storage.local.get(['user']);
+    
+    if (!data.user || !data.user.id) {
+      throw new Error('User authentication required');
     }
+    
+    return {
+      id: data.user.id,
+      email: data.user.email || 'unknown@example.com',
+      name: data.user.name,
+      picture: data.user.picture
+    };
+  } catch (error) {
+    console.error('[EventService] Authentication error:', error);
+    throw new Error('User authentication required');
   }
-  return currentUser;
 }
 
 /**
@@ -66,9 +61,23 @@ async function getUser(): Promise<User | null> {
 async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Response> {
   const maxAttempts = 3;
   try {
+    // Get the auth token from storage
+    const storage = await chrome.storage.local.get(['auth_token']);
+    const authToken = storage.auth_token;
+    
+    // Prepare headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    
+    // Include auth token if available
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    
     const resp = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       credentials: 'include',
       body: JSON.stringify(body),
     });
@@ -127,53 +136,6 @@ export async function sendContentEvent(event: ContentEvent): Promise<void> {
     console.log('[EventService] Content event sent successfully');
   } catch (err) {
     console.error('[EventService] Failed to send content event:', err);
-  }
-}
-
-/**
- * For cold storage sync only — do not call during normal browsing
- */
-export async function sendSessionEvent(event: SessionEvent): Promise<void> {
-  const user = await getUser();
-  const payload = {
-    userId: user?.id,
-    sessionId: event.sessionId,
-    operation: event.operation,
-    timestamp: Date.now(),
-    startTime: event.startTime,
-    endTime: event.endTime,
-    data: event.data
-  };
-  try {
-    await sendToAPI(ENDPOINTS.COLD_STORAGE.SESSIONS, payload);
-    console.log('[EventService] Session event sent:', event.operation);
-  } catch (err) {
-    console.error('[EventService] sendSessionEvent error:', err);
-  }
-}
-
-/**
- * For cold storage sync only — do not call during normal browsing
- */
-export async function sendVisitEvent(event: VisitEvent): Promise<void> {
-  const user = await getUser();
-  const payload = {
-    userId: user?.id,
-    pageId: event.pageId,
-    visitId: event.visitId,
-    sessionId: event.sessionId,
-    url: event.url,
-    operation: event.operation,
-    timestamp: Date.now(),
-    startTime: event.startTime,
-    endTime: event.endTime,
-    data: event.data
-  };
-  try {
-    await sendToAPI(ENDPOINTS.COLD_STORAGE.VISITS, payload);
-    console.log('[EventService] Visit event sent:', event.operation);
-  } catch (err) {
-    console.error('[EventService] sendVisitEvent error:', err);
   }
 }
 
