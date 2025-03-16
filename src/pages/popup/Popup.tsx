@@ -82,7 +82,7 @@ export default function Popup() {
   if (!authState.isAuthenticated) {
     return (
       <div className="popup-container">
-        <h3>Welcome to Dory</h3>
+        <h3>Welcome to DORY</h3>
         <p>Please sign in to continue</p>
         <GoogleLoginButton
           onClick={handleLogin}
@@ -91,7 +91,8 @@ export default function Popup() {
             width: '100%',
             maxWidth: '220px',
             fontSize: '14px',
-            margin: '10px 0'
+            margin: '10px 0',
+            fontFamily: "'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
           }}
         />
       </div>
