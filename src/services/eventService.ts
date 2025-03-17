@@ -1,5 +1,8 @@
 // src/services/eventService.ts
 import { API_BASE_URL, ENDPOINTS } from '../config';
+import { EventType } from '../api/types';
+import { logEvent } from '../utils/dexieEventLogger';
+import { getCurrentSessionId } from '../utils/dexieSessionManager';
 
 // Types
 export interface ContentEvent {
@@ -104,7 +107,6 @@ export async function sendContentEvent(event: ContentEvent): Promise<void> {
     let sessionId = event.sessionId;
     if (!sessionId) {
       // Optionally load session ID from Dexie
-      const { getCurrentSessionId } = await import('../utils/dexieSessionManager');
       const numSessionId = await getCurrentSessionId();
       sessionId = numSessionId ? String(numSessionId) : null;
     }
@@ -150,10 +152,6 @@ export async function trackSearchClick(
   query: string
 ): Promise<void> {
   try {
-    const { logEvent } = await import('../utils/dexieEventLogger');
-    const { EventType } = await import('../api/types');
-    const { getCurrentSessionId } = await import('../utils/dexieSessionManager');
-
     const sessionId = await getCurrentSessionId();
     if (!sessionId) {
       console.error('[EventService] No active session for trackSearchClick');

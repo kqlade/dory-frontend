@@ -4,7 +4,6 @@
   "manifest_version": 3,
   "description": "Contextual browser history search engine",
   "action": {
-    "default_popup": "src/pages/popup/popup.html",
     "default_icon": {
       "16": "icons/dory_logo_16x16.png",
       "48": "icons/dory_logo_48x48.png",
@@ -20,12 +19,17 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/contentExtractor.ts"]
+      "js": ["src/content/contentExtractor.ts"],
+      "matches": ["<all_urls>"]
     },
     {
+      "js": ["src/content/activityTracker.ts"],
+      "matches": ["<all_urls>"]
+    },
+    {
+      "js": ["src/content/popup.tsx"],
       "matches": ["<all_urls>"],
-      "js": ["src/content/activityTracker.ts"]
+      "run_at": "document_idle"
     }
   ],
   "icons": {
@@ -44,7 +48,8 @@
     "webNavigation",
     "idle",
     "identity",
-    "cookies"
+    "cookies",
+    "notifications"
   ],
   "oauth2": {
     "client_id": "893405528801-789i9jpdlvpg86j8tkthdv47m3joro6b.apps.googleusercontent.com",
@@ -58,8 +63,9 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/*", "assets/*"],
-      "matches": ["<all_urls>"]
+      "matches": ["<all_urls>"],
+      "resources": ["src/*", "assets/*", "build/*"],
+      "use_dynamic_url": false
     }
   ]
 } 

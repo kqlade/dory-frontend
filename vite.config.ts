@@ -1,4 +1,3 @@
-// vite.config.ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { crx } from '@crxjs/vite-plugin';
@@ -8,6 +7,7 @@ import manifest from './public/manifest.json';
 export default defineConfig({
   plugins: [
     react(),
+    // The CRX plugin uses your manifest for background, icons, etc.
     crx({ manifest })
   ],
   resolve: {
@@ -22,12 +22,11 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       input: {
-        // Only specify your newtab HTML or page if you want to treat it
-        // as an HTML-based entry for Vite's build pipeline.
-        newtab: 'src/pages/newtab/newtab.html',
-        popup: 'src/pages/popup/popup.html'
+        // 1) The custom new tab page HTML
+        newtab: 'src/pages/newtab/newtab.html'
       },
       output: {
+        // Standard naming patterns
         entryFileNames: '[name].js',
         chunkFileNames: 'assets/[name].[hash].js',
         assetFileNames: 'assets/[name].[hash].[ext]'
