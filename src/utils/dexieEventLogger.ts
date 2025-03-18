@@ -7,6 +7,13 @@
 
 import * as dexieDb from '../db/dexieDB';
 import { DoryEvent } from '../api/types';
+import { EventType } from '../api/types';
+// Import the coldStorageSync singleton
+import { coldStorageSync } from '../services/coldStorageSync';
+
+// Minimum time between cold storage syncs (10 minutes)
+const MIN_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const LAST_SYNC_KEY = 'lastColdStorageSync';
 
 // Extend the API event type with database-specific fields
 interface DexieDoryEvent extends DoryEvent {
@@ -29,6 +36,7 @@ async function getUserIdFromStorage(): Promise<string | undefined> {
 
 /**
  * Log a dory event to Dexie storage. Events are synced later to the backend.
+ * For SESSION_ENDED events, also triggers a cold storage sync operation.
  */
 export async function logEvent(event: DoryEvent): Promise<void> {
   try {
@@ -72,6 +80,27 @@ export async function logEvent(event: DoryEvent): Promise<void> {
       sessionId: event.sessionId,
       timestamp: new Date(event.timestamp).toISOString(),
     });
+    
+    // If this is a session end event, check if we should trigger a cold storage sync
+    if (event.operation === EventType.SESSION_ENDED) {
+      try {
+        // Check when the last sync occurred to implement rate limiting
+        const store = await chrome.storage.local.get(LAST_SYNC_KEY);
+        const lastSyncTime: number = store[LAST_SYNC_KEY] ?? 0;
+        const now = Date.now();
+        
+        if (now - lastSyncTime > MIN_SYNC_INTERVAL_MS) {
+          console.log('[DexieLogger] Session ended, triggering cold storage sync');
+          coldStorageSync.performSync().catch(err => {
+            console.error('[DexieLogger] Sync after session end failed:', err);
+          });
+        } else {
+          console.log('[DexieLogger] Session ended, but sync recently ran. Skipping.');
+        }
+      } catch (syncError) {
+        console.error('[DexieLogger] Error checking sync status or triggering sync:', syncError);
+      }
+    }
   } catch (error) {
     console.error('[DexieLogger] Error logging event:', error, event);
   }
