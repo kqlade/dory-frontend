@@ -21,6 +21,7 @@ import {
   checkSessionIdle,
   updateSessionActivityTime
 } from '../utils/dexieSessionManager';
+
 import {
   createOrGetPage,
   endVisit,
@@ -36,24 +37,35 @@ import { logEvent } from '../utils/dexieEventLogger';
 import { EventType } from '../api/types';
 import { isWebPage } from '../utils/urlUtils';
 
-// Import the direct fetch versions for the background
 import {
   checkAuthDirect,
   authenticateWithGoogleIdTokenDirect
 } from '../services/authService';
 
-import { handleOnCommitted, handleOnCreatedNavigationTarget } from '../utils/navigationHandlers';
+import {
+  handleOnCommitted,
+  handleOnCreatedNavigationTarget
+} from '../utils/navigationHandlers';
 
 console.log('[DORY] Service Worker starting...');
 
 // -------------------- Constants & State --------------------
 const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 min
+
 let isSessionActive = false;
 let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
+let isStartingSession = false;
 
-const tabToCurrentUrl: Record<number, string> = {};
-const tabToPageId: Record<number, string> = {};
-const tabToVisitId: Record<number, string> = {};
+/**
+ * Track data about each open tab:
+ *   { [tabId]: { currentUrl, pageId, visitId } }
+ */
+interface TabTracking {
+  currentUrl?: string;
+  pageId?: string;
+  visitId?: string;
+}
+const tabs: Record<number, TabTracking> = {};
 
 // -------------------- Icon Helpers --------------------
 function updateIcon(isAuthenticated: boolean) {
@@ -74,22 +86,26 @@ function updateIcon(isAuthenticated: boolean) {
 // -------------------- Initialization --------------------
 initExtension();
 
-/** Initialize the extension on startup */
+/** Initialize the extension on startup (or service worker wake). */
 async function initExtension() {
   console.log('[DORY] Initializing extension...');
   try {
-    // 1) Always initialize the message router so we can receive content messages
+    // 1) Initialize message router
     messageRouter.initialize();
     registerMessageHandlers();
     console.log('[DORY] Message system initialized');
     
-    // 2) Check auth with direct fetch
+    // 2) Check user auth
     const isAuthenticated = await checkAuthDirect();
     updateIcon(isAuthenticated);
 
     // 3) Listen for extension icon clicks
     chrome.action.onClicked.addListener(handleExtIconClick);
+    
+    // 4) Listen for keyboard shortcut commands
+    chrome.commands.onCommand.addListener(handleCommand);
 
+    // If user is authenticated, proceed with full functionality
     if (isAuthenticated) {
       await initializeServices();
     } else {
@@ -101,68 +117,146 @@ async function initExtension() {
   }
 }
 
-/** Set up database, event services, session watchers, etc. */
+/** Set up database, event streaming, session watchers, etc. */
 async function initializeServices() {
   try {
     await initDexieSystem();
 
+    // Start a new session
     const sid = await startNewSession();
     isSessionActive = true;
     console.log('[DORY] Started session =>', sid);
 
+    // Initialize event streaming
     await initEventService();
     console.log('[DORY] Event streaming init done');
 
+    // Start idle check
     idleCheckInterval = setInterval(checkSessionInactivity, 60_000);
   } catch (error) {
     console.error('[DORY] Services initialization error:', error);
   }
 }
 
+/**
+ * Handler for extension icon clicks: opens the side panel.
+ */
 async function handleExtIconClick(tab: chrome.tabs.Tab): Promise<void> {
   if (!tab.id) {
-    console.error('[DORY] No tab ID => cannot open popup');
+    console.error('[DORY] No tab ID => cannot interact with tab');
     return;
   }
-  const tabId = tab.id;
 
+  // Open the side panel
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'PING' });
-    console.log('[DORY] Content script responded, showing popup');
-    await chrome.tabs.sendMessage(tabId, { type: 'SHOW_POPUP' });
-  } catch (error) {
-    console.error('[DORY] No content script in tab:', tabId, error);
-    chrome.notifications?.create({
-      type: 'basic',
-      iconUrl: '/icons/dory_logo_128x128.png',
-      title: 'DORY Extension',
-      message: 'Cannot open popup on this page. Try refreshing the page first.',
-      priority: 2
-    });
+    console.log('[DORY] Opening side panel for authentication');
+    await chrome.sidePanel.open({ tabId: tab.id });
+  } catch (err) {
+    console.error('[DORY] Error opening side panel:', err);
+  }
+}
+
+/**
+ * Handle keyboard shortcut commands
+ */
+async function handleCommand(command: string): Promise<void> {
+  console.log(`[DORY] Command received: ${command}`);
+  
+  if (command === 'activate-global-search') {
+    // Get the active tab
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || !tabs[0] || !tabs[0].id) {
+      console.error('[DORY] No active tab found');
+      return;
+    }
+    
+    const tabId = tabs[0].id;
+    
+    try {
+      // Check if the content script is present
+      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+      console.log('[DORY] Content script responded, showing search overlay');
+      // Show the search overlay
+      await chrome.tabs.sendMessage(tabId, { type: 'SHOW_SEARCH_OVERLAY' });
+    } catch (error) {
+      console.error('[DORY] No content script in tab:', tabId, error);
+      // Inject the content script and then show the overlay
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ['src/content/globalSearch.tsx']
+        });
+        
+        // Small delay to ensure script is loaded
+        setTimeout(async () => {
+          try {
+            await chrome.tabs.sendMessage(tabId, { type: 'SHOW_SEARCH_OVERLAY' });
+          } catch (err) {
+            console.error('[DORY] Failed to show search overlay after injection:', err);
+          }
+        }, 300);
+      } catch (injectionError) {
+        console.error('[DORY] Failed to inject content script:', injectionError);
+      }
+    }
+  } else if (command === 'toggle-side-panel') {
+    // Get the active tab
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || !tabs[0] || !tabs[0].id) {
+      console.error('[DORY] No active tab found for side panel');
+      return;
+    }
+    
+    // Open the side panel for the active tab
+    try {
+      await chrome.sidePanel.open({ tabId: tabs[0].id });
+      console.log('[DORY] Side panel opened via keyboard shortcut');
+    } catch (err) {
+      console.error('[DORY] Error opening side panel:', err);
+    }
   }
 }
 
 // -------------------- Session Idle Check --------------------
 async function checkSessionInactivity() {
-  const ended = await checkSessionIdle(SESSION_IDLE_THRESHOLD);
-  if (ended) {
-    isSessionActive = false;
-    console.log('[DORY] Session ended due to inactivity');
+  try {
+    const ended = await checkSessionIdle(SESSION_IDLE_THRESHOLD);
+    if (ended) {
+      isSessionActive = false;
+      console.log('[DORY] Session ended due to inactivity');
+    }
+  } catch (err) {
+    console.error('[DORY] Error checking session inactivity:', err);
   }
 }
 
-async function ensureActiveSession() {
-  const isAuthenticated = await checkAuthDirect(); // direct fetch
-  if (!isAuthenticated) {
-    console.log('[DORY] Cannot start session: user not authenticated');
+/**
+ * Ensures we have an active session. If not, tries to start one.
+ * Uses a guard (isStartingSession) to avoid double-starting sessions concurrently.
+ */
+async function ensureActiveSession(): Promise<boolean> {
+  if (isSessionActive) return true;
+  if (isStartingSession) return isSessionActive;
+
+  isStartingSession = true;
+  try {
+    const isAuthenticated = await checkAuthDirect();
+    if (!isAuthenticated) {
+      console.log('[DORY] Cannot start session: user not authenticated');
+      return false;
+    }
+    if (!isSessionActive) {
+      const newId = await startNewSession();
+      isSessionActive = true;
+      console.log('[DORY] New session =>', newId);
+    }
+  } catch (err) {
+    console.error('[DORY] Error ensuring active session:', err);
     return false;
+  } finally {
+    isStartingSession = false;
   }
-  if (!isSessionActive) {
-    const newId = await startNewSession();
-    isSessionActive = true;
-    console.log('[DORY] New session =>', newId);
-  }
-  return true;
+  return isSessionActive;
 }
 
 // -------------------- Register Handlers --------------------
@@ -177,24 +271,28 @@ function registerMessageHandlers() {
       if (!sessionActive) return false;
     }
     if (pageUrl && duration > 0) {
-      await updateActiveTimeForPage(pageUrl, duration);
-      await updateSessionActivityTime();
+      try {
+        await updateActiveTimeForPage(pageUrl, duration);
+        await updateSessionActivityTime();
 
-      const tabId = sender.tab?.id;
-      if (tabId !== undefined && tabToVisitId[tabId]) {
-        const vid = tabToVisitId[tabId];
-        await updateVisitActiveTime(vid, duration);
+        const tabId = sender.tab?.id;
+        if (tabId !== undefined && tabs[tabId]?.visitId) {
+          const visitId = tabs[tabId].visitId!;
+          await updateVisitActiveTime(visitId, duration);
 
-        const sessId = await getCurrentSessionId();
-        const pid = tabToPageId[tabId];
-        if (sessId) {
-          await logEvent({
-            operation: EventType.ACTIVE_TIME_UPDATED,
-            sessionId: String(sessId),
-            timestamp: Date.now(),
-            data: { pageId: pid, visitId: vid, duration, isActive }
-          });
+          const sessId = await getCurrentSessionId();
+          const pageId = tabs[tabId].pageId;
+          if (sessId && pageId) {
+            await logEvent({
+              operation: EventType.ACTIVE_TIME_UPDATED,
+              sessionId: String(sessId),
+              timestamp: Date.now(),
+              data: { pageId, visitId, duration, isActive }
+            });
+          }
         }
+      } catch (error) {
+        console.error('[DORY] Error updating activity info:', error);
       }
     }
     return true;
@@ -207,9 +305,21 @@ function registerMessageHandlers() {
     const sessionActive = await ensureActiveSession();
     if (!sessionActive) return false;
 
-    const pageId = await createOrGetPage(url, title, timestamp);
-    const sessId = await getCurrentSessionId();
-    console.log('[DORY] ✅ Extraction =>', title, url, ' => pageId=', pageId, 'session=', sessId);
+    try {
+      const pageId = await createOrGetPage(url, title, timestamp);
+      const sessId = await getCurrentSessionId();
+      console.log(
+        '[DORY] ✅ Extraction =>',
+        title,
+        url,
+        ' => pageId=',
+        pageId,
+        'session=',
+        sessId
+      );
+    } catch (err) {
+      console.error('[DORY] Error during extraction complete handler:', err);
+    }
     return true;
   });
 
@@ -240,19 +350,7 @@ function registerMessageHandlers() {
     return true;
   });
 
-  // POPUP_READY => respond with current auth state
-  messageRouter.registerHandler(MessageType.POPUP_READY, async (msg, sender) => {
-    if (sender.tab?.id) {
-      const isAuthenticated = await checkAuthDirect(); // direct fetch
-      chrome.tabs.sendMessage(
-        sender.tab.id,
-        createMessage(MessageType.AUTH_RESULT, { isAuthenticated }, 'background')
-      );
-    }
-    return true;
-  });
-
-  // AUTH_REQUEST => user clicked "Sign in" in the popup => do OAuth
+  // AUTH_REQUEST => user clicked "Sign in" in the side panel => do OAuth
   messageRouter.registerHandler(MessageType.AUTH_REQUEST, async () => {
     console.log('[DORY] AUTH_REQUEST => starting OAuth flow');
     openOAuthPopup();
@@ -266,63 +364,86 @@ function registerMessageHandlers() {
     return true;
   });
 
-  // API_PROXY_REQUEST => content script calls backend with special headers
-  messageRouter.registerHandler(MessageType.API_PROXY_REQUEST, async (msg, _sender, sendResponse) => {
-    console.log('[DORY] API_PROXY_REQUEST received');
+  // Handle side panel ready message
+  messageRouter.registerHandler(MessageType.SIDEPANEL_READY, async (msg, sender) => {
+    console.log('[DORY] SIDEPANEL_READY => side panel initialized');
     try {
-      const requestData = msg.data as ApiProxyRequestData;
-      // retrieve token from storage
-      const storage = await chrome.storage.local.get(['auth_token']);
-      const authToken = storage.auth_token;
-
-      // build headers
-      const headers: Record<string, string> = {
-        ...(requestData.headers || {}),
-        'Content-Type': 'application/json'
-      };
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
+      // If from a tab, respond with current auth state
+      if (sender.tab?.id) {
+        const isAuthenticated = await checkAuthDirect();
+        chrome.tabs.sendMessage(
+          sender.tab.id,
+          createMessage(MessageType.AUTH_RESULT, { isAuthenticated }, 'background')
+        );
       }
-
-      console.log(`[DORY] Proxy fetch => ${requestData.method || 'GET'}: ${requestData.url}`);
-      const response = await fetch(requestData.url, {
-        method: requestData.method || 'GET',
-        headers,
-        body: requestData.body ? JSON.stringify(requestData.body) : undefined,
-        credentials: 'include'
-      });
-
-      let responseData;
-      try {
-        responseData = await response.json();
-      } catch (e) {
-        responseData = await response.text();
-      }
-
-      sendResponse(
-        createMessage(
-          MessageType.API_PROXY_RESPONSE,
-          {
-            status: response.status,
-            ok: response.ok,
-            data: responseData
-          } as ApiProxyResponseData,
-          'background'
-        )
-      );
-      return true;
-    } catch (error: any) {
-      console.error('[DORY] API Proxy error:', error);
-      sendResponse(
-        createMessage(
-          MessageType.API_PROXY_RESPONSE,
-          { status: 0, ok: false, error: error.message },
-          'background'
-        )
-      );
-      return true;
+    } catch (err) {
+      console.error('[DORY] Error handling SIDEPANEL_READY:', err);
     }
+    return true;
   });
+
+  // API_PROXY_REQUEST => content script calls backend with special headers
+  messageRouter.registerHandler(
+    MessageType.API_PROXY_REQUEST,
+    async (msg, _sender, sendResponse) => {
+      console.log('[DORY] API_PROXY_REQUEST received');
+      try {
+        const requestData = msg.data as ApiProxyRequestData;
+        // retrieve token from storage
+        const storage = await chrome.storage.local.get(['auth_token']);
+        const authToken = storage.auth_token;
+
+        // build headers
+        const headers: Record<string, string> = {
+          ...(requestData.headers || {}),
+          'Content-Type': 'application/json'
+        };
+        if (authToken) {
+          headers['Authorization'] = `Bearer ${authToken}`;
+        }
+
+        console.log(
+          `[DORY] Proxy fetch => ${requestData.method || 'GET'}: ${requestData.url}`
+        );
+        const response = await fetch(requestData.url, {
+          method: requestData.method || 'GET',
+          headers,
+          body: requestData.body ? JSON.stringify(requestData.body) : undefined,
+          credentials: 'include'
+        });
+
+        let responseData;
+        try {
+          responseData = await response.json();
+        } catch (e) {
+          responseData = await response.text();
+        }
+
+        sendResponse(
+          createMessage(
+            MessageType.API_PROXY_RESPONSE,
+            {
+              status: response.status,
+              ok: response.ok,
+              data: responseData
+            } as ApiProxyResponseData,
+            'background'
+          )
+        );
+        return true;
+      } catch (error: any) {
+        console.error('[DORY] API Proxy error:', error);
+        sendResponse(
+          createMessage(
+            MessageType.API_PROXY_RESPONSE,
+            { status: 0, ok: false, error: error.message },
+            'background'
+          )
+        );
+        return true;
+      }
+    }
+  );
 
   // Default
   messageRouter.setDefaultHandler((msg, _sender, resp) => {
@@ -334,19 +455,21 @@ function registerMessageHandlers() {
 // -------------------- Session & Cleanup --------------------
 function cleanupServices(): void {
   console.log('[DORY] Cleaning up services...');
+  // End the current session if one is active
   if (isSessionActive) {
     endCurrentSession().catch(err => {
       console.error('[DORY] Error ending session:', err);
     });
   }
+  // Clear the idle interval
   if (idleCheckInterval) {
     clearInterval(idleCheckInterval);
     idleCheckInterval = null;
   }
   isSessionActive = false;
 
-  // End any tracked visits
-  Object.keys(tabToVisitId).forEach(async (tabIdStr) => {
+  // End any visits for open tabs
+  Object.keys(tabs).forEach(async (tabIdStr) => {
     const tabId = parseInt(tabIdStr, 10);
     await endCurrentVisit(tabId);
   });
@@ -365,12 +488,18 @@ async function handleAuthStateChange(isAuthenticated: boolean) {
     console.log('[DORY] Auth false => cleaning up services');
     cleanupServices();
   }
+  
+  // Broadcast AUTH_RESULT message to all clients (including side panel)
+  chrome.runtime.sendMessage(
+    createMessage(MessageType.AUTH_RESULT, { isAuthenticated }, 'background')
+  );
+  console.log(`[DORY] Broadcasting AUTH_RESULT: isAuthenticated=${isAuthenticated}`);
 }
 
 async function endCurrentVisit(tabId: number) {
   console.log('[DORY] Ending visit => tab:', tabId);
   try {
-    const visitId = tabToVisitId[tabId];
+    const visitId = tabs[tabId]?.visitId;
     if (!visitId) {
       console.log('[DORY] No visit found for tab =>', tabId);
       return;
@@ -378,6 +507,7 @@ async function endCurrentVisit(tabId: number) {
     const now = Date.now();
     await endVisit(visitId, now);
 
+    // Optionally log an event
     const db = await getDB();
     const visit = await db.visits.get(visitId);
     const sessId = await getCurrentSessionId();
@@ -392,7 +522,7 @@ async function endCurrentVisit(tabId: number) {
         data: {
           pageId: String(visit.pageId),
           visitId,
-          url: tabToCurrentUrl[tabId] || '',
+          url: tabs[tabId].currentUrl || '',
           timeSpent
         }
       });
@@ -400,7 +530,7 @@ async function endCurrentVisit(tabId: number) {
   } catch (e) {
     console.error('[DORY] endVisit error =>', e);
   } finally {
-    delete tabToVisitId[tabId];
+    delete tabs[tabId]?.visitId;
   }
 }
 
@@ -481,12 +611,12 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     console.log('[DORY] Not a web page => skipping =>', details.url);
     return;
   }
-  const visitId = tabToVisitId[details.tabId];
+  const visitId = tabs[details.tabId]?.visitId;
   if (!visitId) {
     console.log('[DORY] No active visit => skipping =>', details.tabId);
     return;
   }
-  const pageId = tabToPageId[details.tabId];
+  const pageId = tabs[details.tabId]?.pageId;
   const sessionId = await getCurrentSessionId();
 
   // Trigger extraction in the content script
@@ -495,7 +625,10 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId, visitId, sessionId }, 'background'),
     {},
     () => {
-      chrome.tabs.sendMessage(details.tabId, createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background'));
+      chrome.tabs.sendMessage(
+        details.tabId,
+        createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
+      );
     }
   );
 });
@@ -503,13 +636,12 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
 // -------------------- Tabs Lifecycle --------------------
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await endCurrentVisit(tabId);
-  delete tabToCurrentUrl[tabId];
-  delete tabToPageId[tabId];
-  delete tabToVisitId[tabId];
+  delete tabs[tabId];
 });
+
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id !== undefined && tab.url) {
-    tabToCurrentUrl[tab.id] = tab.url;
+    tabs[tab.id] = { currentUrl: tab.url };
   }
 });
 
@@ -520,9 +652,13 @@ self.addEventListener('activate', () => {
 
 chrome.runtime.onSuspend.addListener(async () => {
   console.log('[DORY] onSuspend => end session');
-  await endCurrentSession();
-  if (idleCheckInterval) {
-    clearInterval(idleCheckInterval);
+  try {
+    await endCurrentSession();
+    if (idleCheckInterval) {
+      clearInterval(idleCheckInterval);
+    }
+  } catch (err) {
+    console.error('[DORY] Error onSuspend =>', err);
   }
 });
 
@@ -546,38 +682,39 @@ async function handleNavigation(
     | chrome.webNavigation.WebNavigationSourceCallbackDetails,
   handlerFn: Function
 ) {
-  if (!details || ('frameId' in details && details.frameId !== 0)) return;
-  const isAuthenticated = await checkAuthDirect();
-  if (!isAuthenticated) return;
+  try {
+    if (!details || ('frameId' in details && details.frameId !== 0)) return;
+    const isAuthenticated = await checkAuthDirect();
+    if (!isAuthenticated) return;
 
-  const navigationHelpers = {
-    tabToCurrentUrl,
-    tabToPageId,
-    tabToVisitId,
-    startNewVisit: async (
-      tabId: number,
-      pageId: string,
-      fromPageId?: string,
-      isBackNav?: boolean
-    ) => {
-      await ensureActiveSession();
-      const sessId = await getCurrentSessionId();
-      if (!sessId) throw new Error('No active session');
-      const visitId = await startVisit(pageId, sessId, fromPageId, isBackNav);
-      tabToVisitId[tabId] = visitId;
-      tabToPageId[tabId] = pageId;
-      return visitId;
-    },
-    ensureActiveSession: async () => ensureActiveSession(),
-    getTabTitle: async (tid: number) => {
-      try {
-        const t = await chrome.tabs.get(tid);
-        return t.title || null;
-      } catch {
-        return null;
+    const navigationHelpers = {
+      tabToCurrentUrl: tabs, // or just access 'tabs'
+      async startNewVisit(tabId: number, pageId: string, fromPageId?: string, isBackNav?: boolean) {
+        await ensureActiveSession();
+        const sessId = await getCurrentSessionId();
+        if (!sessId) throw new Error('No active session');
+
+        const visitId = await startVisit(pageId, sessId, fromPageId, isBackNav);
+        tabs[tabId].visitId = visitId;
+        tabs[tabId].pageId = pageId;
+        return visitId;
+      },
+      async ensureActiveSession() {
+        return ensureActiveSession();
+      },
+      async getTabTitle(tid: number) {
+        try {
+          const t = await chrome.tabs.get(tid);
+          return t.title || null;
+        } catch {
+          return null;
+        }
       }
-    }
-  };
+    };
 
-  await handlerFn(details, navigationHelpers);
+    // Delegate to your specialized handler
+    await handlerFn(details, navigationHelpers);
+  } catch (err) {
+    console.error('[DORY] handleNavigation error =>', err);
+  }
 }

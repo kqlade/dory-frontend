@@ -1,0 +1,24 @@
+/* 
+ * DORY SPOTLIGHT SEARCH STYLES
+ */
+
+/* Spotlight search container - only handles positioning */
+.spotlight-search {
+  width: 600px;
+  max-width: 90%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+/* Ensure the search container takes the full width */
+.spotlight-search .search-container {
+  width: 100%;
+}
+
+/* Ensure results list appears properly in the overlay */
+.spotlight-search .results-list {
+  max-height: 50vh; /* Limit height in the overlay context */
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+} 

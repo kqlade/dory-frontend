@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^5.0.0",
+    "@react-oauth/google": "^0.12.1",
     "@tanstack/react-query": "^5.67.2",
     "@types/dotenv": "^6.1.1",
     "@types/event-source-polyfill": "^1.0.5",
@@ -44,6 +45,7 @@
     "normalize-url": "^6.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-google-button": "^0.8.0",
     "react-icons": "^5.5.0",
     "react-social-login-buttons": "^4.1.1",
     "sentence-splitter": "^5.0.0",
