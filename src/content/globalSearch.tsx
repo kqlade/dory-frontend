@@ -23,8 +23,15 @@ chrome.runtime.onMessage.addListener((message) => {
     return true;
   }
   if (message.type === 'SHOW_SEARCH_OVERLAY') {
-    console.log('[DORY] SHOW_SEARCH_OVERLAY => rendering search overlay');
-    showSearchOverlay();
+    console.log('[DORY] SHOW_SEARCH_OVERLAY message received');
+    // Toggle the overlay - hide if visible, show if not
+    if (overlayContainer) {
+      console.log('[DORY] Overlay already visible, hiding it');
+      hideSearchOverlay();
+    } else {
+      console.log('[DORY] Rendering search overlay');
+      showSearchOverlay();
+    }
     return true;
   }
   return false;
@@ -32,12 +39,6 @@ chrome.runtime.onMessage.addListener((message) => {
 
 // Also listen for keyboard shortcut directly in the content script
 document.addEventListener('keydown', (e) => {
-  // Cmd+K or Ctrl+K
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    e.preventDefault();
-    showSearchOverlay();
-  }
-  
   // Handle Escape key to close the overlay when it's visible
   if (e.key === 'Escape' && overlayContainer) {
     hideSearchOverlay();
@@ -88,8 +89,10 @@ function showSearchOverlay(): void {
       height: 100%;
       z-index: 999999;
       display: flex;
-      justify-content: center;
-      align-items: center;
+      justify-content: flex-end;
+      align-items: flex-start;
+      padding-top: 15vh;
+      padding-right: 15vw;
       background-color: rgba(0, 0, 0, 0.6);
       backdrop-filter: blur(5px);
       font-family: 'Cabinet Grotesk', sans-serif;
