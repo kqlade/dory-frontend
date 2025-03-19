@@ -8,6 +8,10 @@ const useDarkMode = (defaultValue: boolean = false) => {
     const stored = localStorage.getItem('preferredTheme');
     if (stored) {
       setIsDarkMode(stored === 'dark');
+    } else {
+      // Fall back to system preference when no stored theme exists
+      const systemDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setIsDarkMode(systemDarkMode);
     }
   }, []);
 
