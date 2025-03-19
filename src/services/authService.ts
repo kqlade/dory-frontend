@@ -25,11 +25,26 @@ export interface UserInfo {
 
 /**
  * checkAuth() – (Content Script)
- * Checks if the user is authenticated by sending a proxied request to /api/auth/me
+ * Checks if the user is authenticated by first checking storage for auth token,
+ * then verifying with the backend only if needed.
  */
 export async function checkAuth(): Promise<boolean> {
   try {
-    console.log('[Auth] Checking authentication status via proxy (content script)');
+    console.log('[Auth] Checking authentication status');
+    
+    // First, check if we have auth data in storage
+    const storage = await chrome.storage.local.get(['auth_token', 'user']);
+    const authToken = storage.auth_token;
+    const userData = storage.user;
+    
+    // If we have both token and user data, consider authenticated without a network request
+    if (authToken && userData?.id) {
+      console.log('[Auth] Found valid auth token and user data in storage');
+      return true;
+    }
+    
+    // Otherwise, validate with backend
+    console.log('[Auth] No valid auth data in storage, checking with backend');
     const request: ApiProxyRequestData = {
       url: `${API_BASE_URL}${ENDPOINTS.AUTH.ME}`,
       method: 'GET'
@@ -40,18 +55,32 @@ export async function checkAuth(): Promise<boolean> {
       console.log('[Auth] Auth check failed:', responseData.status);
       return false;
     }
-    const userData = responseData.data;
-    if (!userData?.id) {
+    
+    const backendUserData = responseData.data;
+    if (!backendUserData?.id) {
       console.log('[Auth] Invalid user data received');
       return false;
     }
 
     // Store user data in local storage for quick UI access
-    await chrome.storage.local.set({ user: userData });
-    console.log('[Auth] User authenticated (proxy):', userData.email);
+    await chrome.storage.local.set({ user: backendUserData });
+    console.log('[Auth] User authenticated (proxy):', backendUserData.email);
     return true;
   } catch (err) {
-    console.error('[Auth] Check failed (proxy):', err);
+    console.error('[Auth] Check failed:', err);
+    
+    // Fallback: if we have token and user data in storage but request failed,
+    // we still consider user authenticated to maintain UI state
+    try {
+      const storage = await chrome.storage.local.get(['auth_token', 'user']);
+      if (storage.auth_token && storage.user?.id) {
+        console.log('[Auth] Network request failed but found valid auth data in storage');
+        return true;
+      }
+    } catch (storageErr) {
+      console.error('[Auth] Storage check failed:', storageErr);
+    }
+    
     return false;
   }
 }
