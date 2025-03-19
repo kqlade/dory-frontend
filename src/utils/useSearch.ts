@@ -4,10 +4,13 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
 import { localRanker } from '../services/localDoryRanking';
 import { semanticSearch } from '../api/client';
+import { getCurrentUserId } from '../services/userService';
+import { SearchResponse } from '../api/types'; // Import the updated type
 
 /** Standard search result interface shared across all search methods */
 interface SearchResult {
   id: string;
+  pageId?: string;
   title: string;
   url: string;
   score: number;
@@ -18,12 +21,9 @@ interface SearchResult {
 /** API result from the /api/search endpoint */
 interface ApiSearchResult {
   docId: string;
-  chunkText: string;
-  metadata: {
-    title?: string;
-    url?: string;
-    [key: string]: any;
-  };
+  pageId: string;
+  title: string;
+  url: string;
   score: number;
   explanation?: string;
 }
@@ -56,29 +56,46 @@ export function useLocalSearch(query: string) {
  * Semantic search hook using the REST API endpoint.
  */
 export function useSemanticSearch(query: string, isEnabled: boolean) {
-  const DEFAULT_USER_ID = 'app_user'; // Default user ID instead of real authentication
+  // State to store the real user ID
+  const [userId, setUserId] = useState<string | null>(null);
+  
+  // Get the actual user ID on component mount
+  useEffect(() => {
+    const fetchUserId = async () => {
+      const id = await getCurrentUserId();
+      setUserId(id);
+    };
+    fetchUserId();
+  }, []);
 
   return useQuery({
-    queryKey: ['semantic-search', query],
+    queryKey: ['semantic-search', query, userId], // Include userId in cache key
     queryFn: async () => {
       if (!query || query.length < 2) return [];
+      if (!userId) return []; // Don't perform search if no user ID
 
       try {
-        const response = await semanticSearch(query, DEFAULT_USER_ID, {
+        const response = await semanticSearch(query, userId, {
           limit: 20,
           useHybridSearch: true,
           useLLMExpansion: true,
           useReranking: true,
         });
 
-        // Type assertion to handle the unknown type
-        const data = response as { results: ApiSearchResult[] };
+        // Updated: Handle the new array-based response format
+        // The response is now directly an array of search results
+        const results = response as SearchResponse;
+        
+        // Filter out results with scores below the threshold (0.55)
+        const filteredResults = results.filter(result => result.score >= 0.55);
+        
+        console.log(`[Search] Filtered ${results.length - filteredResults.length} low-scoring results`);
 
-        return data.results.map((result: ApiSearchResult) => ({
+        return filteredResults.map((result: ApiSearchResult) => ({
           id: result.docId,
-          title: result.metadata.title
-            || `${result.chunkText.substring(0, 50)}...`,
-          url: result.metadata.url || '',
+          pageId: result.pageId,
+          title: result.title,
+          url: result.url,
           score: result.score,
           explanation: result.explanation,
           source: 'semantic',
@@ -88,7 +105,7 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
         throw error;
       }
     },
-    enabled: isEnabled && query.length >= 2,
+    enabled: isEnabled && query.length >= 2 && !!userId, // Only enable if we have a userId
     refetchOnWindowFocus: false,
     retry: 1,
     staleTime: 5 * 60 * 1000, // 5 minutes

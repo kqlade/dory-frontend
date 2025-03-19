@@ -6,24 +6,13 @@
 
 // Search result types
 export interface SearchResult {
-  pageId: string;
+  docId: string;       // Document/content ID
+  pageId: string;      // Page ID from the browser 
   title: string;
   url: string;
-  score?: number;
+  score: number;       // Now required, not optional
   searchSessionId?: string;
-
-  // Additional fields you track
-  docId?: string;
-  chunkText?: string;
   isHighlighted?: boolean;
-  metadata?: {
-    visitedAt?: number;
-    processedAt?: number;
-    status?: string;
-    chunkIndex?: number;
-    totalChunks?: number;
-    [key: string]: any;
-  };
   explanation?: string;
 }
 
@@ -49,28 +38,8 @@ export interface SearchDebugInfo {
   };
 }
 
-export interface SearchResponse {
-  results: SearchResult[];
-  totalResults: number;
-  metadata?: {
-    total: number;
-    query: {
-      original: string;
-      dense?: string;
-      sparse?: string;
-      filters?: Record<string, any>;
-    };
-    timing?: {
-      total_ms: number;
-      expansion_ms?: number;
-      embedding_ms?: number;
-      search_ms?: number;
-      reranking_ms?: number;
-    };
-    search_type?: string;
-    reranking_applied?: boolean;
-  };
-}
+// Updated: Search response is now a simple array of SearchResult objects
+export type SearchResponse = SearchResult[];
 
 /**
  * Custom error class for API calls
