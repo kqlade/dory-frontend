@@ -1,0 +1,32 @@
+/* src/pages/newtab/ThemeToggle.css */
+
+.theme-toggle {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    padding: 0;
+    z-index: 1000;
+    color: var(--text-color);
+  }
+  
+  /* Hover state */
+  .theme-toggle:hover {
+    transform: scale(1.1);
+    border-color: var(--border-focus-color);
+  }
+  
+  /* Focus state */
+  .theme-toggle:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--border-focus-color);
+  }
