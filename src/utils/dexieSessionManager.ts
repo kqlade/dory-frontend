@@ -10,22 +10,10 @@ import * as dexieDb from '../db/dexieDB';
 import { BrowsingSession } from '../db/dexieDB';
 import { logEvent } from './dexieEventLogger';
 import { EventType } from '../api/types';
+import { getCurrentUserId } from '../services/userService';
 
 // Track the current session ID
 let currentSessionId: number | null = null;
-
-/**
- * Service worker safe method to get user ID from storage directly
- */
-async function getUserIdFromStorage(): Promise<string | undefined> {
-  try {
-    const data = await chrome.storage.local.get(['user']);
-    return data.user?.id || undefined;
-  } catch (error) {
-    console.error('[SessionManager] Error getting user ID from storage:', error);
-    return undefined;
-  }
-}
 
 /**
  * Start a new session
@@ -33,7 +21,10 @@ async function getUserIdFromStorage(): Promise<string | undefined> {
  */
 export async function startNewSession(): Promise<number> {
   // Get the authenticated user ID
-  const userId = await getUserIdFromStorage();
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    throw new Error('Cannot start session: User not authenticated');
+  }
 
   const db = dexieDb.getDB();
   

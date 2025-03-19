@@ -140,7 +140,7 @@ export async function checkHealth(): Promise<{ status: string }> {
  */
 export async function semanticSearch(
   query: string,
-  userId: string = 'default',
+  userId: string,
   options: {
     limit?: number;
     useHybridSearch?: boolean;
@@ -149,6 +149,10 @@ export async function semanticSearch(
   } = {}
 ) {
   console.log(`[API] Semantic search: "${query}"`);
+
+  if (!userId) {
+    throw new Error('User ID is required for semantic search');
+  }
 
   try {
     // Use apiRequest instead of direct fetch

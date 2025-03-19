@@ -47,6 +47,8 @@ import {
   handleOnCreatedNavigationTarget
 } from '../utils/navigationHandlers';
 
+import { getCurrentUserId } from '../services/userService';
+
 console.log('[DORY] Service Worker starting...');
 
 // -------------------- Constants & State --------------------
@@ -57,15 +59,11 @@ let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 let isStartingSession = false;
 
 /**
- * Track data about each open tab:
- *   { [tabId]: { currentUrl, pageId, visitId } }
+ * Track data about each open tab with separate maps for different properties
  */
-interface TabTracking {
-  currentUrl?: string;
-  pageId?: string;
-  visitId?: string;
-}
-const tabs: Record<number, TabTracking> = {};
+const tabToCurrentUrl: Record<number, string | undefined> = {};
+const tabToPageId: Record<number, string> = {};
+const tabToVisitId: Record<number, string> = {};
 
 // -------------------- Icon Helpers --------------------
 function updateIcon(isAuthenticated: boolean) {
@@ -276,12 +274,12 @@ function registerMessageHandlers() {
         await updateSessionActivityTime();
 
         const tabId = sender.tab?.id;
-        if (tabId !== undefined && tabs[tabId]?.visitId) {
-          const visitId = tabs[tabId].visitId!;
+        if (tabId !== undefined && tabToVisitId[tabId]) {
+          const visitId = tabToVisitId[tabId];
           await updateVisitActiveTime(visitId, duration);
 
           const sessId = await getCurrentSessionId();
-          const pageId = tabs[tabId].pageId;
+          const pageId = tabToPageId[tabId];
           if (sessId && pageId) {
             await logEvent({
               operation: EventType.ACTIVE_TIME_UPDATED,
@@ -469,7 +467,7 @@ function cleanupServices(): void {
   isSessionActive = false;
 
   // End any visits for open tabs
-  Object.keys(tabs).forEach(async (tabIdStr) => {
+  Object.keys(tabToVisitId).forEach(async (tabIdStr) => {
     const tabId = parseInt(tabIdStr, 10);
     await endCurrentVisit(tabId);
   });
@@ -499,7 +497,7 @@ async function handleAuthStateChange(isAuthenticated: boolean) {
 async function endCurrentVisit(tabId: number) {
   console.log('[DORY] Ending visit => tab:', tabId);
   try {
-    const visitId = tabs[tabId]?.visitId;
+    const visitId = tabToVisitId[tabId];
     if (!visitId) {
       console.log('[DORY] No visit found for tab =>', tabId);
       return;
@@ -513,16 +511,16 @@ async function endCurrentVisit(tabId: number) {
     const sessId = await getCurrentSessionId();
     if (sessId && visit) {
       const timeSpent = Math.round((now - visit.startTime) / 1000);
-      const userId = await getUserIdFromStorage();
+      const userId = await getCurrentUserId();
       await logEvent({
         operation: EventType.PAGE_VISIT_ENDED,
         sessionId: String(sessId),
         timestamp: now,
-        userId,
+        userId: userId || undefined,
         data: {
           pageId: String(visit.pageId),
           visitId,
-          url: tabs[tabId].currentUrl || '',
+          url: tabToCurrentUrl[tabId] || '',
           timeSpent
         }
       });
@@ -530,7 +528,7 @@ async function endCurrentVisit(tabId: number) {
   } catch (e) {
     console.error('[DORY] endVisit error =>', e);
   } finally {
-    delete tabs[tabId]?.visitId;
+    delete tabToVisitId[tabId];
   }
 }
 
@@ -611,12 +609,12 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     console.log('[DORY] Not a web page => skipping =>', details.url);
     return;
   }
-  const visitId = tabs[details.tabId]?.visitId;
+  const visitId = tabToVisitId[details.tabId];
   if (!visitId) {
     console.log('[DORY] No active visit => skipping =>', details.tabId);
     return;
   }
-  const pageId = tabs[details.tabId]?.pageId;
+  const pageId = tabToPageId[details.tabId];
   const sessionId = await getCurrentSessionId();
 
   // Trigger extraction in the content script
@@ -636,12 +634,14 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
 // -------------------- Tabs Lifecycle --------------------
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await endCurrentVisit(tabId);
-  delete tabs[tabId];
+  delete tabToCurrentUrl[tabId];
+  delete tabToPageId[tabId];
+  delete tabToVisitId[tabId];
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id !== undefined && tab.url) {
-    tabs[tab.id] = { currentUrl: tab.url };
+    tabToCurrentUrl[tab.id] = tab.url;
   }
 });
 
@@ -662,17 +662,6 @@ chrome.runtime.onSuspend.addListener(async () => {
   }
 });
 
-// -------------------- Helper: get user ID from storage --------------------
-async function getUserIdFromStorage(): Promise<string | undefined> {
-  try {
-    const data = await chrome.storage.local.get(['user']);
-    return data.user?.id || undefined;
-  } catch (error) {
-    console.error('[ServiceWorker] Error reading user from storage:', error);
-    return undefined;
-  }
-}
-
 /**
  * Helper: top-level navigation check
  */
@@ -688,15 +677,17 @@ async function handleNavigation(
     if (!isAuthenticated) return;
 
     const navigationHelpers = {
-      tabToCurrentUrl: tabs, // or just access 'tabs'
+      tabToCurrentUrl,
+      tabToPageId,
+      tabToVisitId,
       async startNewVisit(tabId: number, pageId: string, fromPageId?: string, isBackNav?: boolean) {
         await ensureActiveSession();
         const sessId = await getCurrentSessionId();
         if (!sessId) throw new Error('No active session');
 
         const visitId = await startVisit(pageId, sessId, fromPageId, isBackNav);
-        tabs[tabId].visitId = visitId;
-        tabs[tabId].pageId = pageId;
+        tabToVisitId[tabId] = visitId;
+        tabToPageId[tabId] = pageId;
         return visitId;
       },
       async ensureActiveSession() {

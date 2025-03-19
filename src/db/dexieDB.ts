@@ -7,7 +7,7 @@
  */
 
 import Dexie from 'dexie';
-// AUTH CODE REMOVED: import { getCurrentUser } from '../services/authService';
+import { getCurrentUser } from '../services/userService';
 
 /** PageRecord: same as before */
 export interface PageRecord {
@@ -200,9 +200,8 @@ export class DoryDatabase extends Dexie {
 /** Active instances keyed by userId */
 const dbInstances: Record<string, DoryDatabase> = {};
 
-// Constants
-const DEFAULT_DB_IDENTIFIER = 'app'; // Used instead of user ID
-let currentUserId = DEFAULT_DB_IDENTIFIER;
+// Initialize with null - database requires authentication
+let currentUserId: string | null = null;
 
 /**
  * If no DB instance for the user, create it.
@@ -221,10 +220,9 @@ export function getUserDB(userId: string): DoryDatabase {
  * Get DB for the application
  */
 export function getDB(): DoryDatabase {
-  // AUTH CODE REMOVED: Authentication check
-  // if (!currentUserId) {
-  //   throw new Error('No authenticated user. Call initializeDexieDB first.');
-  // }
+  if (!currentUserId) {
+    throw new Error('No authenticated user. Call initializeDexieDB first.');
+  }
   return getUserDB(currentUserId);
 }
 
@@ -233,26 +231,23 @@ export function getDB(): DoryDatabase {
  */
 export async function initializeDexieDB(): Promise<void> {
   try {
-    // AUTH CODE REMOVED: Authentication-dependent initialization
-    // const userInfo = await getCurrentUser();
-    // if (userInfo?.id) {
-    //   currentUserId = userInfo.id;
-    //   console.log(`[DexieDB] Initialized for user: ${userInfo.id}`);
-    //   getDB(); // ensures creation
-    // } else {
-    //   console.log('[DexieDB] No authenticated user => using "anonymous" DB');
-    //   currentUserId = 'anonymous';
-    //   getDB();
-    // }
-    
-    // Using constant identifier instead of user ID
-    currentUserId = DEFAULT_DB_IDENTIFIER;
-    console.log(`[DexieDB] Initialized with identifier: ${currentUserId}`);
-    getDB(); // ensures creation
+    // Authentication-dependent initialization
+    const userInfo = await getCurrentUser();
+    if (userInfo?.id) {
+      currentUserId = userInfo.id;
+      console.log(`[DexieDB] Initialized for user: ${userInfo.id}`);
+      
+      // Create/access the DB
+      getDB();
+    } else {
+      console.log('[DexieDB] No authenticated user => initialization aborted');
+      // No database initialization without authentication
+      return;
+    }
   } catch (error) {
     console.error('[DexieDB] Error initializing database:', error);
-    currentUserId = DEFAULT_DB_IDENTIFIER;
-    getDB();
+    // Don't initialize database on error
+    currentUserId = null;
   }
 }
 
@@ -271,7 +266,7 @@ export function handleUserLogout(): void {
     dbInstances[currentUserId].close();
     delete dbInstances[currentUserId];
   }
-  currentUserId = DEFAULT_DB_IDENTIFIER;
+  currentUserId = null;
 }
 
 /**

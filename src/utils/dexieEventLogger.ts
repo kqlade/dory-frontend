@@ -10,6 +10,7 @@ import { DoryEvent } from '../api/types';
 import { EventType } from '../api/types';
 // Import the coldStorageSync singleton
 import { coldStorageSync } from '../services/coldStorageSync';
+import { getCurrentUserId } from '../services/userService';
 
 // Minimum time between cold storage syncs (10 minutes)
 const MIN_SYNC_INTERVAL_MS = 10 * 60 * 1000;
@@ -19,19 +20,6 @@ const LAST_SYNC_KEY = 'lastColdStorageSync';
 interface DexieDoryEvent extends DoryEvent {
   eventId?: number;
   loggedAt: number;
-}
-
-/**
- * Service worker safe method to get user ID from storage directly
- */
-async function getUserIdFromStorage(): Promise<string | undefined> {
-  try {
-    const data = await chrome.storage.local.get(['user']);
-    return data.user?.id || undefined;
-  } catch (error) {
-    console.error('[EventLogger] Error getting user ID from storage:', error);
-    return undefined;
-  }
 }
 
 /**
@@ -60,8 +48,15 @@ export async function logEvent(event: DoryEvent): Promise<void> {
       event.timestamp = Date.now();
     }
 
-    // If userId is missing, get from storage
-    event.userId = await getUserIdFromStorage();
+    // If userId is missing, get from centralized service
+    if (!event.userId) {
+      const userId = await getCurrentUserId();
+      if (!userId) {
+        console.warn('[DexieLogger] No authenticated user, skipping event:', event.operation);
+        return;
+      }
+      event.userId = userId;
+    }
 
     const dexieEvent: DexieDoryEvent = {
       ...event,
