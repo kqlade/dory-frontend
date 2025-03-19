@@ -8,6 +8,7 @@
 
 import { DoryDatabase, PageRecord, EdgeRecord, VisitRecord } from '../db/dexieDB';
 import * as dexieDb from '../db/dexieDB';
+import { generatePageIdFromUrlSync } from './pageIdGenerator';
 
 // Re-export types
 export type { PageRecord, EdgeRecord, VisitRecord };
@@ -27,40 +28,54 @@ export function getDB(): Promise<DoryDatabase> {
  * If found, update its lastVisit and visitCount.
  * Otherwise, create a new PageRecord.
  */
-export async function createOrGetPage(
-  url: string,
-  title: string,
-  timestamp: number
-): Promise<string> {
-  const db = dexieDb.getDB();
-
-  // Try to find an existing page with this URL
-  const existingPage = await db.pages.where('url').equals(url).first();
-  if (existingPage) {
-    await db.pages.update(existingPage.pageId, {
-      lastVisit: timestamp,
-      visitCount: (existingPage.visitCount || 0) + 1,
-      updatedAt: timestamp
-    });
-    return existingPage.pageId;
-  } else {
-    // Create a new page
-    const pageId = `page_${timestamp}_${Math.random().toString(36).substring(2, 9)}`;
-    const newPage: PageRecord = {
+export async function createOrGetPage(url: string, title?: string, timestamp?: number): Promise<string> {
+  if (!url) {
+    console.error('[DORY] Cannot create page record without URL');
+    return '';
+  }
+  
+  const now = timestamp || Date.now();
+  const db = await getDB();
+  
+  try {
+    // Check if we already have a page with this URL
+    const existingPage = await db.pages.where('url').equals(url).first();
+    
+    if (existingPage) {
+      // Update the existing page with new visit information
+      await db.pages.update(existingPage.pageId, {
+        lastVisit: now,
+        visitCount: (existingPage.visitCount || 0) + 1,
+        title: title || existingPage.title,
+        updatedAt: now
+      });
+      console.log('[DORY] Updated existing page =>', existingPage.pageId);
+      return existingPage.pageId;
+    }
+    
+    // Create a new deterministic page ID for this URL
+    const pageId = generatePageIdFromUrlSync(url);
+    
+    // Create a new page record
+    await db.pages.add({
       pageId,
       url,
       title: title || url,
-      domain: new URL(url).hostname,
-      firstVisit: timestamp,
-      lastVisit: timestamp,
+      firstVisit: now,
+      updatedAt: now,
+      lastVisit: now,
       visitCount: 1,
       totalActiveTime: 0,
+      domain: new URL(url).hostname,
       personalScore: 0.5,
-      syncStatus: 'pending',
-      updatedAt: timestamp
-    };
-    await db.pages.add(newPage);
+      syncStatus: 'pending'
+    });
+    
+    console.log('[DORY] Created new page =>', pageId);
     return pageId;
+  } catch (error) {
+    console.error('[DORY] Error creating/getting page:', error);
+    return '';
   }
 }
 
