@@ -175,9 +175,6 @@ function showSearchOverlay(): void {
   setTimeout(() => {
     overlayContainer?.classList.add('visible');
   }, 10);
-  
-  // Notify the background that search overlay is ready
-  chrome.runtime.sendMessage({ type: 'SEARCH_OVERLAY_READY' });
 }
 
 function removeExistingOverlay() {
