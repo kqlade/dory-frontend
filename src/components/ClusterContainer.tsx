@@ -1,32 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import ClusterSquare, { ClusterData } from './ClusterSquare';
+import { fetchClusterSuggestions, ClusterPage } from '../services/clusteringService';
 import './ClusterContainer.css';
 
 interface ClusterContainerProps {
-  clusters: (ClusterData | undefined)[];
-  isLoading?: boolean;
+  // Optional prop to control how many clusters to display
+  clusterCount?: number;
 }
 
 /**
  * Page result interface to match search results structure
  */
-interface PageResult {
-  id: string;
-  title: string;
-  url: string;
-  pageId?: string;
-  explanation?: string;
-}
+type PageResult = ClusterPage;
 
 /**
- * ClusterContainer - Displays three equally spaced cluster squares.
+ * ClusterContainer - Displays cluster squares based on available data.
  * When a cluster is clicked, it will show an expanded view with more details.
  */
 const ClusterContainer: React.FC<ClusterContainerProps> = ({ 
-  clusters = [], 
-  isLoading = false 
+  clusterCount = 3
 }) => {
+  // State for clusters and loading
+  const [clusters, setClusters] = useState<ClusterData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
   // State to track which cluster is expanded (null means none are expanded)
   const [expandedCluster, setExpandedCluster] = useState<ClusterData | null>(null);
   // Reference to the expanded view
@@ -34,29 +32,29 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   // State for selected page (for keyboard navigation if implemented later)
   const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
   
-  // Mock pages - in a real implementation this would come from an API
-  const getClusterPages = (clusterId: string): PageResult[] => {
-    // This would be replaced with actual data fetching
-    // For now, return mock data based on the cluster ID
-    return [
-      {
-        id: `page-${clusterId}-1`,
-        title: "Example Page 1",
-        url: "https://example.com/page1",
-        explanation: "This is the first example page in this cluster"
-      },
-      {
-        id: `page-${clusterId}-2`,
-        title: "Example Page 2",
-        url: "https://example.com/page2"
-      },
-      {
-        id: `page-${clusterId}-3`,
-        title: "Example Page 3",
-        url: "https://example.com/page3",
-        explanation: "This is the third example page with an explanation"
+  // Fetch clusters when the component mounts or clusterCount changes
+  useEffect(() => {
+    fetchClusters();
+  }, [clusterCount]);
+  
+  // Function to fetch clusters
+  const fetchClusters = async () => {
+    setIsLoading(true);
+    
+    try {
+      const data = await fetchClusterSuggestions(clusterCount);
+      setClusters(data);
+      
+      // Only set loading to false if we have data to show
+      if (data.length > 0) {
+        setIsLoading(false);
       }
-    ];
+    } catch (err) {
+      console.error('[ClusterContainer] Error fetching clusters:', err);
+      setClusters([]); // Set to empty array on error
+      // Keep isLoading true on error
+    }
+    // Removed the finally block that would set isLoading to false unconditionally
   };
 
   // Handle cluster click
@@ -75,9 +73,6 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   
   // Handle page click - navigate to the page URL
   const handlePageClick = (page: PageResult) => {
-    // In a real implementation, you might want to track this click
-    // Similar to trackSearchClick in the NewTabSearchBar
-    
     // Navigate to the page URL
     window.location.href = page.url;
   };
@@ -105,7 +100,9 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   useEffect(() => {
     if (!expandedCluster) return;
     
-    const pages = getClusterPages(expandedCluster.id);
+    // For keyboard navigation, we need to access the top_pages
+    // from expanded cluster which comes from the API response
+    const pages = (expandedCluster as any).top_pages || [];
     
     const handleKeyDown = (event: KeyboardEvent) => {
       // Only handle keyboard events when the expanded view is visible
@@ -147,18 +144,12 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     };
   }, [expandedCluster, selectedPageIndex]);
 
-  // Ensure we always have exactly 3 squares (fill with undefined if needed)
-  const displayClusters = [...clusters];
-  while (displayClusters.length < 3) {
-    displayClusters.push(undefined);
-  }
-
   // Render the expanded view using a portal to render it at the root level
   const renderExpandedView = () => {
     if (!expandedCluster) return null;
     
     // Get pages for this cluster
-    const pages = getClusterPages(expandedCluster.id);
+    const pages = (expandedCluster as any).top_pages || [];
     const hasPages = pages.length > 0;
     
     const view = (
@@ -172,20 +163,14 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         <div className="expanded-cluster-content">
           {hasPages ? (
             <ul className="results-list">
-              {pages.map((page, idx) => (
+              {pages.map((page: PageResult, idx: number) => (
                 <li
-                  key={page.id}
+                  key={page.page_id}
                   className={`result-item ${idx === selectedPageIndex ? 'selected' : ''}`}
                   onClick={() => handlePageClick(page)}
                 >
                   <div className="result-title">{page.title}</div>
                   <div className="result-url">{page.url}</div>
-                  {page.explanation && (
-                    <div className="result-explanation">
-                      <span className="explanation-label">Context: </span>
-                      {page.explanation}
-                    </div>
-                  )}
                 </li>
               ))}
             </ul>
@@ -207,13 +192,14 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
 
   return (
     <div className="cluster-container">
-      {/* Grid for the three squares */}
+      {/* Grid for the available squares */}
       <div className="cluster-grid">
-        {displayClusters.slice(0, 3).map((cluster, index) => (
+        {/* Always create clusterCount squares */}
+        {Array.from({ length: clusterCount }).map((_, index) => (
           <ClusterSquare
-            key={cluster?.id || `empty-${index}`}
-            cluster={cluster}
-            isLoading={isLoading}
+            key={`cluster-${index}`}
+            cluster={clusters[index]} // Will be undefined if no cluster for this index
+            isLoading={isLoading} // Simplified - just use the global loading state
             onClick={handleClusterClick}
           />
         ))}

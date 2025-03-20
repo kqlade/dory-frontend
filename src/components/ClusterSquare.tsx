@@ -2,29 +2,29 @@ import React from 'react';
 import './ClusterSquare.css';
 
 export interface ClusterData {
-  id: string;
+  cluster_id: string;
   label: string;
   page_count: number;
 }
 
 interface ClusterSquareProps {
-  cluster?: ClusterData; // Optional, as we may display "Still learning..." message
-  isLoading?: boolean;
+  cluster?: ClusterData; // Optional, as we may not have data for this position
+  isLoading: boolean;
   onClick: (cluster?: ClusterData) => void; // Callback when clicked, passing the cluster data
 }
 
 /**
- * ClusterSquare - A reusable component that displays either a cluster or a placeholder
+ * ClusterSquare - A reusable component that displays either a cluster or a loading indicator
  * when no cluster data is available yet.
  */
 const ClusterSquare: React.FC<ClusterSquareProps> = ({ 
   cluster, 
-  isLoading = false,
+  isLoading,
   onClick 
 }) => {
   const handleClick = () => {
     // Only trigger the click handler if we have a cluster and are not loading
-    if (!isLoading) {
+    if (!isLoading && cluster) {
       onClick(cluster);
     }
   };
@@ -35,7 +35,7 @@ const ClusterSquare: React.FC<ClusterSquareProps> = ({
       onClick={handleClick}
       role="button"
       tabIndex={0}
-      aria-label={cluster ? `View pages in ${cluster.label}` : 'No cluster available yet'}
+      aria-label={cluster ? `View pages in ${cluster.label}` : 'Loading cluster content'}
       onKeyDown={(e) => {
         // For accessibility - also trigger on Enter or Space key
         if (e.key === 'Enter' || e.key === ' ') {
@@ -50,13 +50,9 @@ const ClusterSquare: React.FC<ClusterSquareProps> = ({
           <span className="dot"></span>
           <span className="dot"></span>
         </div>
-      ) : cluster ? (
-        <div className="cluster-content">
-          <h3 className="cluster-title">{cluster.label}</h3>
-        </div>
       ) : (
-        <div className="empty-state">
-          <p>Still learning...</p>
+        <div className="cluster-content">
+          <h3 className="cluster-title">{cluster?.label}</h3>
         </div>
       )}
     </div>
