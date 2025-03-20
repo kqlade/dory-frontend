@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import NewTabSearchBar from '../../components/NewTabSearchBar';
 import ClusterContainer from '../../components/ClusterContainer';
 import ThemeToggle from '../../components/ThemeToggle';
-import { ClusterData } from '../../components/ClusterSquare';
 import { checkAuth, login } from '../../services/authService';
 import { MessageType } from '../../utils/messageSystem';
 import './newtab.css';
@@ -12,9 +11,6 @@ import './newtab.css';
  * When user is not authenticated, it shows a sign-in button instead of search and clusters.
  */
 const NewTab: React.FC = () => {
-  // Mock clusters data (this would typically come from an API)
-  const [clusters, setClusters] = useState<(ClusterData | undefined)[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   // Add state to track if search is active
   const [isSearchActive, setIsSearchActive] = useState(false);
   // Add auth state
@@ -57,47 +53,6 @@ const NewTab: React.FC = () => {
       chrome.runtime.onMessage.removeListener(handleMessage);
     };
   }, []);
-
-  // Simulate loading clusters data
-  useEffect(() => {
-    // Only fetch clusters if authenticated
-    if (!authState.isAuthenticated) return;
-
-    // In a real implementation, this would be an API call
-    const fetchClusters = async () => {
-      setIsLoading(true);
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Check if there's real content (this would be a real API call to check for user data)
-      const hasRealContent = false; // Change this to true to simulate having real content
-
-      if (hasRealContent) {
-        // Mock data - in a real implementation, this would come from the API
-        const mockClusters: ClusterData[] = [
-          {
-            id: 'cluster-1',
-            label: 'Programming & Development',
-            page_count: 12
-          },
-          {
-            id: 'cluster-2',
-            label: 'News Media',
-            page_count: 8
-          }
-        ];
-        setClusters(mockClusters);
-      } else {
-        // If there's no real content, set an empty array
-        setClusters([]);
-      }
-      
-      setIsLoading(false);
-    };
-
-    fetchClusters();
-  }, [authState.isAuthenticated]);
 
   const handleSignIn = () => {
     // This is the key function that's being reused from the popup
@@ -160,13 +115,10 @@ const NewTab: React.FC = () => {
         <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
       </div>
 
-      {/* Cluster container - only shown if there are clusters and search is not active */}
-      {!isSearchActive && clusters.length > 0 && (
+      {/* Cluster container - only shown if search is not active */}
+      {!isSearchActive && (
         <div className="clusters-wrapper">
-          <ClusterContainer 
-            clusters={clusters}
-            isLoading={isLoading}
-          />
+          <ClusterContainer />
         </div>
       )}
 

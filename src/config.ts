@@ -16,6 +16,10 @@ export const ENDPOINTS = {
     ME: '/api/auth/me',
     TOKEN: '/api/auth/token',     // Exchange Google token for session
     LOGOUT: '/api/auth/logout'    // Logout endpoint
+  },
+  CLUSTERING: {
+    CLUSTERS: '/api/clusters/clusters',
+    TRIGGER: '/api/clusters/trigger'
   }
 } as const;
 

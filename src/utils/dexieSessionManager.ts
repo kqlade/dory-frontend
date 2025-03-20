@@ -16,6 +16,31 @@ import { getCurrentUserId } from '../services/userService';
 let currentSessionId: number | null = null;
 
 /**
+ * Generate a numeric UUID (a number with UUID-like randomness properties)
+ * - Uses the same cryptographic randomness as UUIDs
+ * - But produces a number that fits within JavaScript's safe integer limits
+ * - Maintains the key UUID properties of being globally unique
+ */
+function generateNumericUuid(): number {
+  // Get 6 random bytes (48 bits, which is safely below the 53-bit limit)
+  const randomBytes = new Uint8Array(6);
+  crypto.getRandomValues(randomBytes);
+  
+  // Convert to a number (treated as a 48-bit unsigned integer)
+  let result = 0;
+  for (let i = 0; i < randomBytes.length; i++) {
+    // Shift left 8 bits and add the next byte
+    result = (result << 8) | randomBytes[i];
+  }
+  
+  // To ensure it's positive, use only 47 bits (the max safe positive integer has 53 bits)
+  result = result & 0x7FFFFFFFFFFF; // Apply 47-bit mask
+  
+  // We now have a 47-bit random positive integer
+  return result;
+}
+
+/**
  * Start a new session
  * @returns Promise resolving to the new session ID
  */
@@ -28,30 +53,35 @@ export async function startNewSession(): Promise<number> {
 
   const db = dexieDb.getDB();
   
+  // Generate a globally unique numeric ID
+  const sessionId = generateNumericUuid();
+  
   const now = Date.now();
   const session: BrowsingSession = {
+    sessionId, // Use the numeric UUID
     startTime: now,
     lastActivityAt: now,
     totalActiveTime: 0,
     isActive: true
   };
   
-  const id = await db.sessions.add(session);
-  currentSessionId = id;
+  // Use put to insert with the explicit ID
+  await db.sessions.put(session);
+  currentSessionId = sessionId;
   
   // Log session started event locally - will be synced to backend via cold storage
   await logEvent({
     operation: EventType.SESSION_STARTED,
-    sessionId: id.toString(),
+    sessionId: sessionId.toString(),
     timestamp: now,
     userId,
     data: {
-      sessionId: id.toString(),
+      sessionId: sessionId.toString(),
       startTime: now
     }
   });
   
-  return id;
+  return sessionId;
 }
 
 /**

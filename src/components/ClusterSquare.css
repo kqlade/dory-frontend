@@ -1,8 +1,8 @@
 .cluster-square {
   width: 100%;
-  aspect-ratio: 2 / 1; /* Rectangle: twice as wide as tall */
-  border-radius: 12px; /* Match search bar's border radius */
-  background-color: transparent; /* Transparent background to match search bar */
+  aspect-ratio: 2 / 1; /* Twice as wide as tall */
+  border-radius: 12px;
+  background-color: transparent;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -10,32 +10,26 @@
   align-items: center;
   text-align: center;
   cursor: pointer;
-  transition: all 0.3s ease; /* Match search bar transition */
+  transition: all 0.3s ease;
   border: 1px solid var(--border-color, rgba(0, 0, 0, 0.3));
   position: relative;
   overflow: hidden;
-  /* No default shadow to match search bar */
 }
 
 /* Hover state */
 .cluster-square:hover {
-  border-color: var(--border-hover-color);
-  box-shadow: 0 0 20px var(--shadow-color); /* Match search bar hover shadow */
+  border-color: var(--border-hover-color, rgba(0, 0, 0, 0.5));
+  box-shadow: 0 0 20px var(--shadow-color, rgba(0, 0, 0, 0.2));
 }
 
 /* Focus state for accessibility */
 .cluster-square:focus {
   outline: none;
-  border-color: var(--border-focus-color);
-  box-shadow: 0 0 25px var(--shadow-focus-color); /* Match search bar focus shadow */
+  border-color: var(--border-focus-color, rgba(0, 0, 0, 0.8));
+  box-shadow: 0 0 25px var(--shadow-focus-color, rgba(0, 0, 0, 0.25));
 }
 
-/* Active state - can remove this since search bar doesn't have it */
-.cluster-square:active {
-  /* No special active state to match search bar */
-}
-
-/* Cluster content styling */
+/* Content container */
 .cluster-content {
   width: 100%;
   height: 100%;
@@ -48,7 +42,7 @@
   margin: 0;
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--text-color, #000000);
+  color: var(--text-color, #000);
   line-height: 1.3;
 }
 
@@ -72,35 +66,45 @@
 /* Loading state styling */
 .cluster-square.loading {
   cursor: default;
+  position: relative;
 }
 
-.loading-indicator {
+/* Center the loading dots as a group */
+.dots-container {
   display: flex;
-  gap: 4px;
-  align-items: center;
   justify-content: center;
+  align-items: center;
+  gap: 12px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  margin: 0;
+  padding: 0;
 }
 
+/* Unified dot styling (removes .cluster-dot duplication) */
 .dot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background-color: var(--text-color, #000000);
-  opacity: 0.6;
-  animation: pulse 1.5s infinite ease-in-out;
+  background-color: var(--text-color, #000);
+  animation: pulse 2s infinite ease-in-out;
+  display: inline-block;
 }
 
+/* Delay animations for a staggered effect */
 .dot:nth-child(2) {
   animation-delay: 0.3s;
 }
-
 .dot:nth-child(3) {
   animation-delay: 0.6s;
 }
 
 @keyframes pulse {
   0%, 100% {
-    opacity: 0.6;
+    opacity: 0.8;
     transform: scale(1);
   }
   50% {
@@ -109,31 +113,27 @@
   }
 }
 
-/* Dark mode adjustments for color, not background since it's transparent */
+/* Dark mode adjustments */
 @media (prefers-color-scheme: dark) {
   .cluster-square {
     border-color: var(--border-color, rgba(255, 255, 255, 0.3));
   }
-  
   .cluster-square:hover {
     border-color: var(--border-hover-color, rgba(255, 255, 255, 0.5));
-    box-shadow: 0 0 20px var(--shadow-color); /* Match search bar hover shadow */
+    box-shadow: 0 0 20px var(--shadow-color, rgba(255, 255, 255, 0.2));
   }
-
   .cluster-square:focus {
     border-color: var(--border-focus-color, rgba(255, 255, 255, 0.8));
-    box-shadow: 0 0 25px var(--shadow-focus-color); /* Match search bar focus shadow */
+    box-shadow: 0 0 25px var(--shadow-focus-color, rgba(255, 255, 255, 0.25));
   }
-
   .cluster-title {
-    color: var(--text-color, #ffffff);
+    color: var(--text-color, #fff);
   }
-
-  .cluster-info, .empty-state p {
+  .cluster-info,
+  .empty-state p {
     color: var(--text-secondary, rgba(255, 255, 255, 0.6));
   }
-  
   .dot {
-    background-color: var(--text-color, #ffffff);
+    background-color: var(--text-color, #fff);
   }
-} 
+}

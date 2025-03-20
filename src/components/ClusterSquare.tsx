@@ -1,51 +1,42 @@
 import React from 'react';
 import './ClusterSquare.css';
-
-export interface ClusterData {
-  cluster_id: string;
-  label: string;
-  page_count: number;
-}
+import { ClusterSuggestion } from '../services/clusteringService';
 
 interface ClusterSquareProps {
-  cluster?: ClusterData; // Optional, as we may not have data for this position
-  isLoading: boolean;
-  onClick: (cluster?: ClusterData) => void; // Callback when clicked, passing the cluster data
+  cluster?: ClusterSuggestion;
+  onClick: (cluster?: ClusterSuggestion) => void;
 }
 
 /**
- * ClusterSquare - A reusable component that displays either a cluster or a loading indicator
- * when no cluster data is available yet.
+ * Displays a cluster's label or a loading indicator if cluster data is undefined.
  */
-const ClusterSquare: React.FC<ClusterSquareProps> = ({ 
-  cluster, 
-  isLoading,
-  onClick 
-}) => {
+const ClusterSquare: React.FC<ClusterSquareProps> = ({ cluster, onClick }) => {
+  const isLoading = !cluster;
+
   const handleClick = () => {
-    // Only trigger the click handler if we have a cluster and are not loading
-    if (!isLoading && cluster) {
+    if (!isLoading) {
       onClick(cluster);
     }
   };
 
+  const handleKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
+    if (!isLoading && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      handleClick();
+    }
+  };
+
   return (
-    <div 
+    <div
       className={`cluster-square ${isLoading ? 'loading' : ''}`}
-      onClick={handleClick}
+      onClick={isLoading ? undefined : handleClick}
       role="button"
-      tabIndex={0}
-      aria-label={cluster ? `View pages in ${cluster.label}` : 'Loading cluster content'}
-      onKeyDown={(e) => {
-        // For accessibility - also trigger on Enter or Space key
-        if (e.key === 'Enter' || e.key === ' ') {
-          handleClick();
-          e.preventDefault();
-        }
-      }}
+      tabIndex={isLoading ? -1 : 0}
+      aria-label={isLoading ? 'Loading cluster content' : `View pages in ${cluster?.label}`}
+      onKeyDown={handleKeyDown}
     >
       {isLoading ? (
-        <div className="loading-indicator" aria-hidden="true">
+        <div className="dots-container" aria-hidden="true">
           <span className="dot"></span>
           <span className="dot"></span>
           <span className="dot"></span>
@@ -53,10 +44,11 @@ const ClusterSquare: React.FC<ClusterSquareProps> = ({
       ) : (
         <div className="cluster-content">
           <h3 className="cluster-title">{cluster?.label}</h3>
+          {/* If desired, show additional info like page_count or top_pages here */}
         </div>
       )}
     </div>
   );
 };
 
-export default ClusterSquare; 
+export default ClusterSquare;
