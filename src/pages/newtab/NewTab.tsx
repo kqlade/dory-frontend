@@ -51,11 +51,7 @@ const NewTab: React.FC = () => {
       {/* DORY heading */}
       <div className="dory-container">
         <div className="dory-text">
-          <span className="word"><span className="dory-letter">D</span>ynamic</span>{' '}
-          <span className="word"><span className="dory-letter">O</span>nline</span>{' '}
-          <span className="word"><span className="dory-letter">R</span>ecall</span>{' '}
-          <span className="word">for</span>{' '}
-          <span className="word"><span className="dory-letter">Y</span>ou</span>
+          Dynamic Online Recall for You
         </div>
       </div>
 

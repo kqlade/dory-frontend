@@ -118,11 +118,6 @@ body {
   white-space: nowrap;
 }
 
-.dory-letter {
-  display: inline-block;
-  position: relative;
-}
-
 /* Media queries for responsive font sizing */
 @media (min-width: 480px) {
   .dory-text {

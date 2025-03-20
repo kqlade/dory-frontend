@@ -48,42 +48,71 @@ body.dark-mode {
   display: flex;
   flex-direction: column;
   align-items: center;
-  text-align: center;
   padding: var(--dory-spacing) 0;
+  width: 100%;
 }
 
-.user-avatar {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  object-fit: cover;
-  margin-bottom: var(--dory-spacing);
-  border: 2px solid var(--dory-accent);
-}
+/* Remove the now unused CSS for user name and avatar */
 
-.login-button, 
+/* Share base styles between both buttons */
+.google-sign-in-button,
 .logout-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 240px;
+  height: 40px;
+  background-color: transparent;
+  color: var(--text-color, var(--dory-text-light));
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.3));
+  border-radius: 14px;
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  padding: 0 16px;
+  box-shadow: none;
+  margin-top: 0;
+}
+
+.google-sign-in-button:hover,
+.logout-button:hover {
+  border-color: var(--border-hover-color, rgba(0, 0, 0, 0.5));
+  box-shadow: 0 4px 8px var(--shadow-color, rgba(0, 0, 0, 0.1));
+}
+
+.google-sign-in-button:focus,
+.logout-button:focus {
+  outline: none;
+  border-color: var(--border-focus-color, rgba(0, 0, 0, 0.8));
+  box-shadow: 0 4px 8px var(--shadow-focus-color, rgba(0, 0, 0, 0.15));
+}
+
+body.dark-mode .google-sign-in-button,
+body.dark-mode .logout-button {
+  color: var(--text-color, var(--dory-text-dark));
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.3));
+}
+
+/* Only for the login button - separate styling */
+.login-button {
   background-color: var(--dory-button-bg);
   color: var(--dory-button-text);
   border: none;
-  border-radius: var(--dory-radius);
-  padding: 10px 16px;
-  font-size: 14px;
-  cursor: pointer;
+  border-radius: 14px;
   margin-top: var(--dory-spacing);
-  transition: background-color 0.2s;
-  width: 100%;
-  max-width: 240px;
+  padding: 0 16px;
+  height: 40px;
+  font-size: 14px;
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  cursor: pointer;
 }
 
 .login-button:hover, 
-.logout-button:hover {
+.login-button:focus {
   opacity: 0.9;
-}
-
-.logout-button {
-  background-color: #f44336;
-  border-radius: 18px;
 }
 
 .loading-indicator {
@@ -98,9 +127,13 @@ h3 {
   margin-bottom: var(--dory-spacing);
 }
 
-/* Larger heading for the welcome message */
-.user-section h3 {
-  font-size: 1.5em; /* 50% larger than the default */
+/* Media queries for responsive font sizing for the user info */
+@media (min-width: 480px) {
+  /* Removed user-info h3 styles */
+}
+
+@media (min-width: 768px) {
+  /* Removed user-info h3 styles */
 }
 
 /* Ensure the side panel has enough content area */
@@ -114,13 +147,48 @@ h3 {
   .sidepanel-container {
     padding: 12px;
   }
-  
-  .user-avatar {
-    width: 60px;
-    height: 60px;
-  }
+  /* Removed user-avatar styles */
 }
 
+/* Custom Google Sign In Button */
+.google-sign-in-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 240px;
+  height: 40px;
+  background-color: transparent;
+  color: var(--text-color, var(--dory-text-light));
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.3));
+  border-radius: 14px;
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  padding: 0 16px;
+  box-shadow: none;
+}
+
+.google-sign-in-button:hover {
+  border-color: var(--border-hover-color, rgba(0, 0, 0, 0.5));
+  box-shadow: 0 4px 8px var(--shadow-color, rgba(0, 0, 0, 0.1));
+}
+
+.google-sign-in-button:focus {
+  outline: none;
+  border-color: var(--border-focus-color, rgba(0, 0, 0, 0.8));
+  box-shadow: 0 4px 8px var(--shadow-focus-color, rgba(0, 0, 0, 0.15));
+}
+
+body.dark-mode .google-sign-in-button {
+  background-color: transparent;
+  color: var(--text-color, var(--dory-text-dark));
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.3));
+}
+
+/* Google button container */
 .google-button-container {
   display: flex;
   justify-content: center;
@@ -128,15 +196,41 @@ h3 {
   width: 100%;
 }
 
-/* Override Google Button styles to use Cabinet Grotesk font */
-.google-button-container > div {
-  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-  border-radius: 18px !important;
-  overflow: hidden;
+/* DORY text styling to match the new tab page */
+.dory-text {
+  text-align: center;
+  color: var(--dory-text-light);
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 500;
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+  transition: color 0.3s ease;
+  margin: 0 auto;
+  white-space: nowrap;
+  margin-bottom: var(--dory-spacing);
 }
 
-/* Adjust hover effect for the Google button */
-.google-button-container > div:hover {
-  box-shadow: 0 0 3px 3px rgba(66, 133, 244, 0.3);
-  transition: box-shadow 0.3s;
+/* Media queries for responsive font sizing */
+@media (min-width: 480px) {
+  .dory-text {
+    font-size: 1.4rem;
+    letter-spacing: 0.075em;
+  }
+}
+
+@media (min-width: 768px) {
+  .dory-text {
+    font-size: 1.7rem;
+    letter-spacing: 0.1em;
+  }
+}
+
+@media (min-width: 1024px) {
+  .dory-text {
+    font-size: 2rem;
+  }
+}
+
+body.dark-mode .dory-text {
+  color: var(--dory-text-dark);
 } 

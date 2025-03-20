@@ -6,7 +6,6 @@
 import { useEffect, useState } from 'react';
 import { checkAuth, login, logout } from '../../services/authService';
 import { MessageType, createMessage } from '../../utils/messageSystem';
-import GoogleButton from 'react-google-button';
 
 interface UserInfo {
   id: string;
@@ -107,34 +106,34 @@ export default function SidePanel() {
     return (
       <div className="sidepanel-container">
         <div className="user-section">
-          <h3>Welcome to DORY</h3>
+          <div className="dory-text">
+            Dynamic Online Recall for You
+          </div>
           <div className="google-button-container">
-            <GoogleButton 
+            <button 
+              className="google-sign-in-button"
               onClick={handleSignIn}
-              type={isDarkMode ? 'dark' : 'light'}
-              label="Sign in with Google"
-            />
+            >
+              Sign in with Google
+            </button>
           </div>
         </div>
       </div>
     );
   }
 
-  // Get first name for greeting
-  const firstName = getFirstName(authState.user);
-
   // Authenticated - show user info and logout button
   return (
     <div className="sidepanel-container">
       <div className="user-section">
-        <h3>Hello, {firstName}</h3>
-        {authState.user?.picture && (
-          <img src={authState.user.picture} alt="Profile" className="user-avatar" />
-        )}
-        <p>You're signed in to DORY.</p>
-        <button className="logout-button" onClick={handleLogout}>
-          Sign Out
-        </button>
+        <div className="dory-text">
+          Dynamic Online Recall for You
+        </div>
+        <div className="google-button-container">
+          <button className="logout-button" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
       </div>
       <div className="content-area">
         {/* Additional functionality can be added here in the future */}

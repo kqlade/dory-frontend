@@ -1,8 +1,8 @@
 {
-  "name": "DORY: Dynamic Online Recall for You",
+  "name": "DORY",
   "version": "1.0",
   "manifest_version": 3,
-  "description": "Contextual browser history search engine",
+  "description": "Dynamic Online Recall for You",
   "action": {
     "default_icon": {
       "16": "icons/dory_logo_16x16.png",
