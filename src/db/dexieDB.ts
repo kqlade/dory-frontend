@@ -28,12 +28,10 @@ export interface PageRecord {
 
 /**
  * EdgeRecord: 
- *  - `edgeId?: number` is auto-increment so Dexie sets it.
- *  - We define a compound index in the schema so we can do 
- *    db.edges.where(['fromPageId','toPageId','sessionId'])
+ *  - `edgeId: number` is a numeric UUID we generate ourselves (no auto-increment)
  */
 export interface EdgeRecord {
-  edgeId?: number; // auto-increment
+  edgeId: number;  // numeric UUID (no auto-increment)
   fromPageId: string;
   toPageId: string;
   sessionId: number;
@@ -61,10 +59,10 @@ export interface VisitRecord {
 
 /**
  * BrowsingSession:
- *  - `sessionId?: number` is now auto-increment
+ *  - `sessionId` is a numeric UUID we generate ourselves (no auto-increment)
  */
 export interface BrowsingSession {
-  sessionId?: number;   // auto-increment
+  sessionId: number;   // numeric UUID (no auto-increment)
   startTime: number;
   endTime?: number;
   lastActivityAt: number;
@@ -74,10 +72,10 @@ export interface BrowsingSession {
 
 /**
  * DoryEvent:
- *  - eventId is `++eventId` so Dexie auto-increments it
+ *  - eventId is a numeric UUID we generate ourselves (no auto-increment)
  */
 export interface DoryEvent {
-  eventId?: number;
+  eventId: number;  // numeric UUID (no auto-increment)
   operation: string;
   sessionId: string;  // or number cast to string
   userId?: string;
@@ -132,12 +130,12 @@ export class DoryDatabase extends Dexie {
       `,
       /**
        * edges store:
-       *  - `++edgeId` means auto-increment PK
+       *  - `edgeId` is the primary key (no longer auto-increment)
        *  - `[fromPageId+toPageId+sessionId]` is a compound index
        *  - We also list single-field indexes: fromPageId, toPageId, sessionId, etc.
        */
       edges: `
-        ++edgeId,
+        edgeId,
         [fromPageId+toPageId+sessionId],
         fromPageId,
         toPageId,
@@ -150,10 +148,10 @@ export class DoryDatabase extends Dexie {
       `,
       /**
        * sessions store:
-       *  - `++sessionId` means auto-increment PK
+       *  - `sessionId` is the primary key (no longer auto-increment)
        */
       sessions: `
-        ++sessionId,
+        sessionId,
         startTime,
         endTime,
         lastActivityAt,
@@ -176,16 +174,15 @@ export class DoryDatabase extends Dexie {
       `,
       /**
        * events store:
-       *  - `++eventId` auto-increment
+       *  - `eventId` is the primary key (no longer auto-increment)
        */
       events: `
-        ++eventId,
+        eventId,
         operation,
         sessionId,
         timestamp,
         loggedAt
-      `
-    });
+      `    });
 
     // Updated to version 2 to add metadata table
     this.version(2).stores({

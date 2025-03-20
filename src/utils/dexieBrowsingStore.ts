@@ -96,6 +96,24 @@ export async function updateActiveTimeForPage(url: string, duration: number): Pr
 }
 
 /**
+ * Generate a numeric UUID for edge IDs
+ */
+function generateEdgeUuid(): number {
+  // Get 6 random bytes (48 bits of randomness)
+  const randomBytes = new Uint8Array(6);
+  crypto.getRandomValues(randomBytes);
+  
+  // Convert to a numeric value (as a safe JavaScript integer)
+  let value = 0;
+  for (let i = 0; i < randomBytes.length; i++) {
+    value = (value << 8) | randomBytes[i];
+  }
+  
+  // Mask to 47 bits to ensure it's a positive safe integer
+  return value & 0x7FFFFFFFFFFF;
+}
+
+/**
  * Create a brand new navigation edge.
  */
 export async function createNavigationEdge(
@@ -105,7 +123,9 @@ export async function createNavigationEdge(
   timestamp: number
 ): Promise<number> {
   const db = dexieDb.getDB();
+  const edgeId = generateEdgeUuid();
   const edge: EdgeRecord = {
+    edgeId,
     fromPageId,
     toPageId,
     sessionId,
@@ -114,7 +134,8 @@ export async function createNavigationEdge(
     firstTraversal: timestamp,
     lastTraversal: timestamp
   };
-  return db.edges.add(edge);
+  await db.edges.put(edge);
+  return edgeId;
 }
 
 /**
@@ -135,14 +156,16 @@ export async function createOrUpdateEdge(
     .first();
 
   if (existing) {
-    await db.edges.update(existing.edgeId!, {
+    await db.edges.update(existing.edgeId, {
       count: existing.count + 1,
       lastTraversal: timestamp,
       isBackNavigation: isBackNav || existing.isBackNavigation
     });
-    return existing.edgeId!;
+    return existing.edgeId;
   } else {
+    const edgeId = generateEdgeUuid();
     const newEdge: EdgeRecord = {
+      edgeId,
       fromPageId,
       toPageId,
       sessionId,
@@ -152,8 +175,27 @@ export async function createOrUpdateEdge(
       lastTraversal: timestamp,
       isBackNavigation: isBackNav
     };
-    return db.edges.add(newEdge);
+    await db.edges.put(newEdge);
+    return edgeId;
   }
+}
+
+/**
+ * Generate a string-format UUID for visit IDs
+ * Format: v{uuid_part}
+ */
+function generateVisitUuid(): string {
+  // Get 16 random bytes (128 bits of randomness)
+  const randomBytes = new Uint8Array(16);
+  crypto.getRandomValues(randomBytes);
+  
+  // Convert to a hex string
+  const hexString = Array.from(randomBytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+  
+  // Format as a UUID-like string with 'v' prefix
+  return `v${hexString.substring(0, 8)}-${hexString.substring(8, 12)}-${hexString.substring(12, 16)}-${hexString.substring(16, 20)}-${hexString.substring(20)}`;
 }
 
 /**
@@ -166,7 +208,7 @@ export async function startVisit(
   isBackNav?: boolean
 ): Promise<string> {
   const db = dexieDb.getDB();
-  const visitId = `v${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const visitId = generateVisitUuid();
   
   const visit: VisitRecord = {
     visitId,

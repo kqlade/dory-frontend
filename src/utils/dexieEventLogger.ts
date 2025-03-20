@@ -18,8 +18,26 @@ const LAST_SYNC_KEY = 'lastColdStorageSync';
 
 // Extend the API event type with database-specific fields
 interface DexieDoryEvent extends DoryEvent {
-  eventId?: number;
+  eventId: number;  // Numeric UUID (not auto-increment)
   loggedAt: number;
+}
+
+/**
+ * Generate a numeric UUID for event IDs
+ */
+function generateEventUuid(): number {
+  // Get 6 random bytes (48 bits of randomness)
+  const randomBytes = new Uint8Array(6);
+  crypto.getRandomValues(randomBytes);
+  
+  // Convert to a numeric value (as a safe JavaScript integer)
+  let value = 0;
+  for (let i = 0; i < randomBytes.length; i++) {
+    value = (value << 8) | randomBytes[i];
+  }
+  
+  // Mask to 47 bits to ensure it's a positive safe integer
+  return value & 0x7FFFFFFFFFFF;
 }
 
 /**
@@ -60,6 +78,7 @@ export async function logEvent(event: DoryEvent): Promise<void> {
 
     const dexieEvent: DexieDoryEvent = {
       ...event,
+      eventId: generateEventUuid(),
       loggedAt: Date.now()
     };
 
@@ -70,7 +89,7 @@ export async function logEvent(event: DoryEvent): Promise<void> {
       loggedAt: dexieEvent.loggedAt
     });
 
-    await db.events.add(dexieEvent);
+    await db.events.put(dexieEvent);
     console.log(`[DexieLogger] Event logged: ${event.operation}`, {
       sessionId: event.sessionId,
       timestamp: new Date(event.timestamp).toISOString(),
