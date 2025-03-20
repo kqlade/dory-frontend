@@ -18,6 +18,14 @@
   --text-primary: var(--text-color);
   --text-secondary: rgba(0, 0, 0, 0.6);
   --item-hover-bg: rgba(0, 0, 0, 0.05);
+
+  /* Secondary background for components */
+  --bg-secondary: #f5f7fa;
+  --bg-secondary-dark: #1e293b;
+  
+  /* Primary color for accents */
+  --primary: #6366f1;
+  --primary-light: #e0e7ff;
 }
 
 /* Dark mode */
@@ -87,6 +95,17 @@ body {
   box-sizing: border-box; /* Ensure consistent box model */
 }
 
+/* Positioned wrapper for the clusters */
+.clusters-wrapper {
+  position: absolute;
+  left: 50%;
+  top: 52vh; /* Reduced from 55vh to decrease space between search bar and clusters */
+  transform: translateX(-50%);
+  width: 600px; /* Same width as search bar */
+  max-width: 90%;
+  box-sizing: border-box; /* Ensure consistent box model */
+}
+
 .dory-text {
   text-align: center;
   color: var(--dory-text-color);
@@ -137,4 +156,25 @@ body {
   display: flex;
   justify-content: center;
   padding: 16px;
+}
+
+/* Responsive adjustments for cluster positioning */
+@media (max-width: 768px) {
+  .clusters-wrapper {
+    top: 50vh; /* Reduced from 52vh to maintain consistent spacing */
+  }
+}
+
+@media (max-width: 480px) {
+  .dory-container {
+    top: 20vh;
+  }
+  
+  .search-bar-wrapper {
+    top: 30vh;
+  }
+  
+  .clusters-wrapper {
+    top: 38vh; /* Reduced from 42vh to maintain consistent spacing */
+  }
 }

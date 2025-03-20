@@ -42,7 +42,11 @@ const DoryLogo = ({ size = 24 }: { size?: number }) => (
  * 4) Tracks clicks and navigates to the chosen URL.
  * 5) Even includes the '/' key global focus logic.
  */
-const NewTabSearchBar: React.FC = () => {
+interface NewTabSearchBarProps {
+  onSearchStateChange?: (isSearchActive: boolean) => void;
+}
+
+const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }) => {
   // ------------------------------
   // 1. Use your search hook (Option A: internal ownership).
   // ------------------------------
@@ -82,11 +86,6 @@ const NewTabSearchBar: React.FC = () => {
   useEffect(() => {
     setSelectedIndex(-1);
   }, [results]);
-
-  // Focus input on mount
-  useEffect(() => {
-    searchInputRef.current?.focus();
-  }, []);
 
   // ------------------------------
   // 5. Global '/' key to focus the bar
@@ -186,6 +185,14 @@ const NewTabSearchBar: React.FC = () => {
   const showSpinner = semanticEnabled
     ? (isSearching || (inputValue.length >= 2 && !debounceElapsed))
     : isSearching;
+
+  // Determine if any search UI is active (results, no results, or searching)
+  const isSearchActive = inputValue.length >= 2 && (showResults || showNoResults || showSearching);
+  
+  // Notify parent component when search state changes
+  useEffect(() => {
+    onSearchStateChange?.(isSearchActive);
+  }, [isSearchActive, onSearchStateChange]);
 
   return (
     <div className="search-container">
