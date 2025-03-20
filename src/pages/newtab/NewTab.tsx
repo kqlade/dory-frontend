@@ -70,22 +70,29 @@ const NewTab: React.FC = () => {
       // Simulate API delay
       await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // Mock data - in a real implementation, this would come from the API
-      const mockClusters: ClusterData[] = [
-        {
-          id: 'cluster-1',
-          label: 'Programming & Development',
-          page_count: 12
-        },
-        {
-          id: 'cluster-2',
-          label: 'News Media',
-          page_count: 8
-        }
-        // Third square will show "Still learning..." since we only provide 2 clusters
-      ];
+      // Check if there's real content (this would be a real API call to check for user data)
+      const hasRealContent = false; // Change this to true to simulate having real content
+
+      if (hasRealContent) {
+        // Mock data - in a real implementation, this would come from the API
+        const mockClusters: ClusterData[] = [
+          {
+            id: 'cluster-1',
+            label: 'Programming & Development',
+            page_count: 12
+          },
+          {
+            id: 'cluster-2',
+            label: 'News Media',
+            page_count: 8
+          }
+        ];
+        setClusters(mockClusters);
+      } else {
+        // If there's no real content, set an empty array
+        setClusters([]);
+      }
       
-      setClusters(mockClusters);
       setIsLoading(false);
     };
 
@@ -153,8 +160,8 @@ const NewTab: React.FC = () => {
         <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
       </div>
 
-      {/* Cluster container for displaying cluster squares */}
-      {!isSearchActive && (
+      {/* Cluster container - only shown if there are clusters and search is not active */}
+      {!isSearchActive && clusters.length > 0 && (
         <div className="clusters-wrapper">
           <ClusterContainer 
             clusters={clusters}
