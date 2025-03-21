@@ -4,6 +4,7 @@ import ClusterContainer from '../../components/ClusterContainer';
 import ThemeToggle from '../../components/ThemeToggle';
 import { checkAuth, login } from '../../services/authService';
 import { MessageType } from '../../utils/messageSystem';
+import { fetchClusterSuggestions } from '../../services/clusteringService';
 import './newtab.css';
 
 /**
@@ -21,6 +22,8 @@ const NewTab: React.FC = () => {
     isAuthenticated: false,
     isLoading: true
   });
+  // Add state to track if we have clusters
+  const [hasClusters, setHasClusters] = useState(false);
 
   // Check authentication status
   useEffect(() => {
@@ -53,6 +56,23 @@ const NewTab: React.FC = () => {
       chrome.runtime.onMessage.removeListener(handleMessage);
     };
   }, []);
+
+  // Check for clusters when authenticated
+  useEffect(() => {
+    const checkForClusters = async () => {
+      if (authState.isAuthenticated) {
+        try {
+          const clusters = await fetchClusterSuggestions(3);
+          setHasClusters(clusters.length > 0);
+        } catch (error) {
+          console.error('[NewTab] Error checking for clusters:', error);
+          setHasClusters(false);
+        }
+      }
+    };
+    
+    checkForClusters();
+  }, [authState.isAuthenticated]);
 
   const handleSignIn = () => {
     // This is the key function that's being reused from the popup
@@ -115,8 +135,8 @@ const NewTab: React.FC = () => {
         <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
       </div>
 
-      {/* Cluster container - only shown if search is not active */}
-      {!isSearchActive && (
+      {/* Cluster container - only shown if search is not active AND we have clusters */}
+      {!isSearchActive && hasClusters && (
         <div className="clusters-wrapper">
           <ClusterContainer />
         </div>

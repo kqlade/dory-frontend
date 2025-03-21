@@ -247,6 +247,18 @@ The search overlay (`src/pages/spotlight` and `src/content/globalSearch.tsx`):
 - Reuses the same search component as the new tab
 - Adapts to the current page's theme
 
+### 7.4 Configuration and Feature Flags
+
+DORY uses configuration flags to enable or disable certain features:
+
+```typescript
+// From src/config.ts
+// Controls whether the global search shortcut (Command+Shift+Space) is enabled
+export const ENABLE_GLOBAL_SEARCH = false;
+```
+
+These flags allow for flexible feature management without code changes. The service worker checks these flags before processing related commands.
+
 ## 8. State Management
 
 DORY uses a combination of state management approaches:

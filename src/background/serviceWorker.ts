@@ -49,6 +49,12 @@ import {
 
 import { getCurrentUserId } from '../services/userService';
 
+import { 
+  API_BASE_URL, 
+  ENDPOINTS, 
+  ENABLE_GLOBAL_SEARCH,
+} from '../config';
+
 console.log('[DORY] Service Worker starting...');
 
 // -------------------- Constants & State --------------------
@@ -161,6 +167,12 @@ async function handleCommand(command: string): Promise<void> {
   console.log(`[DORY] Command received: ${command}`);
   
   if (command === 'activate-global-search') {
+    // Check if global search is enabled
+    if (!ENABLE_GLOBAL_SEARCH) {
+      console.log('[DORY] Global search is disabled via configuration');
+      return;
+    }
+    
     // Get the active tab
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tabs || !tabs[0] || !tabs[0].id) {

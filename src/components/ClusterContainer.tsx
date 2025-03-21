@@ -22,9 +22,6 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   // State for clusters data
   const [clusters, setClusters] = useState<ClusterSuggestion[]>([]);
   
-  // State to control when to display clusters vs loading dots
-  const [showClusterData, setShowClusterData] = useState(false);
-  
   // State to track which cluster is expanded (null means none are expanded)
   const [expandedCluster, setExpandedCluster] = useState<ClusterSuggestion | null>(null);
 
@@ -38,20 +35,6 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   useEffect(() => {
     fetchClusters();
   }, [clusterCount]);
-
-  // Set a timer to show cluster data after a delay
-  useEffect(() => {
-    console.log("Setting up loading state - dots should be visible now");
-    
-    // Allow time for the loading animation to be seen
-    const timer = setTimeout(() => {
-      console.log("Timeout complete - showing cluster data now");
-      setShowClusterData(true);
-    }, 10000); // Show loading dots for 10 seconds to ensure we can see them
-    
-    // Clean up the timer when component unmounts
-    return () => clearTimeout(timer);
-  }, []);
 
   // Function to fetch clusters
   const fetchClusters = async () => {
@@ -186,18 +169,19 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   return (
     <div className="cluster-container">
       <div className="cluster-grid">
-        {Array.from({ length: clusterCount }).map((_, index) => {
-          // If the data isn't ready or there aren't enough elements,
-          // we pass undefined to show a loading square.
-          const clusterData = showClusterData ? clusters[index] : undefined;
-          return (
-            <ClusterSquare
-              key={`cluster-${index}`}
-              cluster={clusterData}
-              onClick={handleClusterClick}
-            />
-          );
-        })}
+        {clusters.length > 0 ? (
+          // Only show clusters if we have data
+          Array.from({ length: Math.min(clusterCount, clusters.length) }).map((_, index) => {
+            const clusterData = clusters[index];
+            return (
+              <ClusterSquare
+                key={`cluster-${index}`}
+                cluster={clusterData}
+                onClick={handleClusterClick}
+              />
+            );
+          })
+        ) : null}
       </div>
       {renderExpandedView()}
     </div>

@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
+export const API_BASE_URL = process.env.API_BASE_URL || 'https://dory-backend-e18a6624326d.herokuapp.com';
 
 export const ENDPOINTS = {
   HEALTH: '/api/health',
@@ -53,3 +53,10 @@ export const QUEUE_CONFIG = {
 
 // Debug mode flag - controls verbose logging
 export const DEBUG = true; // Force debug logs on 
+
+// ============================================================================
+// Feature Flags
+// ============================================================================
+
+// Controls whether the global search shortcut (Command+Shift+Space) is enabled
+export const ENABLE_GLOBAL_SEARCH = false; 
