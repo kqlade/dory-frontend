@@ -191,6 +191,20 @@ export class DoryDatabase extends Dexie {
         updatedAt
       `
     });
+
+    // Updated to version 3 to add updatedAt index to pages
+    this.version(3).stores({
+      pages: `
+        pageId,
+        url,
+        domain,
+        lastVisit,
+        visitCount,
+        personalScore,
+        syncStatus,
+        updatedAt
+      `
+    });
   }
 }
 

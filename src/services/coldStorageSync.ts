@@ -538,3 +538,27 @@ export const createColdStorageSyncer = (source?: string) => new ColdStorageSync(
 
 // Export a default singleton for backward compatibility
 export const coldStorageSync = new ColdStorageSync();
+
+/**
+ * Utility for development: resets the circuit breaker to allow sync to try again
+ * after fixing schema issues.
+ */
+export async function resetColdStorageSyncCircuitBreaker(): Promise<void> {
+  await chrome.storage.local.set({ 
+    [CIRCUIT_BREAKER_KEY]: { 
+      failureCount: 0, 
+      lastFailure: 0,
+      lastSuccess: Date.now() 
+    } 
+  });
+  console.log('[ColdStorageSync] Circuit breaker has been reset');
+}
+
+/**
+ * Manually trigger a cold storage sync for testing purposes
+ */
+export async function triggerManualColdStorageSync(): Promise<void> {
+  console.log('[ColdStorageSync] Manually triggering cold storage sync...');
+  await resetColdStorageSyncCircuitBreaker();
+  return coldStorageSync.performSync();
+}
