@@ -87,7 +87,7 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
         const results = response as SearchResponse;
         
         // Filter out results with scores below the threshold (0.55)
-        const filteredResults = results.filter(result => result.score >= 0.55);
+        const filteredResults = results.filter(result => result.score >= 0.25);
         
         console.log(`[Search] Filtered ${results.length - filteredResults.length} low-scoring results`);
 

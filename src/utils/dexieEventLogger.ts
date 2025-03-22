@@ -8,8 +8,8 @@
 import * as dexieDb from '../db/dexieDB';
 import { DoryEvent } from '../api/types';
 import { EventType } from '../api/types';
-// Import the coldStorageSync singleton
-import { coldStorageSync } from '../services/coldStorageSync';
+// Import the cold storage sync creator function
+import { createColdStorageSyncer } from '../services/coldStorageSync';
 import { getCurrentUserId } from '../services/userService';
 
 // Minimum time between cold storage syncs (10 minutes)
@@ -105,7 +105,9 @@ export async function logEvent(event: DoryEvent): Promise<void> {
         
         if (now - lastSyncTime > MIN_SYNC_INTERVAL_MS) {
           console.log('[DexieLogger] Session ended, triggering cold storage sync');
-          coldStorageSync.performSync().catch(err => {
+          // Use the creator function to create a syncer with 'session_end' source
+          const sessionEndSyncer = createColdStorageSyncer('session_end');
+          sessionEndSyncer.performSync().catch((err: Error) => {
             console.error('[DexieLogger] Sync after session end failed:', err);
           });
         } else {

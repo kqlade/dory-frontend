@@ -36,6 +36,7 @@ import { initEventService, sendContentEvent } from '../services/eventService';
 import { logEvent } from '../utils/dexieEventLogger';
 import { EventType } from '../api/types';
 import { isWebPage } from '../utils/urlUtils';
+import { ColdStorageSync } from '../services/coldStorageSync';
 
 import {
   checkAuthDirect,
@@ -108,6 +109,9 @@ async function initExtension() {
     
     // 4) Listen for keyboard shortcut commands
     chrome.commands.onCommand.addListener(handleCommand);
+    
+    // 5) Listen for alarms to trigger cold storage sync
+    chrome.alarms.onAlarm.addListener(handleAlarm);
 
     // If user is authenticated, proceed with full functionality
     if (isAuthenticated) {
@@ -118,6 +122,57 @@ async function initExtension() {
   } catch (err) {
     console.error('[DORY] Initialization error:', err);
     updateIcon(false);
+  }
+}
+
+/**
+ * Handle Chrome alarms for scheduled tasks
+ */
+async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
+  console.log(`[DORY] Alarm triggered: ${alarm.name}`);
+  
+  if (alarm.name === 'doryColdStorageSync') {
+    try {
+      // Make sure the user is authenticated before syncing
+      const isAuthenticated = await checkAuthDirect();
+      if (!isAuthenticated) {
+        console.log('[DORY] Skipping cold storage sync: user not authenticated');
+        return;
+      }
+      
+      // Get the last sync time for logging
+      const store = await chrome.storage.local.get('lastColdStorageSync');
+      const lastSyncTime = store.lastColdStorageSync ? new Date(store.lastColdStorageSync) : 'never';
+      console.log(`[DORY] Starting cold storage sync from alarm trigger. Last sync: ${lastSyncTime}`);
+      
+      // Check database state before sync
+      try {
+        const db = await getDB();
+        const pageCount = await db.pages.count();
+        const visitCount = await db.visits.count();
+        const sessionCount = await db.sessions.count();
+        console.log(`[DORY] Database state before sync - Pages: ${pageCount}, Visits: ${visitCount}, Sessions: ${sessionCount}`);
+      } catch (dbErr) {
+        console.warn('[DORY] Could not count database records:', dbErr);
+      }
+      
+      // Perform the sync
+      const startTime = Date.now();
+      const syncer = new ColdStorageSync('alarm');
+      await syncer.performSync();
+      const syncDuration = Date.now() - startTime;
+      
+      console.log(`[DORY] Cold storage sync completed successfully in ${syncDuration}ms`);
+    } catch (error) {
+      console.error('[DORY] Error during cold storage sync:', error);
+      
+      // Report sync error to browser console clearly
+      console.error('==========================================');
+      console.error('DORY COLD STORAGE SYNC FAILED');
+      console.error('Please check authentication and network status');
+      console.error('Error details:', error);
+      console.error('==========================================');
+    }
   }
 }
 
@@ -134,6 +189,10 @@ async function initializeServices() {
     // Initialize event streaming
     await initEventService();
     console.log('[DORY] Event streaming init done');
+
+    // Initialize cold storage sync scheduler (every 10 minutes)
+    ColdStorageSync.initializeScheduling();
+    console.log('[DORY] Cold storage sync scheduled for 10-minute intervals');
 
     // Start idle check
     idleCheckInterval = setInterval(checkSessionInactivity, 60_000);

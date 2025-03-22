@@ -168,23 +168,20 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // ------------------------------
   // 10. Conditionals for UI states
   // ------------------------------
-  const showResults = inputValue.length >= 2 && results.length > 0;
+  const showResults = inputValue.length >= 2 && (results.length > 0 || !debounceElapsed);
   const showNoResults =
     inputValue.length >= 2 &&
     results.length === 0 &&
     !isSearching &&
-    (!semanticEnabled || debounceElapsed);
+    debounceElapsed;
   const showSearching =
-    semanticEnabled &&
     inputValue.length >= 2 &&
     results.length === 0 &&
     (!debounceElapsed || isSearching);
   const showSearchModeIndicator = inputValue.length >= 2;
 
-  // We'll show spinner if normal searching or (semantic mode + typed enough + still in debounce).
-  const showSpinner = semanticEnabled
-    ? (isSearching || (inputValue.length >= 2 && !debounceElapsed))
-    : isSearching;
+  // Show spinner when searching or during debounce period (for both modes)
+  const showSpinner = isSearching || (inputValue.length >= 2 && !debounceElapsed);
 
   // Determine if any search UI is active (results, no results, or searching)
   const isSearchActive = inputValue.length >= 2 && (showResults || showNoResults || showSearching);

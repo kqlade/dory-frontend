@@ -78,15 +78,34 @@ async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Resp
       headers['Authorization'] = `Bearer ${authToken}`;
     }
     
+    console.log(`[EventService] API Request to ${API_BASE_URL}${endpoint}:`, {
+      method: 'POST',
+      headers: JSON.stringify(headers),
+      bodySize: JSON.stringify(body).length,
+      attempt: attempt + 1
+    });
+    
     const resp = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       headers,
       credentials: 'include',
       body: JSON.stringify(body),
     });
+    
     if (!resp.ok) {
+      console.error(`[EventService] API Response Error:`, {
+        status: resp.status,
+        statusText: resp.statusText,
+        endpoint
+      });
       throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
     }
+    
+    console.log(`[EventService] API Response Success:`, {
+      status: resp.status,
+      endpoint
+    });
+    
     return resp;
   } catch (error) {
     console.error(`[EventService] sendToAPI error (attempt ${attempt + 1}):`, error);
@@ -133,6 +152,19 @@ export async function sendContentEvent(event: ContentEvent): Promise<void> {
         }
       }
     };
+
+    // Enhanced logging to show exactly what's being sent
+    console.log('[EventService] Sending content to backend:', {
+      contentId: payload.contentId,
+      sessionId: payload.sessionId,
+      userId: payload.userId,
+      url: payload.data.url,
+      title: payload.data.content.title,
+      pageId: payload.data.pageId,
+      visitId: payload.data.visitId,
+      markdownLength: payload.data.content.markdown.length,
+      markdownPreview: payload.data.content.markdown.substring(0, 100) + '...'
+    });
 
     await sendToAPI(ENDPOINTS.CONTENT, payload);
     console.log('[EventService] Content event sent successfully');

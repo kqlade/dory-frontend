@@ -2,7 +2,7 @@
  * @file coldStorageSync.ts
  * 
  * Cold Storage Sync Service
- * Runs roughly once per day to batch-upload data from IndexedDB to the backend.
+ * Runs every 10 minutes to batch-upload data from IndexedDB to the backend.
  */
 
 import { getDB } from '../db/dexieDB';
@@ -11,10 +11,23 @@ import { EventType } from '../api/types';
 import { getCurrentUserId } from '../services/userService';
 
 // Typical daily interval in minutes
-const SYNC_INTERVAL_MINUTES = 24 * 60; // 24 hours
+const SYNC_INTERVAL_MINUTES = 10; // Changed from 24 * 60 (24 hours) to 10 minutes
 const LAST_SYNC_KEY = 'lastColdStorageSync';
 const BATCH_SIZE = 500; // Number of records per batch
 const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+// Circuit breaker settings
+const CIRCUIT_BREAKER_KEY = 'coldStorageSyncCircuitBreaker';
+const MAX_CONSECUTIVE_FAILURES = 3;
+const CIRCUIT_RESET_TIME_MS = 30 * 60 * 1000; // 30 minutes
+
+// Telemetry settings
+const TELEMETRY_KEY = 'coldStorageSyncTelemetry';
+const SYNC_SOURCE = {
+  ALARM: 'alarm',
+  SESSION_END: 'session_end',
+  MANUAL: 'manual'
+};
 
 /**
  * A class that orchestrates cold-storage syncing in a background context.
@@ -23,13 +36,17 @@ const DEBUG_MODE = process.env.NODE_ENV === 'development';
  */
 export class ColdStorageSync {
   private isSyncing = false;
+  private syncSource: string = SYNC_SOURCE.MANUAL;
+  private totalSyncedRecords: number = 0;
+  private syncStartTime: number = 0;
 
-  constructor() {
-    console.log('[ColdStorageSync] Service constructed');
+  constructor(source?: string) {
+    this.syncSource = source || SYNC_SOURCE.MANUAL;
+    console.log(`[ColdStorageSync] Service constructed, source: ${this.syncSource}`);
   }
 
   /**
-   * Initialize daily alarm-based scheduling for MV3
+   * Initialize 10-minute interval alarm-based scheduling for MV3
    * (called from the background service worker).
    */
   public static initializeScheduling(): void {
@@ -40,7 +57,7 @@ export class ColdStorageSync {
       periodInMinutes: SYNC_INTERVAL_MINUTES,
       when: Date.now() + 60_000 // start ~1 min from now
     });
-    console.log('[ColdStorageSync] Alarm scheduled for daily sync');
+    console.log('[ColdStorageSync] Alarm scheduled for 10-minute sync intervals');
   }
 
   /**
@@ -52,17 +69,68 @@ export class ColdStorageSync {
       return;
     }
 
+    // Check if circuit breaker is open
+    if (await this.isCircuitOpen()) {
+      console.log('[ColdStorageSync] Circuit breaker open, skipping sync operation');
+      return;
+    }
+
     try {
       this.isSyncing = true;
-      console.log('[ColdStorageSync] Starting sync operation...');
+      this.syncStartTime = Date.now();
+      this.totalSyncedRecords = 0;
+      
+      console.log(`[ColdStorageSync] Starting sync operation... (source: ${this.syncSource})`);
 
-      // Update last sync time in storage when completed successfully
+      // Get the current database statistics for logging
+      try {
+        const db = await getDB();
+        const pageCount = await db.pages.count();
+        const visitCount = await db.visits.count();
+        const sessionCount = await db.sessions.count();
+        const eventCount = await db.events.count();
+        
+        console.log(
+          `[ColdStorageSync] Database status - ` +
+          `Pages: ${pageCount}, Visits: ${visitCount}, ` +
+          `Sessions: ${sessionCount}, Events: ${eventCount}`
+        );
+      } catch (dbErr) {
+        console.warn('[ColdStorageSync] Could not get database statistics:', dbErr);
+      }
+
+      // Perform the sync
       await this.syncData();
 
+      // Record successful completion
       await chrome.storage.local.set({ [LAST_SYNC_KEY]: Date.now() });
-      console.log('[ColdStorageSync] Sync completed successfully');
+      
+      const syncDuration = Date.now() - this.syncStartTime;
+      console.log(
+        `[ColdStorageSync] Sync completed successfully in ${syncDuration}ms, ` +
+        `synced ${this.totalSyncedRecords} records`
+      );
+      
+      // Update circuit breaker and telemetry for success
+      await this.recordSyncSuccess();
     } catch (error) {
       console.error('[ColdStorageSync] Sync failed:', error);
+      
+      // Report serious errors more prominently
+      console.error('==========================================');
+      console.error('DORY COLD STORAGE SYNC FAILED');
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        console.error('Network error - check internet connection');
+      } else if (error instanceof Error && error.message.includes('HTTP 401')) {
+        console.error('Authentication error - user may need to log in again');
+      } else if (error instanceof Error && error.message.includes('HTTP 5')) {
+        console.error('Server error - backend service may be down');
+      }
+      console.error('Error details:', error);
+      console.error('==========================================');
+      
+      // Record failure in circuit breaker
+      await this.recordSyncFailure(error);
     } finally {
       this.isSyncing = false;
     }
@@ -149,12 +217,46 @@ export class ColdStorageSync {
     console.log(`[ColdStorageSync] Syncing ${records.length} ${collectionName} records`);
 
     const enriched = records.map(r => ({ ...r, userId: r.userId || userId }));
+    let syncedCount = 0;
 
     for (let i = 0; i < enriched.length; i += BATCH_SIZE) {
       const batch = enriched.slice(i, i + BATCH_SIZE);
-      await this.sendBatch(collectionName, batch);
-      console.log(`[ColdStorageSync] Synced batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(enriched.length / BATCH_SIZE)} for ${collectionName}`);
+      
+      try {
+        const batchStartTime = Date.now();
+        await this.sendBatch(collectionName, batch);
+        const batchDuration = Date.now() - batchStartTime;
+        
+        syncedCount += batch.length;
+        this.totalSyncedRecords += batch.length;
+        
+        console.log(
+          `[ColdStorageSync] Synced ${collectionName} batch ` +
+          `${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(enriched.length / BATCH_SIZE)} ` +
+          `(${batch.length} records in ${batchDuration}ms)`
+        );
+      } catch (error: any) {
+        console.error(`[ColdStorageSync] Error syncing ${collectionName} batch:`, error);
+        
+        // Check if we should stop entirely or continue with next batch
+        if (error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
+          throw new Error(`Authentication error during ${collectionName} sync: ${error.message}`);
+        }
+        
+        // For server errors, we'll throw to abort the entire sync
+        if (error.message?.includes('HTTP 5')) {
+          throw new Error(`Server error during ${collectionName} sync: ${error.message}`);
+        }
+        
+        // For other errors, log but continue with next batch
+        console.warn(`[ColdStorageSync] Continuing with next batch despite error in ${collectionName} sync`);
+      }
     }
+    
+    console.log(
+      `[ColdStorageSync] Completed ${collectionName} sync: ` +
+      `${syncedCount}/${records.length} records synchronized`
+    );
   }
 
   /**
@@ -295,6 +397,123 @@ export class ColdStorageSync {
     const data = await response.json();
     console.log(`[ColdStorageSync] Synced search clicks => server ack:`, data);
   }
+
+  /**
+   * Checks if the circuit breaker is open (too many failures recently)
+   */
+  private async isCircuitOpen(): Promise<boolean> {
+    const circuitData = await chrome.storage.local.get(CIRCUIT_BREAKER_KEY);
+    const breakerState = circuitData[CIRCUIT_BREAKER_KEY];
+    
+    if (!breakerState) return false;
+    
+    // If we've had too many failures and we're within the reset time window
+    if (
+      breakerState.failureCount >= MAX_CONSECUTIVE_FAILURES && 
+      Date.now() - breakerState.lastFailure < CIRCUIT_RESET_TIME_MS
+    ) {
+      console.log(`[ColdStorageSync] Circuit breaker open: ${breakerState.failureCount} consecutive failures`);
+      return true;
+    }
+    
+    // If the circuit reset time has passed, we can close the circuit
+    if (Date.now() - breakerState.lastFailure >= CIRCUIT_RESET_TIME_MS) {
+      console.log('[ColdStorageSync] Circuit breaker reset time reached, closing circuit');
+      await this.resetCircuitBreaker();
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Record a failure in the circuit breaker
+   */
+  private async recordSyncFailure(error: any): Promise<void> {
+    const circuitData = await chrome.storage.local.get(CIRCUIT_BREAKER_KEY);
+    const breakerState = circuitData[CIRCUIT_BREAKER_KEY] || { failureCount: 0, lastFailure: 0 };
+    
+    breakerState.failureCount += 1;
+    breakerState.lastFailure = Date.now();
+    breakerState.lastError = error?.message || String(error);
+    
+    await chrome.storage.local.set({ [CIRCUIT_BREAKER_KEY]: breakerState });
+    
+    console.error(
+      `[ColdStorageSync] Recorded sync failure #${breakerState.failureCount}: ${breakerState.lastError}`
+    );
+    
+    // Update telemetry for failures
+    await this.updateTelemetry(false, 0, error);
+  }
+  
+  /**
+   * Record a successful sync in the circuit breaker (resets failure count)
+   */
+  private async recordSyncSuccess(): Promise<void> {
+    await chrome.storage.local.set({ 
+      [CIRCUIT_BREAKER_KEY]: { 
+        failureCount: 0, 
+        lastFailure: 0,
+        lastSuccess: Date.now()
+      } 
+    });
+    
+    // Update telemetry for success
+    await this.updateTelemetry(true, this.totalSyncedRecords);
+  }
+  
+  /**
+   * Reset the circuit breaker
+   */
+  private async resetCircuitBreaker(): Promise<void> {
+    await chrome.storage.local.set({ 
+      [CIRCUIT_BREAKER_KEY]: { 
+        failureCount: 0, 
+        lastFailure: 0 
+      } 
+    });
+    console.log('[ColdStorageSync] Circuit breaker reset');
+  }
+  
+  /**
+   * Track telemetry data about sync operations
+   */
+  private async updateTelemetry(
+    success: boolean, 
+    recordCount: number, 
+    error?: any
+  ): Promise<void> {
+    const telemetryData = await chrome.storage.local.get(TELEMETRY_KEY);
+    const telemetry = telemetryData[TELEMETRY_KEY] || {
+      totalSyncs: 0,
+      successfulSyncs: 0,
+      failedSyncs: 0,
+      recordsSynced: 0,
+      lastSync: 0,
+      syncSources: {}
+    };
+    
+    // Update counts
+    telemetry.totalSyncs += 1;
+    if (success) {
+      telemetry.successfulSyncs += 1;
+      telemetry.recordsSynced += recordCount;
+    } else {
+      telemetry.failedSyncs += 1;
+      telemetry.lastError = error?.message || String(error);
+    }
+    
+    // Track by source
+    telemetry.syncSources[this.syncSource] = 
+      (telemetry.syncSources[this.syncSource] || 0) + 1;
+    
+    // Track timing
+    const syncDuration = Date.now() - this.syncStartTime;
+    telemetry.lastSync = Date.now();
+    telemetry.lastSyncDuration = syncDuration;
+    
+    await chrome.storage.local.set({ [TELEMETRY_KEY]: telemetry });
+  }
 }
 
 /**
@@ -305,13 +524,17 @@ export class ColdStorageSync {
  *  // On extension startup:
  *  ColdStorageSync.initializeScheduling();
  *
- *  // On alarm:
+ *  // On alarm (every 10 minutes):
  *  chrome.alarms.onAlarm.addListener(alarm => {
  *    if (alarm.name === 'doryColdStorageSync') {
- *      const syncer = new ColdStorageSync();
+ *      const syncer = new ColdStorageSync('alarm');
  *      syncer.performSync();
  *    }
  *  });
  */
 
-export const coldStorageSync = new ColdStorageSync(); // optional singleton
+// Export a singleton creator function to easily create a new instance with a source parameter
+export const createColdStorageSyncer = (source?: string) => new ColdStorageSync(source);
+
+// Export a default singleton for backward compatibility
+export const coldStorageSync = new ColdStorageSync();
