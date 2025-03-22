@@ -301,9 +301,9 @@ export class ColdStorageSync {
           userId: v.userId,
           pageId: String(v.pageId),
           sessionId: String(v.sessionId),
-          startTime: v.startTime,
-          endTime: v.endTime ?? null,
-          totalActiveTime: v.totalActiveTime,
+          startTime: Math.floor(v.startTime),
+          endTime: v.endTime ? Math.floor(v.endTime) : null,
+          totalActiveTime: Math.floor(v.totalActiveTime),
           fromPageId: v.fromPageId ?? null,
           isBackNavigation: !!v.isBackNavigation
         }));
@@ -317,13 +317,12 @@ export class ColdStorageSync {
           url: p.url,
           title: p.title,
           domain: p.domain,
-          firstVisit: p.firstVisit,
-          lastVisit: p.lastVisit,
+          firstVisit: Math.floor(p.firstVisit),
+          lastVisit: Math.floor(p.lastVisit),
           visitCount: p.visitCount,
-          totalActiveTime: p.totalActiveTime,
-          // Use the accurately calculated total duration based on actual visits
-          totalDuration: p.calculatedTotalDuration,
-          lastModified: p.updatedAt
+          totalActiveTime: Math.floor(p.totalActiveTime),
+          totalDuration: Math.floor(p.calculatedTotalDuration),
+          lastModified: Math.floor(p.updatedAt)
         }));
         break;
 
