@@ -21,9 +21,11 @@ export interface PageRecord {
   totalActiveTime: number;
   personalScore: number;
   syncStatus: 'synced' | 'pending' | 'conflict';
-  updatedAt: number;
+  updatedAt: number; // This is used as lastModified when sending to backend
   hasExtractedContent?: boolean;
   contentAvailability?: 'local' | 'server' | 'both' | 'none';
+  // Calculate this when sending to backend as lastVisit - firstVisit
+  totalDuration?: number;
 }
 
 /**

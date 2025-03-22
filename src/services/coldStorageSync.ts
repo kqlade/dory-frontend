@@ -149,26 +149,39 @@ export class ColdStorageSync {
     // Current user ID for stamping records
     const userId = await this.getCurrentUserId();
 
-    // Example: sync pages
-    {
-      const pages = await db.pages
-        // Assuming you have a field like `updatedAt` or `lastModified`.
-        // If you use `lastModified`, change below accordingly.
-        .where('updatedAt')
-        .above(lastSyncTime)
-        .toArray();
-
-      await this.syncCollection('pages', pages, userId);
-    }
-
-    // Example: sync visits
+    // First sync visits to have the data available for page duration calculations
     {
       const visits = await db.visits
         .where('startTime')
         .above(lastSyncTime)
         .toArray();
 
+      // Create map of page durations using visit data
+      const pageDurations: Record<string, number> = {};
+      
+      // Calculate total duration for each page by summing its visits
+      for (const visit of visits) {
+        const pageId = visit.pageId;
+        const visitDuration = (visit.endTime || Date.now()) - visit.startTime;
+        pageDurations[pageId] = (pageDurations[pageId] || 0) + visitDuration;
+      }
+
       await this.syncCollection('visits', visits, userId);
+      
+      // Now sync pages with accurate duration data
+      const pages = await db.pages
+        .where('updatedAt')
+        .above(lastSyncTime)
+        .toArray();
+
+      // Enhance pages with duration data before syncing
+      const pagesWithDuration = pages.map(page => ({
+        ...page,
+        // Add calculated totalDuration if available, or fall back to estimate
+        calculatedTotalDuration: pageDurations[page.pageId] || (page.lastVisit - page.firstVisit)
+      }));
+
+      await this.syncCollection('pages', pagesWithDuration, userId);
     }
 
     // sessions, events, search clicks, etc.
@@ -307,8 +320,10 @@ export class ColdStorageSync {
           firstVisit: p.firstVisit,
           lastVisit: p.lastVisit,
           visitCount: p.visitCount,
-          totalActiveTime: p.totalActiveTime
-          // etc...
+          totalActiveTime: p.totalActiveTime,
+          // Use the accurately calculated total duration based on actual visits
+          totalDuration: p.calculatedTotalDuration,
+          lastModified: p.updatedAt
         }));
         break;
 
