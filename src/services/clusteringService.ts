@@ -7,6 +7,10 @@
 
 import { API_BASE_URL, ENDPOINTS } from '../config';
 import { getCurrentUser } from './userService';
+import { MessageType, createMessage } from '../utils/messageSystem';
+
+// Storage key for the cluster history
+const CLUSTER_HISTORY_KEY = 'clusterHistory';
 
 /**
  * Interface for a page within a cluster
@@ -32,6 +36,84 @@ export interface ClusterSuggestion {
  */
 interface ClusterResponse {
   suggestions: ClusterSuggestion[];
+}
+
+/**
+ * Get cluster suggestions with history tracking.
+ * This function combines fetching and caching in one simple API.
+ * 
+ * @param options.forceRefresh Force a refresh from the server (default: false)
+ * @param options.count Number of clusters to fetch (default: 3)
+ * @returns Promise resolving to current and previous clusters
+ */
+export async function getClusterSuggestions(options: {
+  forceRefresh?: boolean;
+  count?: number;
+} = {}): Promise<{
+  current: ClusterSuggestion[];
+  previous: ClusterSuggestion[];
+}> {
+  try {
+    const { forceRefresh = false, count = 3 } = options;
+    
+    // Check if we need to fetch fresh data
+    let needsFresh = forceRefresh;
+    let current: ClusterSuggestion[] = [];
+    let previous: ClusterSuggestion[] = [];
+    
+    if (!needsFresh) {
+      // Get from storage
+      const storage = await chrome.storage.local.get(CLUSTER_HISTORY_KEY);
+      const history = storage[CLUSTER_HISTORY_KEY];
+      
+      if (history && history.timestamp) {
+        // Use cached data if it's less than 10 minutes old
+        const isFresh = (Date.now() - history.timestamp) < 10 * 60 * 1000; // 10 minutes
+        
+        if (isFresh) {
+          console.log('[ClusteringService] Using cached clusters');
+          return {
+            current: history.current || [],
+            previous: history.previous || []
+          };
+        } else {
+          // Data is stale but we'll preserve current as previous
+          previous = history.current || [];
+          needsFresh = true;
+        }
+      } else {
+        // No cache exists
+        needsFresh = true;
+      }
+    }
+    
+    if (needsFresh) {
+      // Fetch fresh data from server
+      console.log('[ClusteringService] Fetching fresh clusters');
+      current = await fetchClusterSuggestions(count);
+      
+      // Store in storage
+      await chrome.storage.local.set({
+        [CLUSTER_HISTORY_KEY]: {
+          current,
+          previous,
+          timestamp: Date.now()
+        }
+      });
+      
+      // Broadcast that clusters have been updated
+      chrome.runtime.sendMessage(
+        createMessage(MessageType.CLUSTERS_UPDATED, {}, 'background')
+      );
+      
+      console.log('[ClusteringService] Updated cluster history and notified listeners');
+    }
+    
+    return { current, previous };
+  } catch (error) {
+    console.error('[ClusteringService] Error getting clusters:', error);
+    return { current: [], previous: [] };
+  }
 }
 
 /**
@@ -102,5 +184,6 @@ export async function triggerClustering(): Promise<boolean> {
 
 export default {
   fetchClusterSuggestions,
-  triggerClustering
+  triggerClustering,
+  getClusterSuggestions
 };

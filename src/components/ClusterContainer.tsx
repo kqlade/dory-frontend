@@ -6,9 +6,11 @@ import {
   ClusterSuggestion,
   ClusterPage
 } from '../services/clusteringService';
+import { MessageType } from '../utils/messageSystem';
 import './ClusterContainer.css';
 
 interface ClusterContainerProps {
+  clusters?: ClusterSuggestion[];
   clusterCount?: number;
 }
 
@@ -17,35 +19,45 @@ interface ClusterContainerProps {
  * When a cluster is clicked, it will show an expanded view with more details.
  */
 const ClusterContainer: React.FC<ClusterContainerProps> = ({ 
+  clusters = [],
   clusterCount = 3
 }) => {
-  // State for clusters data
-  const [clusters, setClusters] = useState<ClusterSuggestion[]>([]);
-  
   // State to track which cluster is expanded (null means none are expanded)
   const [expandedCluster, setExpandedCluster] = useState<ClusterSuggestion | null>(null);
+
+  // State to track if we're showing loading animation for new clusters
+  const [isLoadingNewClusters, setIsLoadingNewClusters] = useState(false);
 
   // Reference to the expanded view
   const expandedViewRef = useRef<HTMLDivElement>(null);
 
   // State for selected page index (for keyboard navigation)
   const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
-
-  // Fetch clusters when the component mounts or clusterCount changes
+  
+  // Listen for cluster update messages
   useEffect(() => {
-    fetchClusters();
-  }, [clusterCount]);
-
-  // Function to fetch clusters
-  const fetchClusters = async () => {
-    try {
-      const data = await fetchClusterSuggestions(clusterCount);
-      console.log('[ClusterContainer] Received clusters:', data);
-      setClusters(data);
-    } catch (err) {
-      console.error('[ClusterContainer] Error fetching clusters:', err);
-    }
-  };
+    const handleMessage = (message: any) => {
+      if (message.type === MessageType.CLUSTERS_UPDATED) {
+        console.log('[ClusterContainer] Received CLUSTERS_UPDATED message');
+        
+        // Show loading animation for 3 seconds
+        setIsLoadingNewClusters(true);
+        
+        // After 3 seconds, refresh the display with latest data
+        setTimeout(() => {
+          setIsLoadingNewClusters(false);
+        }, 3000);
+      }
+    };
+    
+    // Add message listener
+    chrome.runtime.onMessage.addListener(handleMessage);
+    
+    // Remove listener on cleanup
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleMessage);
+    };
+  }, []);
 
   // Handle cluster click
   const handleClusterClick = (cluster?: ClusterSuggestion) => {
@@ -172,7 +184,8 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         {clusters.length > 0 ? (
           // Only show clusters if we have data
           Array.from({ length: Math.min(clusterCount, clusters.length) }).map((_, index) => {
-            const clusterData = clusters[index];
+            // When loading new clusters, pass undefined to show loading animation
+            const clusterData = isLoadingNewClusters ? undefined : clusters[index];
             return (
               <ClusterSquare
                 key={`cluster-${index}`}

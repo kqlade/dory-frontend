@@ -15,6 +15,7 @@ export enum MessageType {
   AUTH_RESULT = 'AUTH_RESULT',
   API_PROXY_REQUEST = 'API_PROXY_REQUEST',
   API_PROXY_RESPONSE = 'API_PROXY_RESPONSE',
+  CLUSTERS_UPDATED = 'CLUSTERS_UPDATED',
 }
 
 export interface Message<T = any> {

@@ -37,6 +37,7 @@ import { logEvent } from '../utils/dexieEventLogger';
 import { EventType } from '../api/types';
 import { isWebPage } from '../utils/urlUtils';
 import { ColdStorageSync } from '../services/coldStorageSync';
+import { getClusterSuggestions } from '../services/clusteringService';
 
 import {
   checkAuthDirect,
@@ -163,6 +164,15 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
       const syncDuration = Date.now() - startTime;
       
       console.log(`[DORY] Cold storage sync completed successfully in ${syncDuration}ms`);
+      
+      // Also refresh clusters while we're at it (piggyback on the existing sync)
+      try {
+        console.log('[DORY] Starting cluster fetch after cold storage sync');
+        const result = await getClusterSuggestions({ forceRefresh: true });
+        console.log(`[DORY] Cluster fetch completed successfully: ${result.current.length} current clusters`);
+      } catch (clusterErr) {
+        console.error('[DORY] Error fetching clusters:', clusterErr);
+      }
     } catch (error) {
       console.error('[DORY] Error during cold storage sync:', error);
       

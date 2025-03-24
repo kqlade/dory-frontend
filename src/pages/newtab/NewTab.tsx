@@ -4,8 +4,11 @@ import ClusterContainer from '../../components/ClusterContainer';
 import ThemeToggle from '../../components/ThemeToggle';
 import { checkAuth, login } from '../../services/authService';
 import { MessageType } from '../../utils/messageSystem';
-import { fetchClusterSuggestions } from '../../services/clusteringService';
+import { ClusterSuggestion } from '../../services/clusteringService';
 import './newtab.css';
+
+// Key for cluster storage
+const CLUSTER_HISTORY_KEY = 'clusterHistory';
 
 /**
  * This page renders the "DORY" text, the search bar, cluster squares, and the ThemeToggle.
@@ -22,8 +25,11 @@ const NewTab: React.FC = () => {
     isAuthenticated: false,
     isLoading: true
   });
-  // Add state to track if we have clusters
-  const [hasClusters, setHasClusters] = useState(false);
+  // Add state for current and previous clusters
+  const [currentClusters, setCurrentClusters] = useState<ClusterSuggestion[]>([]);
+  const [previousClusters, setPreviousClusters] = useState<ClusterSuggestion[]>([]);
+  // Add state to track whether to show previous clusters
+  const [showPreviousClusters, setShowPreviousClusters] = useState(false);
 
   // Check authentication status
   useEffect(() => {
@@ -57,22 +63,69 @@ const NewTab: React.FC = () => {
     };
   }, []);
 
-  // Check for clusters when authenticated
+  // Load clusters directly from storage when authenticated
   useEffect(() => {
-    const checkForClusters = async () => {
+    const loadClusters = async () => {
       if (authState.isAuthenticated) {
         try {
-          const clusters = await fetchClusterSuggestions(3);
-          setHasClusters(clusters.length > 0);
+          // Read directly from storage instead of calling fetchClusterSuggestions
+          const storage = await chrome.storage.local.get(CLUSTER_HISTORY_KEY);
+          const history = storage[CLUSTER_HISTORY_KEY] || {};
+          
+          // Set both current and previous clusters from storage
+          setCurrentClusters(history.current || []);
+          setPreviousClusters(history.previous || []);
+          
+          console.log('[NewTab] Loaded clusters from storage:', 
+            `current: ${history.current?.length || 0}, previous: ${history.previous?.length || 0}`);
         } catch (error) {
-          console.error('[NewTab] Error checking for clusters:', error);
-          setHasClusters(false);
+          console.error('[NewTab] Error loading clusters from storage:', error);
         }
       }
     };
     
-    checkForClusters();
+    loadClusters();
+    
+    // Also listen for cluster updates to refresh from storage after animation
+    const handleClusterUpdate = (message: any) => {
+      if (message.type === MessageType.CLUSTERS_UPDATED && authState.isAuthenticated) {
+        // Wait slightly longer than the animation (3 seconds) to update
+        setTimeout(async () => {
+          await loadClusters();
+        }, 3100); // 3.1 seconds
+      }
+    };
+    
+    chrome.runtime.onMessage.addListener(handleClusterUpdate);
+    
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleClusterUpdate);
+    };
   }, [authState.isAuthenticated]);
+
+  // Add keyboard shortcut listener for Alt+P / Option+P
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Alt+P (Windows) or Option+P (Mac)
+      if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        // Only toggle if previous clusters exist
+        if (previousClusters.length > 0) {
+          setShowPreviousClusters(prev => !prev);
+          console.log('[NewTab] Toggled to', !showPreviousClusters ? 'previous' : 'current', 'clusters');
+        } else {
+          console.log('[NewTab] No previous clusters available to toggle');
+        }
+      }
+    };
+
+    // Add the event listener
+    document.addEventListener('keydown', handleKeyDown);
+
+    // Clean up
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [previousClusters.length, showPreviousClusters]);
 
   const handleSignIn = () => {
     // This is the key function that's being reused from the popup
@@ -120,6 +173,9 @@ const NewTab: React.FC = () => {
     );
   }
 
+  // Get the appropriate clusters based on toggle state
+  const displayClusters = showPreviousClusters ? previousClusters : currentClusters;
+
   // Authenticated - show regular content with search bar and clusters
   return (
     <div className="newtab-container">
@@ -136,9 +192,9 @@ const NewTab: React.FC = () => {
       </div>
 
       {/* Cluster container - only shown if search is not active AND we have clusters */}
-      {!isSearchActive && hasClusters && (
+      {!isSearchActive && displayClusters.length > 0 && (
         <div className="clusters-wrapper">
-          <ClusterContainer />
+          <ClusterContainer clusters={displayClusters} />
         </div>
       )}
 
