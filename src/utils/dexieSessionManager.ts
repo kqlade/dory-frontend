@@ -15,6 +15,9 @@ import { getCurrentUserId } from '../services/userService';
 // Track the current session ID
 let currentSessionId: number | null = null;
 
+// Storage key for persistent session tracking
+const SESSION_STORAGE_KEY = 'doryCurrentSession';
+
 /**
  * Generate a numeric UUID (a number with UUID-like randomness properties)
  * - Uses the same cryptographic randomness as UUIDs
@@ -41,14 +44,75 @@ function generateNumericUuid(): number {
 }
 
 /**
+ * Stores the current session in chrome.storage.local for persistence
+ * @param sessionId The session ID to store
+ * @param lastActivity The timestamp of the last activity
+ */
+async function persistSessionState(sessionId: number, lastActivity: number): Promise<void> {
+  try {
+    await chrome.storage.local.set({
+      [SESSION_STORAGE_KEY]: {
+        sessionId,
+        lastActivityAt: lastActivity
+      }
+    });
+  } catch (err) {
+    console.error('[DORY] Error persisting session state:', err);
+  }
+}
+
+/**
+ * Check if there's a recent active session we can reuse
+ * @param idleThreshold The threshold in ms to consider a session still active
+ * @returns The session ID if a recent session exists, null otherwise
+ */
+async function getRecentSession(idleThreshold: number): Promise<number | null> {
+  try {
+    const storage = await chrome.storage.local.get(SESSION_STORAGE_KEY);
+    const savedSession = storage[SESSION_STORAGE_KEY];
+    
+    if (savedSession && savedSession.sessionId && savedSession.lastActivityAt) {
+      const now = Date.now();
+      // If the last activity was within the idle threshold, session is still valid
+      if (now - savedSession.lastActivityAt < idleThreshold) {
+        // Check if this session is still marked as active in the database
+        const db = dexieDb.getDB();
+        const session = await db.sessions.get(savedSession.sessionId);
+        
+        if (session && session.isActive) {
+          console.log('[DORY] Reusing recent session =>', savedSession.sessionId);
+          return savedSession.sessionId;
+        }
+      }
+    }
+    return null;
+  } catch (err) {
+    console.error('[DORY] Error retrieving recent session:', err);
+    return null;
+  }
+}
+
+/**
  * Start a new session
  * @returns Promise resolving to the new session ID
  */
-export async function startNewSession(): Promise<number> {
+export async function startNewSession(idleThreshold?: number): Promise<number> {
   // Get the authenticated user ID
   const userId = await getCurrentUserId();
   if (!userId) {
     throw new Error('Cannot start session: User not authenticated');
+  }
+
+  // Check for a recent session we can reuse
+  if (idleThreshold) {
+    const recentSessionId = await getRecentSession(idleThreshold);
+    if (recentSessionId) {
+      currentSessionId = recentSessionId;
+      // Update last activity time to now
+      const now = Date.now();
+      await updateSessionActivityTime();
+      return recentSessionId;
+    }
   }
 
   const db = dexieDb.getDB();
@@ -68,6 +132,9 @@ export async function startNewSession(): Promise<number> {
   // Use put to insert with the explicit ID
   await db.sessions.put(session);
   currentSessionId = sessionId;
+  
+  // Persist session in storage for service worker restarts
+  await persistSessionState(sessionId, now);
   
   // Log session started event locally - will be synced to backend via cold storage
   await logEvent({
@@ -101,6 +168,13 @@ export async function endCurrentSession(): Promise<void> {
       endTime: now,
       isActive: false
     });
+    
+    // Clear the persisted session
+    try {
+      await chrome.storage.local.remove(SESSION_STORAGE_KEY);
+    } catch (err) {
+      console.error('[DORY] Error clearing persisted session:', err);
+    }
     
     // Get count of pages visited
     let pagesVisited = 0;
@@ -148,9 +222,13 @@ export async function updateSessionActivityTime(): Promise<void> {
   
   const session = await db.sessions.get(currentSessionId);
   if (session) {
+    const now = Date.now();
     await db.sessions.update(currentSessionId, {
-      lastActivityAt: Date.now()
+      lastActivityAt: now
     });
+    
+    // Also update persisted session state
+    await persistSessionState(currentSessionId, now);
   }
 }
 

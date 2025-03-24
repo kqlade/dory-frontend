@@ -191,10 +191,10 @@ async function initializeServices() {
   try {
     await initDexieSystem();
 
-    // Start a new session
-    const sid = await startNewSession();
+    // Start a new session, potentially reusing a recent one
+    const sid = await startNewSession(SESSION_IDLE_THRESHOLD);
     isSessionActive = true;
-    console.log('[DORY] Started session =>', sid);
+    console.log('[DORY] Session active =>', sid);
 
     // Initialize event streaming
     await initEventService();
@@ -325,9 +325,10 @@ async function ensureActiveSession(): Promise<boolean> {
       return false;
     }
     if (!isSessionActive) {
-      const newId = await startNewSession();
+      // Pass the idle threshold to potentially reuse a recent session
+      const newId = await startNewSession(SESSION_IDLE_THRESHOLD);
       isSessionActive = true;
-      console.log('[DORY] New session =>', newId);
+      console.log('[DORY] Session active =>', newId);
     }
   } catch (err) {
     console.error('[DORY] Error ensuring active session:', err);
@@ -762,7 +763,8 @@ async function handleNavigation(
       tabToPageId,
       tabToVisitId,
       async startNewVisit(tabId: number, pageId: string, fromPageId?: string, isBackNav?: boolean) {
-        await ensureActiveSession();
+        // Removed ensureActiveSession() call - we know the user is authenticated
+        // which means a session must already exist from initialization or auth
         const sessId = await getCurrentSessionId();
         if (!sessId) throw new Error('No active session');
 
