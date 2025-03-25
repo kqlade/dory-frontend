@@ -4,9 +4,7 @@
  */
 
 import React, { useEffect } from 'react';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { queryClient } from '../../background/queryClient';
-import NewTabSearchBar from '../../components/NewTabSearchBar';
+import OverlaySearchBar from './OverlaySearchBar';
 
 interface SearchOverlayProps {
   onClose: () => void;
@@ -31,9 +29,7 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
 
   return (
     <div className="spotlight-search">
-      <QueryClientProvider client={queryClient}>
-        <NewTabSearchBar />
-      </QueryClientProvider>
+      <OverlaySearchBar onClose={onClose} />
     </div>
   );
 } 

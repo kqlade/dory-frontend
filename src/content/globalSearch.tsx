@@ -114,6 +114,15 @@ function showSearchOverlay(): void {
       background-color: #ffffff !important;
       color: #000000 !important;
       border: 1px solid rgba(0, 0, 0, 0.3) !important;
+      --border-color: rgba(0, 0, 0, 0.1);
+      --border-hover-color: rgba(0, 0, 0, 0.2);
+      --border-focus-color: #74d6ff;
+      --shadow-color: rgba(0, 0, 0, 0.1);
+      --shadow-focus-color: rgba(116, 214, 255, 0.2);
+      --text-color: #000000;
+      --text-primary: #000000;
+      --text-secondary: #555555;
+      --item-hover-bg: rgba(0, 0, 0, 0.05);
     }
     
     .dory-light-theme .search-input {
@@ -129,6 +138,15 @@ function showSearchOverlay(): void {
       background-color: #1e1e1e !important;
       color: #ffffff !important;
       border: 1px solid rgba(255, 255, 255, 0.3) !important;
+      --border-color: rgba(255, 255, 255, 0.1);
+      --border-hover-color: rgba(255, 255, 255, 0.2);
+      --border-focus-color: #74d6ff;
+      --shadow-color: rgba(0, 0, 0, 0.3);
+      --shadow-focus-color: rgba(116, 214, 255, 0.2);
+      --text-color: #ffffff;
+      --text-primary: #ffffff;
+      --text-secondary: #bbbbbb;
+      --item-hover-bg: rgba(255, 255, 255, 0.1);
     }
     
     .dory-dark-theme .search-input {
@@ -148,14 +166,83 @@ function showSearchOverlay(): void {
       background-color: #1e1e1e !important;
     }
     
-    .dory-light-theme .result-item.selected,
+    /* Selected result item styling - light theme */
     .dory-light-theme .result-item:hover {
       background-color: rgba(0, 0, 0, 0.05) !important;
     }
     
-    .dory-dark-theme .result-item.selected,
+    .dory-light-theme .result-item.selected {
+      background-color: rgba(0, 0, 0, 0.05) !important;
+      border-left: 3px solid rgba(0, 0, 0, 0.8) !important;
+      padding-left: 9px !important; /* 12px - 3px border */
+    }
+    
+    /* Selected result item styling - dark theme */
     .dory-dark-theme .result-item:hover {
       background-color: rgba(255, 255, 255, 0.1) !important;
+    }
+    
+    .dory-dark-theme .result-item.selected {
+      background-color: rgba(255, 255, 255, 0.1) !important;
+      border-left: 3px solid rgba(255, 255, 255, 0.8) !important;
+      padding-left: 9px !important; /* 12px - 3px border */
+    }
+    
+    /* Status messages styling */
+    .dory-light-theme .status-message,
+    .dory-dark-theme .status-message {
+      text-align: center !important;
+      padding: 10px 12px !important;
+      min-height: 24px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      transition: opacity 0.2s ease !important;
+      border-radius: 8px !important;
+      margin: 4px 0 !important;
+    }
+    
+    .dory-light-theme .status-message {
+      color: #555555 !important;
+    }
+    
+    .dory-dark-theme .status-message {
+      color: #bbbbbb !important;
+    }
+    
+    /* Result text styling */
+    .dory-light-theme .result-title, 
+    .dory-dark-theme .result-title {
+      font-size: 16px !important;
+      font-weight: 500 !important;
+      margin-bottom: 4px !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    
+    .dory-light-theme .result-title {
+      color: #000000 !important;
+    }
+    
+    .dory-dark-theme .result-title {
+      color: #ffffff !important;
+    }
+    
+    .dory-light-theme .result-url,
+    .dory-dark-theme .result-url {
+      font-size: 12px !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    
+    .dory-light-theme .result-url {
+      color: #555555 !important;
+    }
+    
+    .dory-dark-theme .result-url {
+      color: #bbbbbb !important;
     }
   `;
   document.head.appendChild(styleSheet);

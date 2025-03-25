@@ -59,4 +59,4 @@ export const DEBUG = true; // Force debug logs on
 // ============================================================================
 
 // Controls whether the global search shortcut (Command+Shift+Space) is enabled
-export const ENABLE_GLOBAL_SEARCH = false; 
+export const ENABLE_GLOBAL_SEARCH = true; 

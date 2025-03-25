@@ -1,7 +1,6 @@
 import React, { useRef, useState, useEffect, KeyboardEvent } from 'react';
-import { useHybridSearch } from '../utils/useSearch';
-import { trackSearchClick } from '../services/eventService';
-import './NewTabSearchBar.css';
+import { useOverlaySearch } from '../../utils/useOverlaySearch';
+import '../../components/NewTabSearchBar.css';
 
 /**
  * Shape of each search result (customize fields as needed).
@@ -18,7 +17,7 @@ interface SearchResult {
 }
 
 /**
- * Simple Dory logo for toggling semantic mode (unchanged).
+ * Simple Dory logo for toggling semantic mode.
  */
 const DoryLogo = ({ size = 24 }: { size?: number }) => (
   <svg
@@ -35,20 +34,15 @@ const DoryLogo = ({ size = 24 }: { size?: number }) => (
 );
 
 /**
- * Self-contained search bar component that:
- * 1) Uses `useHybridSearch` internally (no props needed).
- * 2) Manages its own inputValue, results, spinner, semantic toggle, etc.
- * 3) Handles arrow key navigation, Enter/Escape, "No results," "Searching...".
- * 4) Tracks clicks and navigates to the chosen URL.
- * 5) Even includes the '/' key global focus logic.
+ * Version of SearchBar specifically for the overlay that uses messaging
  */
-interface NewTabSearchBarProps {
-  onSearchStateChange?: (isSearchActive: boolean) => void;
+interface OverlaySearchBarProps {
+  onClose?: () => void;
 }
 
-const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }) => {
+const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   // ------------------------------
-  // 1. Use your search hook (Option A: internal ownership).
+  // 1. Use overlay search hook that uses messaging
   // ------------------------------
   const {
     inputValue,
@@ -58,7 +52,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     results,
     semanticEnabled,
     toggleSemanticSearch
-  } = useHybridSearch();
+  } = useOverlaySearch();
 
   // ------------------------------
   // 2. Local state for keyboard highlight
@@ -87,25 +81,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     setSelectedIndex(-1);
   }, [results]);
 
-  // ------------------------------
-  // 5. Global '/' key to focus the bar
-  // ------------------------------
+  // Focus the input when the component mounts
   useEffect(() => {
-    const handleGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
-      // If '/' is pressed and we're not inside an input/textarea, focus search
-      if (
-        event.key === '/' &&
-        document.activeElement?.tagName !== 'INPUT' &&
-        document.activeElement?.tagName !== 'TEXTAREA'
-      ) {
-        event.preventDefault();
-        searchInputRef.current?.focus();
-      }
-    };
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
-    };
+    searchInputRef.current?.focus();
   }, []);
 
   // ------------------------------
@@ -130,7 +108,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
       }
     } else if (e.key === 'Escape') {
-      setSelectedIndex(-1);
+      if (onClose) {
+        onClose();
+      }
     } else if (e.key === 'Enter') {
       if (selectedIndex >= 0 && selectedIndex < results.length) {
         e.preventDefault();
@@ -146,15 +126,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // 8. Navigate to a result
   // ------------------------------
   const navigateToResult = (result: SearchResult) => {
-    // Track it
-    trackSearchClick(
-      result.searchSessionId || 'local-session',
-      result.id || result.pageId || '',
-      results.findIndex((r) => r.id === result.id),
-      result.url,
-      inputValue
-    );
-    // Then open in a new tab
+    // Open in a new tab instead of navigating current page
     window.open(result.url, '_blank');
   };
 
@@ -166,7 +138,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   };
 
   // ------------------------------
-  // 10. Conditionals for UI states
+  // 10. Conditionals for UI states - Matching NewTabSearchBar exactly
   // ------------------------------
   const showResults = inputValue.length >= 2 && (results.length > 0 || !debounceElapsed);
   const showNoResults =
@@ -182,14 +154,6 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
 
   // Show spinner when searching or during debounce period (for both modes)
   const showSpinner = isSearching || (inputValue.length >= 2 && !debounceElapsed);
-
-  // Determine if any search UI is active (results, no results, or searching)
-  const isSearchActive = inputValue.length >= 2 && (showResults || showNoResults || showSearching);
-  
-  // Notify parent component when search state changes
-  useEffect(() => {
-    onSearchStateChange?.(isSearchActive);
-  }, [isSearchActive, onSearchStateChange]);
 
   return (
     <div className="search-container">
@@ -235,7 +199,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         <ul className="results-list">
           {results.map((item: SearchResult, idx) => (
             <li
-              key={item.id}
+              key={item.id || idx}
               className={`result-item ${idx === selectedIndex ? 'selected' : ''}`}
               onClick={() => handleResultClick(item)}
               onMouseEnter={() => setSelectedIndex(idx)}
@@ -270,4 +234,4 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   );
 };
 
-export default NewTabSearchBar;
+export default OverlaySearchBar; 

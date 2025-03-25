@@ -34,10 +34,13 @@ import {
 import { initDexieSystem } from '../utils/dexieInit';
 import { initEventService, sendContentEvent } from '../services/eventService';
 import { logEvent } from '../utils/dexieEventLogger';
-import { EventType } from '../api/types';
+import { EventType, SearchResponse } from '../api/types';
 import { isWebPage } from '../utils/urlUtils';
 import { ColdStorageSync } from '../services/coldStorageSync';
 import { getClusterSuggestions } from '../services/clusteringService';
+import { localRanker } from '../services/localDoryRanking';
+import { semanticSearch } from '../api/client';
+import { getCurrentUserId } from '../services/userService';
 
 import {
   checkAuthDirect,
@@ -48,8 +51,6 @@ import {
   handleOnCommitted,
   handleOnCreatedNavigationTarget
 } from '../utils/navigationHandlers';
-
-import { getCurrentUserId } from '../services/userService';
 
 import { 
   API_BASE_URL, 
@@ -792,3 +793,94 @@ async function handleNavigation(
     console.error('[DORY] handleNavigation error =>', err);
   }
 }
+
+// Handle messages from content scripts
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'PERFORM_SEARCH') {
+    console.log('[DORY] Background received search request:', message.query);
+    
+    if (!sender.tab || !sender.tab.id) {
+      console.error('[DORY] Cannot respond to search request: no tab ID');
+      return true;
+    }
+    
+    const tabId = sender.tab.id;
+    const query = message.query;
+    const semanticEnabled = message.semanticEnabled || false;
+    
+    // Perform the actual search
+    (async () => {
+      try {
+        let results = [];
+        
+        // First try to get local results (always available)
+        await localRanker.initialize();
+        const localResults = await localRanker.rank(query);
+        
+        // Format local results
+        const formattedLocalResults = localResults.map(r => ({
+          id: r.pageId,
+          title: r.title,
+          url: r.url,
+          score: r.score,
+          source: 'local',
+        }));
+        
+        results = formattedLocalResults;
+        
+        // If semantic search is enabled, try to get semantic results
+        if (semanticEnabled) {
+          try {
+            const userId = await getCurrentUserId();
+            
+            if (userId) {
+              const semanticResponse = await semanticSearch(query, userId, {
+                limit: 20,
+                useHybridSearch: true,
+                useLLMExpansion: true,
+                useReranking: true,
+              });
+              
+              // Safely cast the response to SearchResponse
+              const semanticResults = semanticResponse as SearchResponse;
+              
+              // Format semantic results
+              const formattedSemanticResults = semanticResults.map(result => ({
+                id: result.docId,
+                pageId: result.pageId,
+                title: result.title,
+                url: result.url,
+                score: result.score,
+                explanation: result.explanation,
+                source: 'semantic',
+              }));
+              
+              // If semantic search is enabled, only return semantic results
+              results = formattedSemanticResults;
+            }
+          } catch (error) {
+            console.error('[DORY] Error performing semantic search:', error);
+            // Fall back to local results if semantic search fails
+          }
+        }
+        
+        // Send results back to the content script
+        console.log('[DORY] Sending search results to tab:', tabId, 'count:', results.length);
+        chrome.tabs.sendMessage(tabId, {
+          type: 'SEARCH_RESULTS',
+          results: results
+        });
+      } catch (error) {
+        console.error('[DORY] Error performing search:', error);
+        // Send empty results if search fails
+        chrome.tabs.sendMessage(tabId, {
+          type: 'SEARCH_RESULTS',
+          results: []
+        });
+      }
+    })();
+    
+    // Return true to indicate we'll respond asynchronously
+    return true;
+  }
+});
