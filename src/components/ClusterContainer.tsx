@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, WheelEvent } from 'react';
 import ReactDOM from 'react-dom';
 import ClusterSquare from './ClusterSquare';
 import { 
@@ -27,6 +27,9 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
 
   // State to track if we're showing loading animation for new clusters
   const [isLoadingNewClusters, setIsLoadingNewClusters] = useState(false);
+  
+  // State for the starting index of the visible window (showing 3 items at a time)
+  const [startIndex, setStartIndex] = useState(0);
 
   // Reference to the expanded view
   const expandedViewRef = useRef<HTMLDivElement>(null);
@@ -64,6 +67,8 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     if (cluster) {
       setExpandedCluster(cluster);
       setSelectedPageIndex(-1);
+      // Reset start index when opening a new cluster
+      setStartIndex(0);
     }
   };
 
@@ -97,11 +102,30 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     };
   }, [expandedCluster]);
   
+  // Handle scroll events to shift the visible window
+  const handleScroll = (event: WheelEvent<HTMLUListElement>) => {
+    if (!expandedCluster) return;
+    
+    const pages = expandedCluster.top_pages || [];
+    const maxStartIndex = Math.max(0, pages.length - 3);
+    
+    if (event.deltaY > 0 && startIndex < maxStartIndex) {
+      // Scrolling down
+      event.preventDefault();
+      setStartIndex(prev => Math.min(prev + 1, maxStartIndex));
+    } else if (event.deltaY < 0 && startIndex > 0) {
+      // Scrolling up
+      event.preventDefault();
+      setStartIndex(prev => Math.max(prev - 1, 0));
+    }
+  };
+  
   // Handle keyboard navigation for pages
   useEffect(() => {
     if (!expandedCluster) return;
     
     const pages = expandedCluster.top_pages || [];
+    const maxStartIndex = Math.max(0, pages.length - 3);
     
     const handleKeyDown = (event: KeyboardEvent) => {
       // Only handle keys if the pop-up is open
@@ -111,13 +135,35 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         case 'ArrowDown':
           event.preventDefault();
           if (pages.length > 0) {
-            setSelectedPageIndex(prev => (prev < pages.length - 1 ? prev + 1 : 0));
+            const newSelectedIndex = selectedPageIndex < pages.length - 1 
+              ? selectedPageIndex + 1 
+              : 0;
+            
+            setSelectedPageIndex(newSelectedIndex);
+            
+            // Adjust the window if necessary
+            if (newSelectedIndex >= startIndex + 3) {
+              setStartIndex(Math.min(newSelectedIndex - 2, maxStartIndex));
+            } else if (newSelectedIndex < startIndex) {
+              setStartIndex(newSelectedIndex);
+            }
           }
           break;
         case 'ArrowUp':
           event.preventDefault();
           if (pages.length > 0) {
-            setSelectedPageIndex(prev => (prev > 0 ? prev - 1 : pages.length - 1));
+            const newSelectedIndex = selectedPageIndex > 0 
+              ? selectedPageIndex - 1 
+              : pages.length - 1;
+            
+            setSelectedPageIndex(newSelectedIndex);
+            
+            // Adjust the window if necessary
+            if (newSelectedIndex < startIndex) {
+              setStartIndex(newSelectedIndex);
+            } else if (newSelectedIndex >= startIndex + 3) {
+              setStartIndex(newSelectedIndex - 2);
+            }
           }
           break;
         case 'Enter':
@@ -137,7 +183,7 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [expandedCluster, selectedPageIndex]);
+  }, [expandedCluster, selectedPageIndex, startIndex]);
 
   // Render the expanded view using a portal
   const renderExpandedView = () => {
@@ -146,6 +192,11 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     const pages = expandedCluster.top_pages || [];
     const hasPages = pages.length > 0;
     
+    // Create a slice of 3 items from the current startIndex
+    const visiblePages = hasPages 
+      ? pages.slice(startIndex, startIndex + 3) 
+      : [];
+    
     const view = (
       <div className="expanded-cluster-view" ref={expandedViewRef}>
         <div className="expanded-cluster-header">
@@ -153,17 +204,24 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         </div>
         <div className="expanded-cluster-content">
           {hasPages ? (
-            <ul className="results-list">
-              {pages.map((page, idx) => (
-                <li
-                  key={page.page_id}
-                  className={`result-item ${idx === selectedPageIndex ? 'selected' : ''}`}
-                  onClick={() => handlePageClick(page)}
-                >
-                  <div className="result-title">{page.title}</div>
-                  <div className="result-url">{page.url}</div>
-                </li>
-              ))}
+            <ul 
+              className="results-list"
+              onWheel={handleScroll}
+            >
+              {visiblePages.map((page, idx) => {
+                // Calculate the actual index in the full list
+                const actualIndex = startIndex + idx;
+                return (
+                  <li
+                    key={page.page_id}
+                    className={`result-item ${actualIndex === selectedPageIndex ? 'selected' : ''}`}
+                    onClick={() => handlePageClick(page)}
+                  >
+                    <div className="result-title">{page.title}</div>
+                    <div className="result-url">{page.url}</div>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <div className="status-message">
