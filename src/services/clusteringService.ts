@@ -67,8 +67,8 @@ export async function getClusterSuggestions(options: {
       const history = storage[CLUSTER_HISTORY_KEY];
       
       if (history && history.timestamp) {
-        // Use cached data if it's less than 10 minutes old
-        const isFresh = (Date.now() - history.timestamp) < 10 * 60 * 1000; // 10 minutes
+        // Use cached data if it's less than 5 minutes old
+        const isFresh = (Date.now() - history.timestamp) < 5 * 60 * 1000; // 5 minutes
         
         if (isFresh) {
           console.log('[ClusteringService] Using cached clusters');
@@ -130,7 +130,7 @@ export async function fetchClusterSuggestions(count: number = 3): Promise<Cluste
       return [];
     }
 
-    const endpoint = `${ENDPOINTS.CLUSTERING.CLUSTERS}?user_id=${user.id}&count=${count}`;
+    const endpoint = `${ENDPOINTS.CLUSTERING.SUGGESTIONS}?user_id=${user.id}&count=${count}`;
     console.log('[ClusteringService] Fetching clusters from:', endpoint);
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`);
@@ -160,7 +160,7 @@ export async function triggerClustering(): Promise<boolean> {
       return false;
     }
 
-    const endpoint = `${ENDPOINTS.CLUSTERING.TRIGGER}?user_id=${user.id}`;
+    const endpoint = `${ENDPOINTS.CLUSTERING.SUGGESTIONS}?user_id=${user.id}&trigger=true`;
     console.log('[ClusteringService] Triggering clustering for user:', user.id);
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {

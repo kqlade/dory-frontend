@@ -2,7 +2,7 @@
  * @file coldStorageSync.ts
  * 
  * Cold Storage Sync Service
- * Runs every 10 minutes to batch-upload data from IndexedDB to the backend.
+ * Runs every 5 minutes to batch-upload data from IndexedDB to the backend.
  */
 
 import { getDB } from '../db/dexieDB';
@@ -11,7 +11,7 @@ import { EventType } from '../api/types';
 import { getCurrentUserId } from '../services/userService';
 
 // Typical daily interval in minutes
-const SYNC_INTERVAL_MINUTES = 10; // Changed from 24 * 60 (24 hours) to 10 minutes
+const SYNC_INTERVAL_MINUTES = 5; // Changed from 10 minutes to 5 minutes
 const LAST_SYNC_KEY = 'lastColdStorageSync';
 const BATCH_SIZE = 500; // Number of records per batch
 const DEBUG_MODE = process.env.NODE_ENV === 'development';
@@ -46,7 +46,7 @@ export class ColdStorageSync {
   }
 
   /**
-   * Initialize 10-minute interval alarm-based scheduling for MV3
+   * Initialize 5-minute interval alarm-based scheduling for MV3
    * (called from the background service worker).
    */
   public static initializeScheduling(): void {
@@ -57,7 +57,7 @@ export class ColdStorageSync {
       periodInMinutes: SYNC_INTERVAL_MINUTES,
       when: Date.now() + 60_000 // start ~1 min from now
     });
-    console.log('[ColdStorageSync] Alarm scheduled for 10-minute sync intervals');
+    console.log('[ColdStorageSync] Alarm scheduled for 5-minute sync intervals');
   }
 
   /**
@@ -538,7 +538,7 @@ export class ColdStorageSync {
  *  // On extension startup:
  *  ColdStorageSync.initializeScheduling();
  *
- *  // On alarm (every 10 minutes):
+ *  // On alarm (every 5 minutes):
  *  chrome.alarms.onAlarm.addListener(alarm => {
  *    if (alarm.name === 'doryColdStorageSync') {
  *      const syncer = new ColdStorageSync('alarm');

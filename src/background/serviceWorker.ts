@@ -201,9 +201,9 @@ async function initializeServices() {
     await initEventService();
     console.log('[DORY] Event streaming init done');
 
-    // Initialize cold storage sync scheduler (every 10 minutes)
+    // Initialize cold storage sync scheduler (every 5 minutes)
     ColdStorageSync.initializeScheduling();
-    console.log('[DORY] Cold storage sync scheduled for 10-minute intervals');
+    console.log('[DORY] Cold storage sync scheduled for 5-minute intervals');
 
     // Start idle check
     idleCheckInterval = setInterval(checkSessionInactivity, 60_000);

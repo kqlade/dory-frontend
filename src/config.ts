@@ -18,8 +18,7 @@ export const ENDPOINTS = {
     LOGOUT: '/api/auth/logout'    // Logout endpoint
   },
   CLUSTERING: {
-    CLUSTERS: '/api/clusters/clusters',
-    TRIGGER: '/api/clusters/trigger'
+    SUGGESTIONS: '/api/clustering/suggestions'
   }
 } as const;
 

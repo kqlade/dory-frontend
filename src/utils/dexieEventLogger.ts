@@ -12,8 +12,8 @@ import { EventType } from '../api/types';
 import { createColdStorageSyncer } from '../services/coldStorageSync';
 import { getCurrentUserId } from '../services/userService';
 
-// Minimum time between cold storage syncs (10 minutes)
-const MIN_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+// Minimum time between cold storage syncs (5 minutes)
+const MIN_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const LAST_SYNC_KEY = 'lastColdStorageSync';
 
 // Extend the API event type with database-specific fields
