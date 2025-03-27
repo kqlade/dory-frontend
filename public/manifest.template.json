@@ -2,7 +2,7 @@
   "name": "DORY: Dynamic Online Recall for You",
   "version": "1.0",
   "manifest_version": 3,
-  "description": "Find what you forgot",
+  "description": "Browser-native enterprise search.",
   "action": {
     "default_icon": {
       "16": "icons/dory_logo_16x16.png",
