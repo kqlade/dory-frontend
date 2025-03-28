@@ -3,6 +3,7 @@
   "version": "1.0",
   "manifest_version": 3,
   "description": "Browser-native enterprise search.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqDnndR+XG9qnuDsagwzT+rL/bvLLSpNYk3bt/1ioRv6lL0GcQa+2ZWu4poZ8loBrO98p+KR6oh32tC+q9ouIZ75z/zbDkjqEWxjrYcYQR1vPTN7qdcoDhUlR5lXF4h7lTviSLR44AQC+Bc2+tC01OpbcJ9n0AwvGXdf4+XTztZ1WJ3fhOqiw2mLTrXgVtktOxZCULbk5R+mJFnTAI/ZTU5wvR8cUuYLPpzOk9wDTKG6vV2EEdzOjxMRvnmhk69O50vXjITmiGYCXZ1a5HxMkjLi/m0jW6e3R3wRGQhGcQfYfk/5R9ppEiJmSrxN5d/fCYt5HGzBkbxmFCd9sXEDFYQIDAQAB",
   "action": {
     "default_icon": {
       "16": "icons/dory_logo_16x16.png",
