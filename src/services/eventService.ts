@@ -3,6 +3,7 @@ import { API_BASE_URL, ENDPOINTS } from '../config';
 import { EventType } from '../api/types';
 import { logEvent } from '../utils/dexieEventLogger';
 import { getCurrentSessionId } from '../utils/dexieSessionManager';
+import { refreshAuthToken } from './authService';
 
 // Types
 export interface ContentEvent {
@@ -98,6 +99,23 @@ async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Resp
         statusText: resp.statusText,
         endpoint
       });
+      
+      // Handle 401 Unauthorized errors by refreshing the token
+      if (resp.status === 401) {
+        console.log('[EventService] 401 Unauthorized, attempting token refresh');
+        
+        // Try to refresh the token
+        const refreshSuccess = await refreshAuthToken();
+        
+        if (refreshSuccess) {
+          console.log('[EventService] Token refresh successful, retrying request');
+          // Retry the original request with the new token
+          return sendToAPI(endpoint, body, 0); // Reset retry counter
+        } else {
+          console.error('[EventService] Token refresh failed');
+        }
+      }
+      
       throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
     }
     

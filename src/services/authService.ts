@@ -108,9 +108,17 @@ export async function authenticateWithGoogleIdToken(idToken: string): Promise<bo
     const data = responseData.data;
     if (data?.user) {
       const storageData: Record<string, any> = { user: data.user };
+      
+      // Store access token
       if (data.access_token || data.token) {
         storageData.auth_token = data.access_token || data.token;
       }
+      
+      // Store refresh token if available
+      if (data.refresh_token) {
+        storageData.refresh_token = data.refresh_token;
+      }
+      
       await chrome.storage.local.set(storageData);
 
       // Notify background that we are now authenticated
@@ -142,8 +150,8 @@ export async function logout(): Promise<void> {
     console.error('[Auth] Logout request failed (proxy):', err);
   }
 
-  // Clear local storage
-  await chrome.storage.local.remove(['user', 'auth_token']);
+  // Clear local storage (including refresh token)
+  await chrome.storage.local.remove(['user', 'auth_token', 'refresh_token']);
   // Notify the background
   chrome.runtime.sendMessage(
     createMessage(MessageType.AUTH_RESULT, { isAuthenticated: false }, 'content')
@@ -238,14 +246,77 @@ export async function authenticateWithGoogleIdTokenDirect(idToken: string): Prom
 
     // If user + token returned, store them
     const storageData: Record<string, any> = { user: data.user };
+    
+    // Store access token
     if (data.access_token || data.token) {
       storageData.auth_token = data.access_token || data.token;
     }
+    
+    // Store refresh token if available
+    if (data.refresh_token) {
+      storageData.refresh_token = data.refresh_token;
+    }
+    
     await chrome.storage.local.set(storageData);
 
     return true;
   } catch (err) {
     console.error('[Auth] authenticateWithGoogleIdTokenDirect error:', err);
+    return false;
+  }
+}
+
+/**
+ * refreshAuthToken() – (Background)
+ * Refreshes the access token using the stored refresh token.
+ * Returns true if successful, false otherwise.
+ */
+export async function refreshAuthToken(): Promise<boolean> {
+  try {
+    console.log('[Auth] Attempting to refresh access token');
+    
+    // Get the refresh token from storage
+    const storage = await chrome.storage.local.get(['refresh_token']);
+    const refreshToken = storage.refresh_token;
+    
+    if (!refreshToken) {
+      console.error('[Auth] No refresh token available');
+      return false;
+    }
+    
+    // Call the refresh endpoint
+    const resp = await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.REFRESH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+      credentials: 'include'
+    });
+    
+    if (!resp.ok) {
+      console.error('[Auth] Token refresh failed => status:', resp.status);
+      return false;
+    }
+    
+    const data = await resp.json().catch(() => null);
+    if (!data?.access_token) {
+      console.error('[Auth] No access token returned from refresh endpoint');
+      return false;
+    }
+    
+    // Store the new access token
+    const storageData: Record<string, any> = {};
+    if (data.access_token) {
+      storageData.auth_token = data.access_token;
+    }
+    if (data.refresh_token) {
+      storageData.refresh_token = data.refresh_token;
+    }
+    await chrome.storage.local.set(storageData);
+    
+    console.log('[Auth] Successfully refreshed access token');
+    return true;
+  } catch (err) {
+    console.error('[Auth] Token refresh failed:', err);
     return false;
   }
 }
@@ -259,5 +330,6 @@ export default {
 
   // For background:
   checkAuthDirect,
-  authenticateWithGoogleIdTokenDirect
+  authenticateWithGoogleIdTokenDirect,
+  refreshAuthToken
 };

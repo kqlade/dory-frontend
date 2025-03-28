@@ -18,6 +18,8 @@ import {
   trackSearchClick,
 } from '../services/eventService';
 
+import { refreshAuthToken } from '../services/authService';
+
 /**
  * Delays execution for the specified number of milliseconds.
  */
@@ -60,6 +62,23 @@ export async function apiRequest<T>(
 
     if (!response.ok) {
       const errorText = await response.text();
+      
+      // Handle 401 Unauthorized errors by refreshing the token
+      if (response.status === 401) {
+        console.log('[API Client] 401 Unauthorized, attempting token refresh');
+        
+        // Try to refresh the token
+        const refreshSuccess = await refreshAuthToken();
+        
+        if (refreshSuccess) {
+          console.log('[API Client] Token refresh successful, retrying request');
+          // Retry the original request with the new token
+          return apiRequest<T>(endpoint, init, 1); // Reset retry counter
+        } else {
+          console.error('[API Client] Token refresh failed');
+        }
+      }
+      
       throw new ApiError(
         `API error (${response.status}): ${errorText}`,
         response.status

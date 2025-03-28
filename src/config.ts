@@ -15,6 +15,7 @@ export const ENDPOINTS = {
   AUTH: {
     ME: '/api/auth/me',
     TOKEN: '/api/auth/token',     // Exchange Google token for session
+    REFRESH: '/api/auth/refresh', // Refresh access token using refresh token
     LOGOUT: '/api/auth/logout'    // Logout endpoint
   },
   CLUSTERING: {

@@ -154,8 +154,10 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       result.url,
       inputValue
     );
-    // Then open in a new tab
-    window.open(result.url, '_blank');
+    
+    // Use Chrome's extension API to open a new tab
+    // This is more reliable in the extension context, especially in new tab pages
+    chrome.tabs.create({ url: result.url });
   };
 
   // ------------------------------
