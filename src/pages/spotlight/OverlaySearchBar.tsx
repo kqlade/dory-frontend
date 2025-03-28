@@ -42,24 +42,23 @@ interface OverlaySearchBarProps {
 
 const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   // ------------------------------
-  // 1. Use overlay search hook that uses messaging
+  // 1. Use the refactored overlay search hook
   // ------------------------------
   const {
     inputValue,
     setInputValue,
-    handleEnterKey,
-    isSearching,
-    results,
-    semanticEnabled,
-    toggleSemanticSearch
+    handleEnterKey,       // For local search trigger
+    isSearching,          // Unified loading state (local or semantic)
+    results,              // Unified results (local or semantic)
+    performSemanticSearch // Function to trigger semantic search
   } = useOverlaySearch();
 
   // ------------------------------
-  // 2. Local state for keyboard highlight
+  // 2. Local state for keyboard highlight & double-enter
   // ------------------------------
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  // --- NEW State for double-enter tracking ---
   const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
+  // No displayMode needed here as hook manages unified results
 
   // ------------------------------
   // 3. Ref for focusing the input
@@ -67,18 +66,16 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // ------------------------------
-  // 4. Debounce logic for "searching..." vs. "no results"
+  // 4. Debounce logic helper state
   // ------------------------------
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
-  const timeSinceLastKeystroke = Date.now() - lastKeystrokeTime;
-  const debounceElapsed = timeSinceLastKeystroke > 1000;
 
-  // Update keystroke time whenever input changes
+  // Update keystroke time
   useEffect(() => {
     setLastKeystrokeTime(Date.now());
   }, [inputValue]);
 
-  // Reset selected index on new results
+  // Reset selected index when results change
   useEffect(() => {
     setSelectedIndex(-1);
   }, [results]);
@@ -96,110 +93,92 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   };
 
   // ------------------------------
-  // 7. Keyboard events (arrows, Enter, Escape)
+  // 7. Keyboard events (arrows, Enter, Escape) - Updated
   // ------------------------------
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    const resultsLength = results.length; // Use unified results
+
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (results.length > 0) {
-        setSelectedIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
+      if (resultsLength > 0) {
+        setSelectedIndex((prev) => (prev < resultsLength - 1 ? prev + 1 : 0));
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (results.length > 0) {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
+      if (resultsLength > 0) {
+        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : resultsLength - 1));
       }
     } else if (e.key === 'Escape') {
       if (onClose) {
         onClose();
       }
-      setLastEnterPressTime(0); // Also reset timer on escape
+      setLastEnterPressTime(0); // Reset timer on escape
     } else if (e.key === 'Enter') {
-      if (selectedIndex >= 0 && selectedIndex < results.length) {
+      // Navigate if an item is selected
+      if (selectedIndex >= 0 && selectedIndex < resultsLength) {
         e.preventDefault();
-        navigateToResult(results[selectedIndex]);
-        // Reset enter time if navigating
+        navigateToResult(results[selectedIndex]); // Use unified results
         setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
-        // --- MODIFIED Enter Logic ---
+        // Handle single vs double enter
         const currentTime = Date.now();
-        // Check for double press (within 500ms)
-        if (currentTime - lastEnterPressTime < 500) {
-          console.log('[OverlaySearchBar] Double Enter detected - forcing semantic search.');
-          // Ensure semantic is enabled
-          if (!semanticEnabled) {
-            toggleSemanticSearch(); // Enable it if not already
-          }
-          // Trigger the search (now semantic)
-          handleEnterKey(inputValue);
-          // Reset time to prevent triple-enter issues
-          setLastEnterPressTime(0);
-        } else {
-          // Single press: trigger default search (local)
-          console.log('[OverlaySearchBar] Single Enter detected - performing default search.');
-          handleEnterKey(inputValue);
-          // Store time of this press
-          setLastEnterPressTime(currentTime);
+        if (currentTime - lastEnterPressTime < 500) { // Double press
+          console.log('[OverlaySearchBar] Double Enter detected - performing semantic search.');
+          performSemanticSearch(inputValue); // Trigger semantic search via messaging
+          setLastEnterPressTime(0);         // Reset time
+        } else { // Single press
+          console.log('[OverlaySearchBar] Single Enter detected - performing local search.');
+          handleEnterKey(inputValue);       // Trigger local search via messaging
+          setLastEnterPressTime(currentTime); // Store time of this press
         }
-      } else {
-         // If input is empty, reset timer
-         setLastEnterPressTime(0);
-      }
-    } else {
-        // Any other key resets the timer
+      } else { // Input is empty
         setLastEnterPressTime(0);
+      }
+    } else { // Any other key press
+      // Reset enter timing if user types something else
+      setLastEnterPressTime(0);
     }
   };
 
   // ------------------------------
-  // 8. Navigate to a result
+  // 8. Navigate to a result - Unchanged (uses window.open)
   // ------------------------------
   const navigateToResult = (result: SearchResult) => {
-    // Open in a new tab instead of navigating current page
     window.open(result.url, '_blank');
   };
 
   // ------------------------------
-  // 9. Click on a result item
+  // 9. Click on a result item - Unchanged
   // ------------------------------
   const handleResultClick = (result: SearchResult) => {
     navigateToResult(result);
   };
 
   // ------------------------------
-  // 10. Conditionals for UI states - Matching NewTabSearchBar exactly
+  // 10. Conditionals for UI states - Simplified
   // ------------------------------
-  const showResults = inputValue.length >= 2 && (results.length > 0 || !debounceElapsed);
-  const showNoResults =
-    inputValue.length >= 2 &&
-    results.length === 0 &&
-    !isSearching &&
-    debounceElapsed;
-  const showSearching =
-    inputValue.length >= 2 &&
-    results.length === 0 &&
-    (!debounceElapsed || isSearching);
-  const showSearchModeIndicator = inputValue.length >= 2;
+  const timeSinceLastKeystroke = Date.now() - lastKeystrokeTime;
+  const debounceElapsed = timeSinceLastKeystroke > 1000; // Used for "No results" timing
 
-  // Show spinner when searching or during debounce period (for both modes)
-  const showSpinner = isSearching || (inputValue.length >= 2 && !debounceElapsed);
+  const isSearchPotentiallyActive = inputValue.length >= 2;
+
+  // Show results if available and not searching
+  const showResultsList = isSearchPotentiallyActive && results.length > 0 && !isSearching;
+  // Show "Searching..." if loading
+  const showSearching = isSearchPotentiallyActive && isSearching;
+  // Show "No Results" if not loading, no results, and debounce time elapsed
+  const showNoResults = isSearchPotentiallyActive && results.length === 0 && !isSearching && debounceElapsed;
+  // Spinner shown when searching
+  const showSpinner = isSearching;
 
   return (
     <div className="search-container">
       {/* Top row: Dory icon + input + spinner */}
       <div className="search-bar-inner-container">
-        {/* Icon can toggle semantic mode */}
+        {/* Icon - No click handler, no active class */}
         <div
-          className={[
-            'icon-wrapper',
-            semanticEnabled ? 'active' : '',
-            'clickable' // because we always want it clickable
-          ].join(' ').trim()}
-          onClick={() => {
-            toggleSemanticSearch();
-            setLastEnterPressTime(0); // Reset timer on manual toggle
-          }}
-          title={semanticEnabled ? 'Disable semantic search' : 'Enable semantic search'}
+          className={'icon-wrapper'} // Base class only
+          title="Dory" // Static title
         >
           <DoryLogo size={22} />
         </div>
@@ -221,23 +200,21 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
         )}
       </div>
 
-      {/* Search mode indicator (semantic vs. quick launch) */}
-      <div className={`search-mode-indicator ${showSearchModeIndicator ? '' : 'hidden'}`}>
-        {semanticEnabled ? 'Semantic Search Mode' : 'Quick Launch Mode'}
-      </div>
+      {/* REMOVED Search mode indicator */}
 
-      {/* Show the results list */}
-      {showResults && (
+      {/* Show the results list - Use unified results */}
+      {showResultsList && (
         <ul className="results-list">
           {results.map((item: SearchResult, idx) => (
             <li
-              key={item.id || idx}
+              key={item.id || idx} // Add fallback key for safety if ID missing
               className={`result-item ${idx === selectedIndex ? 'selected' : ''}`}
               onClick={() => handleResultClick(item)}
               onMouseEnter={() => setSelectedIndex(idx)}
             >
               <div className="result-title">{item.title}</div>
               <div className="result-url">{item.url}</div>
+              {/* Show explanation only for semantic results */}
               {item.explanation && item.source === 'semantic' && (
                 <div className="result-explanation">
                   <span className="explanation-label">Why: </span>
@@ -249,7 +226,7 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
         </ul>
       )}
 
-      {/* Searching message (if no results yet and within the "debounce" or actively searching) */}
+      {/* Searching message */}
       {showSearching && (
         <div className="status-message searching">
           Searching...
@@ -259,9 +236,10 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
       {/* No results fallback */}
       {showNoResults && (
         <div className="status-message no-results">
-          No results found. Try refining your search.
+          No results found.
         </div>
       )}
+      {/* Can add error display here if desired */}
     </div>
   );
 };

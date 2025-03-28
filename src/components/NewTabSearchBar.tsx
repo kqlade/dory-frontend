@@ -48,24 +48,27 @@ interface NewTabSearchBarProps {
 
 const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }) => {
   // ------------------------------
-  // 1. Use your search hook (Option A: internal ownership).
+  // 1. Use the refactored search hook
   // ------------------------------
   const {
     inputValue,
     setInputValue,
-    handleEnterKey,
-    isSearching,
-    results,
-    semanticEnabled,
-    toggleSemanticSearch
+    handleEnterKey,       // For local search trigger
+    isSearching,          // Local search loading state
+    localResults,         // Local search results
+    performSemanticSearch,// Function to trigger semantic search
+    isSemanticSearching,  // Semantic search loading state
+    semanticSearchResults,// Semantic search results
+    // semanticError,     // Available if we want to display semantic errors
   } = useHybridSearch();
 
   // ------------------------------
-  // 2. Local state for keyboard highlight
+  // 2. Local state for keyboard highlight & double-enter
   // ------------------------------
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  // --- NEW State for double-enter tracking ---
   const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
+  // --- NEW: State to track which results to display ---
+  const [displayMode, setDisplayMode] = useState<'local' | 'semantic'>('local');
 
   // ------------------------------
   // 3. Ref for focusing the input
@@ -73,21 +76,27 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // ------------------------------
-  // 4. Debounce logic for "searching..." vs. "no results"
+  // 4. Debounce logic helper state
   // ------------------------------
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
-  const timeSinceLastKeystroke = Date.now() - lastKeystrokeTime;
-  const debounceElapsed = timeSinceLastKeystroke > 1000;
 
-  // Update keystroke time whenever input changes
+  // Update keystroke time and reset display mode when user types
   useEffect(() => {
     setLastKeystrokeTime(Date.now());
-  }, [inputValue]);
+    // Reset display mode to local when user starts typing a new query
+    if (displayMode === 'semantic') {
+        setDisplayMode('local');
+    }
+  }, [inputValue]); // Removed displayMode dependency to avoid loop
 
-  // Reset selected index on new results
+  // Decide which results and loading state to use based on displayMode
+  const currentResults = displayMode === 'semantic' ? semanticSearchResults : localResults;
+  const currentLoading = displayMode === 'semantic' ? isSemanticSearching : isSearching;
+
+  // Reset selected index when the displayed results change
   useEffect(() => {
     setSelectedIndex(-1);
-  }, [results]);
+  }, [currentResults]);
 
   // ------------------------------
   // 5. Global '/' key to focus the bar
@@ -115,128 +124,111 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // ------------------------------
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(e.target.value);
+    // Ensure display reverts to local on new input typed by user
+    setDisplayMode('local');
   };
 
   // ------------------------------
-  // 7. Keyboard events (arrows, Enter, Escape)
+  // 7. Keyboard events (arrows, Enter, Escape) - Updated
   // ------------------------------
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    const resultsLength = currentResults.length;
+
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (results.length > 0) {
-        setSelectedIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
+      if (resultsLength > 0) {
+        setSelectedIndex((prev) => (prev < resultsLength - 1 ? prev + 1 : 0));
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (results.length > 0) {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
+      if (resultsLength > 0) {
+        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : resultsLength - 1));
       }
     } else if (e.key === 'Escape') {
       setSelectedIndex(-1);
+      // Reset enter timing on escape
+      setLastEnterPressTime(0);
     } else if (e.key === 'Enter') {
-      if (selectedIndex >= 0 && selectedIndex < results.length) {
+      // Navigate if an item is selected
+      if (selectedIndex >= 0 && selectedIndex < resultsLength) {
         e.preventDefault();
-        navigateToResult(results[selectedIndex]);
-        // Reset enter time if navigating
+        navigateToResult(currentResults[selectedIndex]);
         setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
-        // --- MODIFIED Enter Logic ---
+        // Handle single vs double enter
         const currentTime = Date.now();
-        // Check for double press (within 500ms)
-        if (currentTime - lastEnterPressTime < 500) {
-          console.log('[SearchBar] Double Enter detected - forcing semantic search.');
-          // Ensure semantic is enabled
-          if (!semanticEnabled) {
-            toggleSemanticSearch(); // Enable it if not already
-          }
-          // Trigger the search (now semantic)
-          handleEnterKey(inputValue);
-          // Reset time to prevent triple-enter issues
-          setLastEnterPressTime(0);
-        } else {
-          // Single press: trigger default search (local)
-          console.log('[SearchBar] Single Enter detected - performing default search.');
-          handleEnterKey(inputValue);
-          // Store time of this press
-          setLastEnterPressTime(currentTime);
+        if (currentTime - lastEnterPressTime < 500) { // Double press
+          console.log('[SearchBar] Double Enter detected - performing semantic search.');
+          performSemanticSearch(inputValue); // Trigger semantic search
+          setDisplayMode('semantic');        // Switch display to semantic results
+          setLastEnterPressTime(0);         // Reset time
+        } else { // Single press
+          console.log('[SearchBar] Single Enter detected - performing local search.');
+          handleEnterKey(inputValue);       // Trigger local search
+          setDisplayMode('local');          // Ensure display is local results
+          setLastEnterPressTime(currentTime); // Store time of this press
         }
-      } else {
-         // If input is empty, reset timer
-         setLastEnterPressTime(0);
-      }
-    } else {
-        // Any other key resets the timer
+      } else { // Input is empty
         setLastEnterPressTime(0);
+      }
+    } else { // Any other key press
+      // Reset enter timing if user types something else
+      setLastEnterPressTime(0);
     }
   };
 
   // ------------------------------
-  // 8. Navigate to a result
+  // 8. Navigate to a result - Updated
   // ------------------------------
   const navigateToResult = (result: SearchResult) => {
-    // Track it
+    const indexInCurrentList = currentResults.findIndex((r) => r.id === result.id);
     trackSearchClick(
-      result.searchSessionId || 'local-session',
+      // Use different session IDs based on source if desired, or keep simple
+      result.source === 'semantic' ? 'semantic-session' : 'local-session',
       result.id || result.pageId || '',
-      results.findIndex((r) => r.id === result.id),
+      indexInCurrentList,
       result.url,
       inputValue
     );
-    
-    // Use Chrome's extension API to open a new tab
-    // This is more reliable in the extension context, especially in new tab pages
     chrome.tabs.create({ url: result.url });
   };
 
   // ------------------------------
-  // 9. Click on a result item
+  // 9. Click on a result item - Unchanged
   // ------------------------------
   const handleResultClick = (result: SearchResult) => {
     navigateToResult(result);
   };
 
   // ------------------------------
-  // 10. Conditionals for UI states
+  // 10. Conditionals for UI states - Updated
   // ------------------------------
-  const showResults = inputValue.length >= 2 && (results.length > 0 || !debounceElapsed);
-  const showNoResults =
-    inputValue.length >= 2 &&
-    results.length === 0 &&
-    !isSearching &&
-    debounceElapsed;
-  const showSearching =
-    inputValue.length >= 2 &&
-    results.length === 0 &&
-    (!debounceElapsed || isSearching);
-  const showSearchModeIndicator = inputValue.length >= 2;
+  const timeSinceLastKeystroke = Date.now() - lastKeystrokeTime;
+  const debounceElapsed = timeSinceLastKeystroke > 1000;
 
-  // Show spinner when searching or during debounce period (for both modes)
-  const showSpinner = isSearching || (inputValue.length >= 2 && !debounceElapsed);
+  const isSearchPotentiallyActive = inputValue.length >= 2; // Search UI appears if input >= 2 chars
 
-  // Determine if any search UI is active (results, no results, or searching)
-  const isSearchActive = inputValue.length >= 2 && (showResults || showNoResults || showSearching);
-  
-  // Notify parent component when search state changes
+  // Determine whether to show the results list, "Searching...", or "No Results"
+  const showResultsList = isSearchPotentiallyActive && currentResults.length > 0 && !currentLoading;
+  const showSearching = isSearchPotentiallyActive && currentLoading;
+  const showNoResults = isSearchPotentiallyActive && currentResults.length === 0 && !currentLoading && debounceElapsed;
+
+  // Spinner is shown if the current mode is loading
+  const showSpinner = currentLoading;
+
+  // Notify parent component if search UI might be visible
   useEffect(() => {
-    onSearchStateChange?.(isSearchActive);
-  }, [isSearchActive, onSearchStateChange]);
+    onSearchStateChange?.(isSearchPotentiallyActive);
+  }, [isSearchPotentiallyActive, onSearchStateChange]);
 
   return (
     <div className="search-container">
       {/* Top row: Dory icon + input + spinner */}
       <div className="search-bar-inner-container">
-        {/* Icon can toggle semantic mode */}
+        {/* Icon - No click handler, no active class */}
         <div
-          className={[
-            'icon-wrapper',
-            semanticEnabled ? 'active' : '',
-            'clickable' // because we always want it clickable
-          ].join(' ').trim()}
-          onClick={() => {
-            toggleSemanticSearch();
-            setLastEnterPressTime(0); // Reset timer on manual toggle
-          }}
-          title={semanticEnabled ? 'Disable semantic search' : 'Enable semantic search'}
+          className={'icon-wrapper'} // Base class only
+          title="Dory" // Static title
         >
           <DoryLogo size={22} />
         </div>
@@ -258,23 +250,19 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         )}
       </div>
 
-      {/* Search mode indicator (semantic vs. quick launch) */}
-      <div className={`search-mode-indicator ${showSearchModeIndicator ? '' : 'hidden'}`}>
-        {semanticEnabled ? 'Semantic Search Mode' : 'Quick Launch Mode'}
-      </div>
-
-      {/* Show the results list */}
-      {showResults && (
+      {/* Show the results list - Use currentResults */}
+      {showResultsList && (
         <ul className="results-list">
-          {results.map((item: SearchResult, idx) => (
+          {currentResults.map((item: SearchResult, idx) => (
             <li
-              key={item.id}
+              key={item.id} // Use item.id as key
               className={`result-item ${idx === selectedIndex ? 'selected' : ''}`}
               onClick={() => handleResultClick(item)}
               onMouseEnter={() => setSelectedIndex(idx)}
             >
               <div className="result-title">{item.title}</div>
               <div className="result-url">{item.url}</div>
+              {/* Show explanation only for semantic results */}
               {item.explanation && item.source === 'semantic' && (
                 <div className="result-explanation">
                   <span className="explanation-label">Why: </span>
@@ -286,19 +274,20 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         </ul>
       )}
 
-      {/* Searching message (if no results yet and within the "debounce" or actively searching) */}
+      {/* Searching message - Indicate current mode */}
       {showSearching && (
         <div className="status-message searching">
-          Searching...
+          Searching {displayMode}...
         </div>
       )}
 
-      {/* No results fallback */}
+      {/* No results fallback - Indicate current mode */}
       {showNoResults && (
-        <div className="status-message no-results">
-          No results found. Try refining your search.
-        </div>
+         <div className="status-message no-results">
+           No {displayMode} results found.
+         </div>
       )}
+       {/* Can add semanticError display here if desired */}
     </div>
   );
 };

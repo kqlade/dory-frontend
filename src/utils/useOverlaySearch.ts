@@ -13,86 +13,113 @@ interface SearchResult {
 }
 
 /**
- * Content script search hook that uses messaging to communicate with the background script.
- * This hook is designed to have the same interface as useHybridSearch.
+ * Content script search hook that uses messaging.
+ * - Single Enter sends PERFORM_SEARCH with semanticEnabled: false.
+ * - Double Enter triggers performSemanticSearch, which sends PERFORM_SEARCH with semanticEnabled: true.
  */
 export function useOverlaySearch() {
   const [inputValue, setInputValue] = useState('');
-  const [debouncedQuery] = useDebounce(inputValue, 1000);
-  const [immediateQuery, setImmediateQuery] = useState('');
-  const [semanticEnabled, setSemanticEnabled] = useState(false);
+  const [debouncedQuery] = useDebounce(inputValue, 1000); // Kept for potential future use?
+  const [immediateQuery, setImmediateQuery] = useState(''); // For triggering local on Enter
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Determine which query string is actually used for search
-  const searchQuery = immediateQuery || debouncedQuery;
+  // Determine which query string is actually used for the default (local) search trigger
+  const defaultSearchQuery = immediateQuery || debouncedQuery; // Or should this just be inputValue?
 
-  // Perform search when query changes
+  // --- Perform Default (Local) Search via Background Script ---
   useEffect(() => {
-    if (!searchQuery || searchQuery.length < 2) {
+    // Triggered by immediateQuery (on Enter) or debouncedQuery
+    const query = immediateQuery || debouncedQuery;
+    if (!query || query.length < 2) {
       setResults([]);
       return;
     }
 
-    const performSearch = async () => {
+    const performLocalSearch = async () => {
       setIsSearching(true);
-      
+      setResults([]); // Clear previous results
+
       try {
-        // Send message to background script
-        console.log('[DORY] Sending search request to background script:', searchQuery);
-        
-        // For now, we'll just return some sample results after a delay
+        console.log('[OverlaySearch] Sending LOCAL search request:', query);
         chrome.runtime.sendMessage({
           type: 'PERFORM_SEARCH',
-          query: searchQuery,
-          semanticEnabled
+          query: query,
+          semanticEnabled: false // Always false for default search
         });
       } catch (error) {
-        console.error('[DORY] Error sending search message:', error);
-        setIsSearching(false);
+        console.error('[OverlaySearch] Error sending local search message:', error);
+        setIsSearching(false); // Ensure searching stops on error
       }
+      // Note: isSearching will be set to false when results arrive (or on error above)
     };
 
-    performSearch();
-  }, [searchQuery, semanticEnabled]);
+    performLocalSearch();
 
-  // Set up listener for search results
+  }, [immediateQuery, debouncedQuery]); // Trigger on immediate or debounced query
+
+
+  // --- Function to Perform Semantic Search via Background Script ---
+  const performSemanticSearch = useCallback((query: string) => {
+    if (!query || query.length < 2) {
+      setResults([]);
+      return;
+    }
+    setIsSearching(true);
+    setResults([]); // Clear previous results
+
+    try {
+      console.log('[OverlaySearch] Sending SEMANTIC search request:', query);
+      chrome.runtime.sendMessage({
+        type: 'PERFORM_SEARCH',
+        query: query,
+        semanticEnabled: true // Force true for semantic search
+      });
+    } catch (error) {
+      console.error('[OverlaySearch] Error sending semantic search message:', error);
+      setIsSearching(false); // Ensure searching stops on error
+    }
+    // Note: isSearching will be set to false when results arrive (or on error above)
+  }, []);
+
+
+  // --- Listener for Search Results (from Background Script) ---
   useEffect(() => {
     const messageListener = (message: any) => {
       if (message.type === 'SEARCH_RESULTS') {
-        console.log('[DORY] Received search results:', message.results);
+        console.log('[OverlaySearch] Received search results:', message.results.length);
         setResults(message.results);
-        setIsSearching(false);
+        setIsSearching(false); // Stop searching indicator
       }
     };
-
-    // Add listener
     chrome.runtime.onMessage.addListener(messageListener);
-
-    // Cleanup
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
     };
-  }, []);
+  }, []); // Run once on mount
 
-  // Trigger immediate search (e.g., on pressing Enter)
+
+  // --- Trigger Default (Local) Search on Enter ---
   const handleEnterKey = useCallback((value: string) => {
+    // Set immediateQuery to trigger the useEffect for local search
     setImmediateQuery(value);
   }, []);
 
-  // Toggle semantic search on/off
-  const toggleSemanticSearch = useCallback(() => {
-    setSemanticEnabled(prev => !prev);
-  }, []);
+   // Reset immediateQuery after it triggers the effect
+   useEffect(() => {
+     if (immediateQuery) {
+       setImmediateQuery('');
+     }
+   }, [results, isSearching]); // Reset when results come back or search stops
+
 
   return {
     inputValue,
     setInputValue,
-    handleEnterKey,
-    isSearching,
-    results,
-    semanticEnabled,
-    toggleSemanticSearch,
-    isComplete: !isSearching
+    handleEnterKey,         // Triggers local search via messaging
+    isSearching,            // Unified searching state
+    results,                // Unified results state (local or semantic)
+    performSemanticSearch,  // Function to trigger semantic search via messaging
+    isComplete: !isSearching // isComplete flag (optional)
   };
 } 

@@ -114,74 +114,103 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
 
 /**
  * Main hook combining local and semantic search with the ability to toggle modes.
+ * - Single Enter always performs local search.
+ * - Double Enter triggers a one-off semantic search via performSemanticSearch.
  */
 export function useHybridSearch() {
   const [inputValue, setInputValue] = useState('');
-  const [debouncedQuery] = useDebounce(inputValue, 1000);
-  const [immediateQuery, setImmediateQuery] = useState('');
-  const [semanticEnabled, setSemanticEnabled] = useState(false);
+  const [debouncedQuery] = useDebounce(inputValue, 1000); // For potential future use? Or remove?
+  const [immediateQuery, setImmediateQuery] = useState(''); // For triggering local search on Enter
 
-  // Determine which query string is actually used for semantic search
-  const searchQuery = immediateQuery || debouncedQuery;
+  // State specifically for semantic search results and loading state
+  const [semanticSearchResults, setSemanticSearchResults] = useState<SearchResult[]>([]);
+  const [isSemanticSearching, setIsSemanticSearching] = useState(false);
+  const [semanticError, setSemanticError] = useState<Error | null>(null);
 
-  // Local search (always enabled)
+  // Determine which query string is used for local search triggering
+  const localSearchQuery = immediateQuery || inputValue; // Use immediateQuery if set, else current input
+
+  // --- Local Search ---
   const {
     data: localResults = [],
     isLoading: isLocalLoading,
-  } = useLocalSearch(inputValue);
+  } = useLocalSearch(localSearchQuery); // Use the combined query trigger
 
-  // Semantic search (enabled only when toggled on)
-  const {
-    data: semanticResults = [],
-    isLoading: isSemanticLoading,
-    isError: isSemanticError,
-  } = useSemanticSearch(searchQuery, semanticEnabled);
-
-  // Merge local and semantic results if semantic is enabled
-  const results = useMemo(() => {
-    if (semanticEnabled) {
-      // Only return semantic results when semantic search is enabled
-      return semanticResults;
+  // --- Semantic Search Function ---
+  const performSemanticSearch = useCallback(async (query: string) => {
+    if (!query || query.length < 2) {
+      setSemanticSearchResults([]);
+      return;
     }
-    // Return local results when semantic search is disabled
-    return localResults;
-  }, [localResults, semanticResults, semanticEnabled]);
 
-  // Combined loading state
-  const isSearching = semanticEnabled
-    ? isLocalLoading || isSemanticLoading
-    : isLocalLoading;
+    setIsSemanticSearching(true);
+    setSemanticError(null);
+    setSemanticSearchResults([]); // Clear previous semantic results
 
-  // Completion state for the search
-  const isComplete = semanticEnabled
-    ? !isSemanticLoading && !isSemanticError
-    : true;
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) {
+        throw new Error('User not authenticated for semantic search.');
+      }
 
-  // Trigger immediate search (e.g., on pressing Enter)
+      const response = await semanticSearch(query, userId, {
+        limit: 20,
+        useHybridSearch: true,
+        useLLMExpansion: true,
+        useReranking: true,
+      });
+
+      const results = response as SearchResponse;
+      const filteredResults = results.filter(result => result.score >= 0.25);
+
+      const formattedResults = filteredResults.map((result: ApiSearchResult) => ({
+        id: result.docId,
+        pageId: result.pageId,
+        title: result.title,
+        url: result.url,
+        score: result.score,
+        explanation: result.explanation,
+        source: 'semantic',
+      }));
+      setSemanticSearchResults(formattedResults);
+
+    } catch (error) {
+      console.error('[Semantic Search] performSemanticSearch Error:', error);
+      setSemanticError(error as Error);
+      setSemanticSearchResults([]); // Clear results on error
+    } finally {
+      setIsSemanticSearching(false);
+    }
+  }, []); // Depends only on getCurrentUserId and semanticSearch
+
+  // --- Trigger Local Search (on Enter) ---
   const handleEnterKey = useCallback((value: string) => {
+    // Set immediateQuery to trigger the useLocalSearch hook immediately
     setImmediateQuery(value);
+    // Clear semantic results when triggering a new local search
+    setSemanticSearchResults([]);
+    setSemanticError(null);
   }, []);
 
-  // Toggle semantic search on/off
-  const toggleSemanticSearch = useCallback(() => {
-    setSemanticEnabled(prev => !prev);
-  }, []);
+  // Reset immediateQuery once the input value catches up (avoids re-triggering)
+  // Or simply when input changes
+   useEffect(() => {
+     if (immediateQuery) {
+       setImmediateQuery('');
+     }
+   }, [inputValue]); // Reset when input changes after Enter
 
-  // Reset immediateQuery once debounce matches
-  useEffect(() => {
-    if (immediateQuery && immediateQuery === debouncedQuery) {
-      setImmediateQuery('');
-    }
-  }, [immediateQuery, debouncedQuery]);
 
   return {
     inputValue,
     setInputValue,
-    handleEnterKey,
-    isSearching,
-    isComplete,
-    results,
-    semanticEnabled,
-    toggleSemanticSearch,
+    handleEnterKey, // Triggers local search
+    isSearching: isLocalLoading, // Loading state for local search
+    localResults, // Always return local results
+    performSemanticSearch, // Function to trigger semantic search
+    isSemanticSearching, // Loading state for semantic search
+    semanticSearchResults, // Results from the last semantic search
+    semanticError, // Error object from semantic search
+    // REMOVED: results, semanticEnabled, toggleSemanticSearch, isComplete
   };
 }
