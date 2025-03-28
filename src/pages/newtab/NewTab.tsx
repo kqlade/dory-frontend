@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import NewTabSearchBar from '../../components/NewTabSearchBar';
 import ClusterContainer from '../../components/ClusterContainer';
 import ThemeToggle from '../../components/ThemeToggle';
@@ -30,6 +30,9 @@ const NewTab: React.FC = () => {
   const [previousClusters, setPreviousClusters] = useState<ClusterSuggestion[]>([]);
   // Add state to track whether to show previous clusters
   const [showPreviousClusters, setShowPreviousClusters] = useState(false);
+
+  // Ref for the search bar wrapper to help query within it
+  const searchBarWrapperRef = useRef<HTMLDivElement>(null);
 
   // Check authentication status
   useEffect(() => {
@@ -127,6 +130,30 @@ const NewTab: React.FC = () => {
     };
   }, [previousClusters.length, showPreviousClusters]);
 
+  // --- NEW useEffect for Autofocus ---
+  useEffect(() => {
+    // Only run if authenticated and the wrapper ref is available
+    if (authState.isAuthenticated && searchBarWrapperRef.current) {
+      // Use a short timeout to potentially bypass Chrome's focus restrictions
+      const focusTimeoutId = setTimeout(() => {
+        // Try to find the input element within the search bar component
+        // Adjust the selector if the actual input has a specific ID or class
+        const inputElement = searchBarWrapperRef.current?.querySelector<HTMLInputElement>(
+          'input[type="search"], input[type="text"]' // Common selectors for search inputs
+        );
+        if (inputElement) {
+          inputElement.focus();
+          console.log('[NewTab] Attempted to focus search input.');
+        } else {
+          console.warn('[NewTab] Could not find search input element to focus.');
+        }
+      }, 100); // 100ms delay
+
+      // Cleanup the timeout if the component unmounts or auth state changes
+      return () => clearTimeout(focusTimeoutId);
+    }
+  }, [authState.isAuthenticated]); // Depend on authentication state
+
   const handleSignIn = () => {
     // This is the key function that's being reused from the popup
     login(); 
@@ -186,8 +213,8 @@ const NewTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Positioned wrapper for the search bar */}
-      <div className="search-bar-wrapper">
+      {/* Positioned wrapper for the search bar - ADD REF HERE */}
+      <div className="search-bar-wrapper" ref={searchBarWrapperRef}>
         <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
       </div>
 

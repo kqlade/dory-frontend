@@ -52,8 +52,9 @@
     cursor: pointer;
   }
   .icon-wrapper.active {
-    background: rgba(116, 214, 255, 0.25);
-    transform: scale(1.1);
+    /* background: rgba(116, 214, 255, 0.25); */ /* Removed */
+    /* transform: scale(1.1); */ /* Removed */
+    /* Keep the rule empty or add other non-visual styles if needed */
   }
   .icon-wrapper.clickable:hover {
     opacity: 0.8;

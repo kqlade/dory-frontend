@@ -58,6 +58,8 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   // 2. Local state for keyboard highlight
   // ------------------------------
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  // --- NEW State for double-enter tracking ---
+  const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
 
   // ------------------------------
   // 3. Ref for focusing the input
@@ -111,14 +113,41 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
       if (onClose) {
         onClose();
       }
+      setLastEnterPressTime(0); // Also reset timer on escape
     } else if (e.key === 'Enter') {
       if (selectedIndex >= 0 && selectedIndex < results.length) {
         e.preventDefault();
         navigateToResult(results[selectedIndex]);
+        // Reset enter time if navigating
+        setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
-        // fallback: normal search
-        handleEnterKey(inputValue);
+        // --- MODIFIED Enter Logic ---
+        const currentTime = Date.now();
+        // Check for double press (within 500ms)
+        if (currentTime - lastEnterPressTime < 500) {
+          console.log('[OverlaySearchBar] Double Enter detected - forcing semantic search.');
+          // Ensure semantic is enabled
+          if (!semanticEnabled) {
+            toggleSemanticSearch(); // Enable it if not already
+          }
+          // Trigger the search (now semantic)
+          handleEnterKey(inputValue);
+          // Reset time to prevent triple-enter issues
+          setLastEnterPressTime(0);
+        } else {
+          // Single press: trigger default search (local)
+          console.log('[OverlaySearchBar] Single Enter detected - performing default search.');
+          handleEnterKey(inputValue);
+          // Store time of this press
+          setLastEnterPressTime(currentTime);
+        }
+      } else {
+         // If input is empty, reset timer
+         setLastEnterPressTime(0);
       }
+    } else {
+        // Any other key resets the timer
+        setLastEnterPressTime(0);
     }
   };
 
@@ -166,7 +195,10 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
             semanticEnabled ? 'active' : '',
             'clickable' // because we always want it clickable
           ].join(' ').trim()}
-          onClick={toggleSemanticSearch}
+          onClick={() => {
+            toggleSemanticSearch();
+            setLastEnterPressTime(0); // Reset timer on manual toggle
+          }}
           title={semanticEnabled ? 'Disable semantic search' : 'Enable semantic search'}
         >
           <DoryLogo size={22} />
