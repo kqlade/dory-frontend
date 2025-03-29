@@ -2,7 +2,7 @@
 "use strict";
 
 import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
-import { PruningContentFilter } from "../html2text/content_filter_strategy";
+import { PruningContentFilter, BM25ContentFilter } from "../html2text/content_filter_strategy";
 import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from "../config";
 import {
   createMessage,
@@ -67,10 +67,8 @@ const {
 } = QUEUE_CONFIG;
 
 const MARKDOWN_BODY_WIDTH = 80;
-const CONTENT_FILTER_MIN_BLOCKS = 5;
-const CONTENT_FILTER_STRATEGY = "dynamic";
-const CONTENT_FILTER_THRESHOLD = 0.5;
-const CONTENT_FILTER_LANGUAGE = "english";
+const BM25_THRESHOLD = 1.0;
+const BM25_LANGUAGE = "english";
 const DEFAULT_TITLE = "Untitled";
 
 let extractionTimeoutId: number | null = null;
@@ -166,20 +164,22 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
     const html = document.body?.innerHTML || "";
     if (!html) throw new Error("Empty document body");
 
-    // Convert HTML -> Markdown
-    const filter = new PruningContentFilter(
-      undefined,
-      CONTENT_FILTER_MIN_BLOCKS,
-      CONTENT_FILTER_STRATEGY,
-      CONTENT_FILTER_THRESHOLD,
-      CONTENT_FILTER_LANGUAGE
+    // Instantiate the BM25 filter (this will trigger the hybrid mode)
+    const bm25Filter = new BM25ContentFilter(
+      undefined, // No explicit user query, let it extract from page
+      BM25_THRESHOLD,
+      BM25_LANGUAGE
     );
-    const mdGen = new DefaultMarkdownGenerator(filter, { body_width: MARKDOWN_BODY_WIDTH });
+
+    // Instantiate the generator (without a default filter)
+    const mdGen = new DefaultMarkdownGenerator(undefined, { body_width: MARKDOWN_BODY_WIDTH });
+
+    // Convert HTML -> Markdown, passing the BM25 filter to activate hybrid mode
     const result = mdGen.generateMarkdown(
       html,
       currentUrl,
       { body_width: MARKDOWN_BODY_WIDTH },
-      undefined,
+      bm25Filter, // <-- Pass the BM25 filter here
       true
     );
     const sourceMarkdown = USE_FIT_MARKDOWN

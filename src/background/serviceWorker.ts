@@ -687,46 +687,228 @@ function openOAuthPopup() {
   );
 }
 
+// -------------------- Helper Functions (Extracted) --------------------
+
+/**
+ * Retrieves the title for a given tab ID.
+ */
+async function getTabTitle(tabId: number): Promise<string | null> {
+  try {
+    const t = await chrome.tabs.get(tabId);
+    return t.title || null;
+  } catch (err) {
+    console.warn(`[DORY] Failed to get title for tab ${tabId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Starts a new visit record and updates tab state maps.
+ * Assumes an active session exists.
+ */
+async function startNewVisit(
+  tabId: number,
+  pageId: string,
+  fromPageId?: string,
+  isBackNav?: boolean
+): Promise<string> {
+  const sessId = await getCurrentSessionId();
+  if (!sessId) {
+    console.error('[DORY] Cannot start visit, no active session ID found.');
+    // Potentially try ensureActiveSession() here again, or throw
+    throw new Error('No active session found for startNewVisit');
+  }
+
+  console.log(`[DORY] startNewVisit => tabId=${tabId}, pageId=${pageId}, fromPageId=${fromPageId}, isBackNav=${isBackNav}`);
+
+  const visitId = await startVisit(pageId, sessId, fromPageId, isBackNav);
+  tabToVisitId[tabId] = visitId; // Ensure visitId map is updated here
+  // tabToPageId should be updated *before* calling startNewVisit
+  
+  console.log(`[DORY] => New visit started: ${visitId}`);
+  return visitId;
+}
+
+// -------------------- Unified Navigation Event Processor --------------------
+
+/**
+ * Processes navigation events from onCommitted, onHistoryStateUpdated, 
+ * and onReferenceFragmentUpdated.
+ * Handles ending previous visits, creating page/visit records, and updating state.
+ */
+async function processNavigationEvent(details: {
+  tabId: number;
+  url: string;
+  timeStamp: number;
+  frameId?: number; // Optional frameId
+  transitionType?: string; // Use basic string type
+  transitionQualifiers?: string[]; // Use basic string array type
+}) {
+  // Ignore non-main frames if frameId is available
+  if (details.frameId !== undefined && details.frameId !== 0) return;
+
+  const { tabId, url, timeStamp } = details;
+
+  // Ignore invalid tab IDs or non-web pages
+  if (tabId < 0 || !isWebPage(url)) {
+    console.log(`[DORY] Skipping navigation event: Invalid tabId (${tabId}) or non-web page (${url})`);
+    return;
+  }
+
+  try {
+    // Ensure user is authenticated
+    const isAuthenticated = await checkAuthDirect();
+    if (!isAuthenticated) {
+        console.log(`[DORY] Skipping navigation event for ${url}: User not authenticated.`);
+        return; // Stop processing if not authenticated
+    }
+
+    // Make sure a session is active
+    const sessionActive = await ensureActiveSession();
+    if (!sessionActive) {
+      console.warn(`[DORY] Skipping navigation event for ${url}: Could not ensure active session.`);
+      return;
+    }
+
+
+    const lastUrl = tabToCurrentUrl[tabId];
+
+    // Only process if the URL has meaningfully changed
+    // TODO: Implement more robust URL comparison if needed (e.g., ignoring tracking params)
+    if (!lastUrl || lastUrl !== url) {
+      console.log(`[DORY] Navigation detected for tab ${tabId}: ${lastUrl || 'None'} => ${url}`);
+
+      // --- State Update Logic ---
+      // 1. End the previous visit for this tab (if one exists)
+      await endCurrentVisit(tabId); // Ends the visit associated with lastUrl
+
+      // 2. Get context for the new page
+      const title = (await getTabTitle(tabId)) || url; // Use URL as fallback title
+      const isBackNav = details.transitionQualifiers?.includes('forward_back') || false;
+
+      // 3. Create/Get the PageRecord for the *new* URL
+      // Store the previous pageId *before* potentially overwriting it in createOrGetPage or map update
+      const previousPageId = tabToPageId[tabId];
+      const newPageId = await createOrGetPage(url, title, timeStamp);
+      
+      // 4. Update state maps *before* starting the new visit
+      tabToCurrentUrl[tabId] = url;
+      tabToPageId[tabId] = newPageId; 
+
+      // 5. Start the new visit record, linking from the previous page if appropriate
+      // Only link if previousPageId exists and is different from newPageId
+      const linkFromPageId = (previousPageId && previousPageId !== newPageId) ? previousPageId : undefined;
+      await startNewVisit(tabId, newPageId, linkFromPageId, isBackNav); 
+      // startNewVisit now internally updates tabToVisitId[tabId]
+
+      console.log(`[DORY] => State updated: pageId=${newPageId}, visitId=${tabToVisitId[tabId]}`);
+      // --- End State Update Logic ---
+
+    } else {
+      // console.log(`[DORY] Skipping navigation event for tab ${tabId}: URL unchanged (${url})`);
+    }
+  } catch (err) {
+    console.error(`[DORY] Error processing navigation event for ${url} in tab ${tabId}:`, err);
+  }
+}
+
 // -------------------- Navigation Handlers --------------------
 chrome.webNavigation.onCommitted.addListener(async (details) => {
-  await handleNavigation(details, handleOnCommitted);
+  // Process all committed main-frame navigations
+  await processNavigationEvent(details);
 });
 
+chrome.webNavigation.onHistoryStateUpdated.addListener(async (details) => {
+  // Process SPA navigations
+  await processNavigationEvent(details);
+});
+
+// Add listener for hash changes
+chrome.webNavigation.onReferenceFragmentUpdated.addListener(async (details) => {
+  // Process hash fragment navigations
+  await processNavigationEvent(details);
+});
+
+// onCreatedNavigationTarget remains separate as it links a *new* tab to a source
 chrome.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
-  await handleNavigation(details, handleOnCreatedNavigationTarget);
+  const { sourceTabId, tabId, timeStamp, url } = details;
+  console.log('[DORY] onCreatedNavigationTarget =>', { sourceTabId, tabId, url });
+
+  // Basic checks needed
+  if (!isWebPage(url)) {
+    console.log('[DORY] Not a web page => skipping new tab tracking =>', url);
+    return;
+  }
+  const isAuthenticated = await checkAuthDirect();
+  if (!isAuthenticated) return;
+
+  // --- Inlined Logic from handleOnCreatedNavigationTarget --- 
+  try {
+    await ensureActiveSession(); // Ensure session exists
+
+    const oldUrl = tabToCurrentUrl[sourceTabId];
+    if (oldUrl) { // Check if source tab URL is known
+      // Create/get page for the source URL
+      const fromPageId = await createOrGetPage(oldUrl, oldUrl, timeStamp); 
+      // Store pending navigation state for the new tab
+      tabToCurrentUrl[tabId] = `pending:${fromPageId}`; 
+      console.log('[DORY] => Stored pending nav from pageId:', fromPageId);
+    } else {
+      console.log('[DORY] => Source tab URL unknown, cannot link navigation target.');
+    }
+  } catch (err) {
+    console.error('[DORY] Error in onCreatedNavigationTarget handler:', err);
+  }
+  // --- End Inlined Logic ---
 });
 
 chrome.webNavigation.onCompleted.addListener(async (details) => {
   if (details.frameId !== 0) return;
-  console.log('[DORY] onCompleted => tab:', details.tabId, 'url:', details.url);
 
+  // Basic checks
   const isAuthenticated = await checkAuthDirect();
-  if (!isAuthenticated) return;
+  if (!isAuthenticated || !isWebPage(details.url)) return;
 
-  if (!isWebPage(details.url)) {
-    console.log('[DORY] Not a web page => skipping =>', details.url);
-    return;
-  }
-  const visitId = tabToVisitId[details.tabId];
-  if (!visitId) {
-    console.log('[DORY] No active visit => skipping =>', details.tabId);
-    return;
-  }
-  const pageId = tabToPageId[details.tabId];
-  const sessionId = await getCurrentSessionId();
+  console.log(`[DORY] onCompleted => tab: ${details.tabId}, url: ${details.url}`);
 
-  // Trigger extraction in the content script
-  chrome.tabs.sendMessage(
-    details.tabId,
-    createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId, visitId, sessionId }, 'background'),
-    {},
-    () => {
-      chrome.tabs.sendMessage(
-        details.tabId,
-        createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
-      );
+  // --- Refined Extraction Trigger ---
+  // Only trigger extraction if the completed URL matches the *currently tracked* URL for the active visit
+  const currentTrackedUrl = tabToCurrentUrl[details.tabId];
+  const visitId = tabToVisitId[details.tabId]; // Get the current visit ID for this tab
+
+  if (visitId && currentTrackedUrl && currentTrackedUrl === details.url) {
+    console.log(`[DORY] => URL matches tracked state (${currentTrackedUrl}). Triggering extraction.`);
+    const pageId = tabToPageId[details.tabId]; // Get the corresponding pageId
+    const sessionId = await getCurrentSessionId();
+
+    if (pageId && sessionId) {
+       console.log(`[DORY] => Sending SET_EXTRACTION_CONTEXT & TRIGGER_EXTRACTION (pageId: ${pageId}, visitId: ${visitId})`);
+       // Send context first
+       chrome.tabs.sendMessage(
+         details.tabId,
+         createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId, visitId, sessionId }, 'background'),
+         {}, // Options - empty
+         (response) => { // Callback after context is set (or attempted)
+            if (chrome.runtime.lastError) {
+               console.warn(`[DORY] Error setting extraction context for tab ${details.tabId}:`, chrome.runtime.lastError.message);
+               // Optionally retry or just proceed to trigger? For now, proceed.
+            } else {
+               console.log(`[DORY] => Extraction context sent response:`, response);
+            }
+            // Always attempt trigger after trying to set context
+            chrome.tabs.sendMessage(
+               details.tabId,
+               createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
+            );
+         }
+       );
+    } else {
+       console.warn(`[DORY] => Cannot trigger extraction: Missing pageId (${pageId}) or sessionId (${sessionId})`);
     }
-  );
+  } else {
+    console.log(`[DORY] => Skipping extraction trigger: URL mismatch (Completed: ${details.url}, Tracked: ${currentTrackedUrl}) or no active visit (VisitId: ${visitId})`);
+  }
+  // --- End Refined Extraction Trigger ---
 });
 
 // -------------------- Tabs Lifecycle --------------------
@@ -759,55 +941,6 @@ chrome.runtime.onSuspend.addListener(async () => {
     console.error('[DORY] Error onSuspend =>', err);
   }
 });
-
-/**
- * Helper: top-level navigation check
- */
-async function handleNavigation(
-  details:
-    | chrome.webNavigation.WebNavigationFramedCallbackDetails
-    | chrome.webNavigation.WebNavigationSourceCallbackDetails,
-  handlerFn: Function
-) {
-  try {
-    if (!details || ('frameId' in details && details.frameId !== 0)) return;
-    const isAuthenticated = await checkAuthDirect();
-    if (!isAuthenticated) return;
-
-    const navigationHelpers = {
-      tabToCurrentUrl,
-      tabToPageId,
-      tabToVisitId,
-      async startNewVisit(tabId: number, pageId: string, fromPageId?: string, isBackNav?: boolean) {
-        // Removed ensureActiveSession() call - we know the user is authenticated
-        // which means a session must already exist from initialization or auth
-        const sessId = await getCurrentSessionId();
-        if (!sessId) throw new Error('No active session');
-
-        const visitId = await startVisit(pageId, sessId, fromPageId, isBackNav);
-        tabToVisitId[tabId] = visitId;
-        tabToPageId[tabId] = pageId;
-        return visitId;
-      },
-      async ensureActiveSession() {
-        return ensureActiveSession();
-      },
-      async getTabTitle(tid: number) {
-        try {
-          const t = await chrome.tabs.get(tid);
-          return t.title || null;
-        } catch {
-          return null;
-        }
-      }
-    };
-
-    // Delegate to your specialized handler
-    await handlerFn(details, navigationHelpers);
-  } catch (err) {
-    console.error('[DORY] handleNavigation error =>', err);
-  }
-}
 
 // Add specific listeners for new search message types
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
