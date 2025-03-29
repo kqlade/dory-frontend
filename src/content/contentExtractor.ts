@@ -225,16 +225,25 @@ async function extractAndSendContent(retryCount = 0): Promise<void> {
       };
 
       console.log("[ContentExtractor] Sending content data to background script");
-      chrome.runtime.sendMessage(
-        createMessage(MessageType.CONTENT_DATA, contentData, 'content'),
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.error("[ContentExtractor] Error sending content data:", chrome.runtime.lastError);
-          } else {
-            console.log("[ContentExtractor] Content data sent to background:", response);
+      try {
+        chrome.runtime.sendMessage(
+          createMessage(MessageType.CONTENT_DATA, contentData, 'content'),
+          (response) => {
+            if (chrome.runtime.lastError) {
+              // This is normal if the port closes before response - just log it
+              console.warn("[ContentExtractor] Message response error (this is often normal):", chrome.runtime.lastError.message);
+            } else {
+              console.log("[ContentExtractor] Content data sent to background:", response);
+            }
           }
-        }
-      );
+        );
+        // Fire-and-forget approach - we don't need to wait for a response
+        // The service worker will process the content asynchronously
+      } catch (err) {
+        // This would only happen if there's an issue sending the message
+        console.error("[ContentExtractor] Failed to send content data:", err);
+        // We can continue execution - this error shouldn't block the page experience
+      }
     } else {
       console.warn("[ContentExtractor] Missing session or context => skipping content data send");
     }

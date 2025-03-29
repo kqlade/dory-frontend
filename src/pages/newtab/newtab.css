@@ -56,15 +56,6 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Font declarations */
-@font-face {
-  font-family: 'GroldRoundedSlim';
-  src: url('/fonts/grold_rounded/GroldRoundedSlim-ExtraBold.woff2') format('woff2');
-  font-weight: 800;
-  font-style: normal;
-  font-display: swap;
-}
-
 /* Container for the entire NewTab page */
 .newtab-container {
   width: 100%;

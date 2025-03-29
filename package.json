@@ -50,7 +50,7 @@
     "react-social-login-buttons": "^4.1.1",
     "sentence-splitter": "^5.0.0",
     "simple-statistics": "^7.8.8",
-    "snowball-stemmers": "^0.6.0",
+    "snowball-stemmer.jsx": "^0.2.3",
     "styled-components": "^6.1.15",
     "text-segmentation": "^1.0.3",
     "turndown": "^7.2.0",

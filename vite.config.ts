@@ -21,15 +21,11 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
-      input: {
-        // 1) The custom new tab page HTML
-        newtab: 'src/pages/newtab/newtab.html'
-      },
       output: {
         // Standard naming patterns
         entryFileNames: '[name].js',
-        chunkFileNames: 'assets/[name].[hash].js',
-        assetFileNames: 'assets/[name].[hash].[ext]'
+        // Attempt to prevent chunk splitting by removing patterns
+        // Let Rollup/CRXJS decide or hopefully inline
       }
     }
   },

@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { BM25 } from "wink-bm25-text-search";
-import { stemmer as SnowballStemmer, Stemmer } from "snowball-stemmers";
+// Import the EnglishStemmer explicitly - this one has the actual implementation
+import { EnglishStemmer } from "snowball-stemmer.jsx/dest/english-stemmer.common.js";
 import type { Element } from "domhandler";
 
 /**************************************************************************
@@ -152,7 +153,7 @@ export class BM25ContentFilter extends RelevantContentFilter {
   private bm25Threshold: number;
   private language: string;
   private priorityTags: Record<string, number>;
-  private stemmer: Stemmer;
+  private stemmer: EnglishStemmer;
 
   constructor(userQuery?: string, bm25Threshold = 1.0, language = "english") {
     super(userQuery);
@@ -166,12 +167,21 @@ export class BM25ContentFilter extends RelevantContentFilter {
       code: 2.0, pre: 1.5, th: 1.5
     };
 
-    // Initialize snowball stemmer for the specified language
-    this.stemmer = SnowballStemmer(this.language);
+    // Initialize EnglishStemmer - the concrete implementation that has working methods
+    console.log('[BM25Filter Constructor] Initializing EnglishStemmer');
+    this.stemmer = new EnglishStemmer();
+    console.log('[BM25Filter Constructor] Initialized EnglishStemmer successfully');
   }
 
   public filterContent(html: string): string[] {
     if (!html || typeof html !== "string") return [];
+
+    // Simple check to verify stemmer is available
+    if (!this.stemmer) {
+        console.error('[BM25Filter filterContent] CRITICAL: Stemmer is invalid!');
+        // Optionally, return early or throw an error to prevent further execution
+        // return []; 
+    }
 
     // Parse with Cheerio
     const $ = cheerio.load(html);
@@ -193,14 +203,22 @@ export class BM25ContentFilter extends RelevantContentFilter {
     // Tokenize corpus
     const corpus = candidates.map(([_, chunkText, el]) => {
       const words = chunkText.toLowerCase().split(/\s+/);
-      // Stem each word using stem() method
-      const stemmed = words.map((w) => this.stemmer.stem(w));
+      // Stem each word using stemWord method
+      if (!this.stemmer) {
+          console.error('[BM25Filter filterContent] CRITICAL: Stemmer is invalid inside corpus map!');
+          return words; // Return original words if stemmer is broken
+      }
+      const stemmed = words.map((w) => this.stemmer.stemWord(w));
       return cleanTokens(stemmed);
     });
 
     // Tokenize query
     const qwords = query.toLowerCase().split(/\s+/);
-    const qstemmed = qwords.map((w) => this.stemmer.stem(w));
+    if (!this.stemmer) {
+        console.error('[BM25Filter filterContent] CRITICAL: Stemmer is invalid inside query map!');
+        return []; // Return empty tokenized query if stemmer is broken
+    }
+    const qstemmed = qwords.map((w) => this.stemmer.stemWord(w));
     const tokenizedQuery = cleanTokens(qstemmed);
 
     // wink-bm25-text-search usage

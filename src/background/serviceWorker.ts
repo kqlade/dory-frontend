@@ -426,24 +426,42 @@ function registerMessageHandlers() {
   });
 
   // CONTENT_DATA
-  messageRouter.registerHandler(MessageType.CONTENT_DATA, async (msg) => {
+  messageRouter.registerHandler(MessageType.CONTENT_DATA, (msg, _sender, sendResponse) => {
     console.log('[DORY] Received CONTENT_DATA');
     try {
+      // 1. Store the content data (we're going to just use a variable for now, but you could use chrome.storage if needed)
       const contentData = msg.data as ContentDataMessage;
-      await sendContentEvent({
-        pageId: contentData.pageId,
-        visitId: contentData.visitId,
-        url: contentData.url,
-        title: contentData.title,
-        markdown: contentData.markdown,
-        metadata: contentData.metadata,
-        sessionId: contentData.sessionId
-      });
-      console.log('[DORY] Content data sent to API successfully');
+      
+      // 2. Immediately respond to the content script
+      sendResponse({ status: 'received', success: true });
+      
+      // 3. Process content data in a separate task (using an IIFE)
+      (async () => {
+        try {
+          console.log('[DORY] Processing content data in background task');
+          await sendContentEvent({
+            pageId: contentData.pageId,
+            visitId: contentData.visitId,
+            url: contentData.url,
+            title: contentData.title,
+            markdown: contentData.markdown,
+            metadata: contentData.metadata,
+            sessionId: contentData.sessionId
+          });
+          console.log('[DORY] Content data sent to API successfully');
+        } catch (error) {
+          console.error('[DORY] Error sending content data to API:', error);
+          // Could implement retry logic here if needed
+        }
+      })();
+      
+      // 4. Return false since we already called sendResponse
+      return false;
     } catch (error) {
-      console.error('[DORY] Error sending content data:', error);
+      console.error('[DORY] Error handling CONTENT_DATA message:', error);
+      sendResponse({ status: 'error', error: String(error) });
+      return false;
     }
-    return true;
   });
 
   // AUTH_REQUEST => user clicked "Sign in" in the side panel => do OAuth
