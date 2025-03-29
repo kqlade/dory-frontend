@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
 import { UnifiedLocalSearchResult } from '../types/search';
+import { MessageType } from './messageSystem';
+
+const SEARCH_DEBOUNCE_MS = 50; // Debounce time for search-as-you-type
+const MIN_QUERY_LENGTH = 2;
 
 /**
  * Content script search hook that uses messaging.
@@ -9,36 +13,19 @@ import { UnifiedLocalSearchResult } from '../types/search';
  */
 export function useOverlaySearch() {
   const [inputValue, setInputValue] = useState('');
-  const [debouncedQuery] = useDebounce(inputValue, 1000);
   const [results, setResults] = useState<UnifiedLocalSearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // --- Function to Perform Semantic Search via Background Script ---
-  const performSemanticSearch = useCallback((query: string) => {
-    if (!query || query.length < 2) {
-      return;
-    }
-    setIsSearching(true);
+  // Debounce the input value
+  const [debouncedQuery] = useDebounce(inputValue, SEARCH_DEBOUNCE_MS);
 
-    try {
-      console.log('[OverlaySearch] Sending PERFORM_SEMANTIC_SEARCH request:', query);
-      chrome.runtime.sendMessage({
-        type: 'PERFORM_SEMANTIC_SEARCH',
-        query: query,
-      });
-    } catch (error) {
-      console.error('[OverlaySearch] Error sending semantic search message:', error);
-      setIsSearching(false);
-    }
-  }, []);
-
-  // --- Listener for Search Results (from Background Script) ---
+  // Effect to listen for results from the background script
   useEffect(() => {
     const messageListener = (message: any) => {
-      if (message.type === 'SEARCH_RESULTS') {
-        console.log('[OverlaySearch] Received search results:', message.results?.length);
+      if (message.type === MessageType.SEARCH_RESULTS) {
+        console.log(`[useOverlaySearch] Received ${message.results?.length} results`);
         setResults(message.results || []);
-        setIsSearching(false);
+        setIsLoading(false);
       }
     };
     chrome.runtime.onMessage.addListener(messageListener);
@@ -47,31 +34,52 @@ export function useOverlaySearch() {
     };
   }, []);
 
-  // --- Trigger Default (Local) Search on Enter ---
-  const handleEnterKey = useCallback((value: string) => {
-    if (!value || value.length < 2) {
-      return;
+  // Effect to trigger search when debounced query changes
+  useEffect(() => {
+    if (debouncedQuery && debouncedQuery.length >= MIN_QUERY_LENGTH) {
+      setIsLoading(true);
+      setResults([]);
+      console.log(`[useOverlaySearch] Sending PERFORM_LOCAL_SEARCH for debounced query: "${debouncedQuery}"`);
+      try {
+        chrome.runtime.sendMessage({
+          type: MessageType.PERFORM_LOCAL_SEARCH,
+          query: debouncedQuery,
+        });
+      } catch (error) {
+        console.error('[useOverlaySearch] Error sending search message:', error);
+        setIsLoading(false);
+        setResults([]);
+      }
+    } else {
+      setResults([]);
+      setIsLoading(false);
     }
-    setIsSearching(true);
+  }, [debouncedQuery]);
+
+  // Function to manually trigger semantic search
+  const performSemanticSearch = useCallback((query: string) => {
+    if (!query || query.length < MIN_QUERY_LENGTH) return;
+
+    setIsLoading(true);
+    setResults([]);
+    console.log(`[useOverlaySearch] Sending PERFORM_SEMANTIC_SEARCH for: "${query}"`);
     try {
-      console.log('[OverlaySearch] Sending PERFORM_LOCAL_SEARCH request:', value);
       chrome.runtime.sendMessage({
-        type: 'PERFORM_LOCAL_SEARCH',
-        query: value,
+        type: MessageType.PERFORM_SEMANTIC_SEARCH,
+        query: query,
       });
     } catch (error) {
-      console.error('[OverlaySearch] Error sending local search message:', error);
-      setIsSearching(false);
+      console.error('[useOverlaySearch] Error sending semantic search message:', error);
+      setIsLoading(false);
+      setResults([]);
     }
   }, []);
 
   return {
     inputValue,
     setInputValue,
-    handleEnterKey,         // Triggers local search via messaging
-    isSearching,
-    results,                // Unified results state (local or semantic)
-    performSemanticSearch,  // Triggers semantic search via messaging
-    isComplete: !isSearching
+    performSemanticSearch,
+    isSearching: isLoading,
+    results,
   };
 } 

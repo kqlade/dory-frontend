@@ -158,8 +158,8 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
  */
 export function useHybridSearch() {
   const [inputValue, setInputValue] = useState('');
-  const [debouncedQuery] = useDebounce(inputValue, 1000); // For potential future use? Or remove?
-  const [immediateQuery, setImmediateQuery] = useState(''); // For triggering local search on Enter
+  // REMOVED: const [debouncedQuery] = useDebounce(inputValue, 1000); // Debounce wasn't used here for triggering
+  // REMOVED: const [immediateQuery, setImmediateQuery] = useState(''); // Removed immediate query trigger
 
   // State specifically for semantic search results and loading state
   const [semanticSearchResults, setSemanticSearchResults] = useState<UnifiedLocalSearchResult[]>([]);
@@ -167,13 +167,14 @@ export function useHybridSearch() {
   const [semanticError, setSemanticError] = useState<Error | null>(null);
 
   // Determine which query string is used for local search triggering
-  const localSearchQuery = immediateQuery || inputValue; // Use immediateQuery if set, else current input
+  // CHANGED: Directly use inputValue for local search hook
+  const localSearchQuery = inputValue;
 
   // --- Local Search ---
   const {
     data: localResults = [],
     isLoading: isLocalLoading,
-  } = useLocalSearch(localSearchQuery); // Use the combined query trigger
+  } = useLocalSearch(localSearchQuery); // Pass inputValue directly
 
   // --- Semantic Search Function ---
   const performSemanticSearch = useCallback(async (query: string) => {
@@ -224,28 +225,10 @@ export function useHybridSearch() {
     }
   }, []); // Depends only on getCurrentUserId and semanticSearch
 
-  // --- Trigger Local Search (on Enter) ---
-  const handleEnterKey = useCallback((value: string) => {
-    // Set immediateQuery to trigger the useLocalSearch hook immediately
-    setImmediateQuery(value);
-    // Clear semantic results when triggering a new local search
-    setSemanticSearchResults([]);
-    setSemanticError(null);
-  }, []);
-
-  // Reset immediateQuery once the input value catches up (avoids re-triggering)
-  // Or simply when input changes
-   useEffect(() => {
-     if (immediateQuery) {
-       setImmediateQuery('');
-     }
-   }, [inputValue]); // Reset when input changes after Enter
-
-
   return {
     inputValue,
     setInputValue,
-    handleEnterKey, // Triggers local search
+    // REMOVED: handleEnterKey,
     isSearching: isLocalLoading, // Loading state for local search
     localResults, // Always return local results
     performSemanticSearch, // Function to trigger semantic search

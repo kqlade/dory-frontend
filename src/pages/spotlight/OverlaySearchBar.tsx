@@ -49,10 +49,9 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   const {
     inputValue,
     setInputValue,
-    handleEnterKey,       // For local search trigger
-    isSearching,          // Unified loading state (local or semantic)
-    results,              // Unified results (local or semantic)
-    performSemanticSearch // Function to trigger semantic search
+    isSearching,
+    results,
+    performSemanticSearch
   } = useOverlaySearch();
 
   // ------------------------------
@@ -144,8 +143,7 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
           performSemanticSearch(inputValue); // Trigger semantic search via messaging
           setLastEnterPressTime(0);         // Reset time
         } else { // Single press
-          console.log('[OverlaySearchBar] Single Enter detected - performing local search.');
-          handleEnterKey(inputValue);       // Trigger local search via messaging
+          console.log('[OverlaySearchBar] Single Enter detected.');
           setLastEnterPressTime(currentTime); // Store time of this press
         }
       } else { // Input is empty
@@ -171,17 +169,18 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   };
 
   // ------------------------------
-  // 8. Navigate to a result - Update type hint
+  // 8. Navigate to a result - Update type hint & Add Close
   // ------------------------------
   const navigateToResult = (result: UnifiedLocalSearchResult) => {
-    // Consider tracking click here if needed
     window.open(result.url, '_blank');
+    onClose?.(); // Call the onClose prop to close the overlay
   };
 
   // ------------------------------
   // 9. Click on a result item - Update type hint
   // ------------------------------
   const handleResultClick = (result: UnifiedLocalSearchResult) => {
+    // This now implicitly closes the overlay because it calls navigateToResult
     navigateToResult(result);
   };
 

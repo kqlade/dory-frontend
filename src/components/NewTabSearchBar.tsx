@@ -54,13 +54,12 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const {
     inputValue,
     setInputValue,
-    handleEnterKey,       // For local search trigger
     isSearching,          // Local search loading state
     localResults,         // Local search results
     performSemanticSearch,// Function to trigger semantic search
     isSemanticSearching,  // Semantic search loading state
     semanticSearchResults,// Semantic search results
-    // semanticError,     // Available if we want to display semantic errors
+    semanticError,        // Available if we want to display semantic errors
   } = useHybridSearch();
 
   // ------------------------------
@@ -169,10 +168,10 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       // Reset enter timing on escape
       setLastEnterPressTime(0);
     } else if (e.key === 'Enter') {
-      // Use currentResults for navigation check, as selectedIndex refers to the full list
+      // Navigate if an item is selected
       if (selectedIndex >= 0 && selectedIndex < resultsLength) {
         e.preventDefault();
-        navigateToResult(currentResults[selectedIndex]); // Navigate using the correct index from full list
+        navigateToResult(currentResults[selectedIndex]);
         setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
         // Handle single vs double enter
@@ -180,12 +179,12 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         if (currentTime - lastEnterPressTime < 500) { // Double press
           console.log('[SearchBar] Double Enter detected - performing semantic search.');
           performSemanticSearch(inputValue); // Trigger semantic search
-          setDisplayMode('semantic');        // Switch display to semantic results
-          setLastEnterPressTime(0);         // Reset time
+          setDisplayMode('semantic');
+          setLastEnterPressTime(0);
         } else { // Single press
-          console.log('[SearchBar] Single Enter detected - performing local search.');
-          handleEnterKey(inputValue);       // Trigger local search
-          setDisplayMode('local');          // Ensure display is local results
+          // Local search is now triggered automatically by useLocalSearch via useHybridSearch.
+          // We only need to store the time for double-enter detection.
+          console.log('[SearchBar] Single Enter detected (timing for double-enter).');
           setLastEnterPressTime(currentTime); // Store time of this press
         }
       } else { // Input is empty
