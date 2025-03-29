@@ -2,9 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
 import { UnifiedLocalSearchResult } from '../types/search';
 import { MessageType } from './messageSystem';
-
-const SEARCH_DEBOUNCE_MS = 50; // Debounce time for search-as-you-type
-const MIN_QUERY_LENGTH = 2;
+import { SEARCH_DEBOUNCE_MS, MIN_SEARCH_QUERY_LENGTH } from '../config';
 
 /**
  * Content script search hook that uses messaging.
@@ -36,7 +34,7 @@ export function useOverlaySearch() {
 
   // Effect to trigger search when debounced query changes
   useEffect(() => {
-    if (debouncedQuery && debouncedQuery.length >= MIN_QUERY_LENGTH) {
+    if (debouncedQuery && debouncedQuery.length >= MIN_SEARCH_QUERY_LENGTH) {
       setIsLoading(true);
       setResults([]);
       console.log(`[useOverlaySearch] Sending PERFORM_LOCAL_SEARCH for debounced query: "${debouncedQuery}"`);
@@ -58,7 +56,7 @@ export function useOverlaySearch() {
 
   // Function to manually trigger semantic search
   const performSemanticSearch = useCallback((query: string) => {
-    if (!query || query.length < MIN_QUERY_LENGTH) return;
+    if (!query || query.length < MIN_SEARCH_QUERY_LENGTH) return;
 
     setIsLoading(true);
     setResults([]);

@@ -1,4 +1,5 @@
 import { UnifiedLocalSearchResult } from '../types/search';
+import { shouldRecordHistoryEntry } from '../utils/urlUtils';
 
 const MAX_HISTORY_RESULTS = 100; // Max results to request from chrome.history
 
@@ -25,23 +26,28 @@ export async function searchHistoryAPI(query: string): Promise<UnifiedLocalSearc
 
     console.log(`[HistorySearch] Found ${historyItems.length} items from chrome.history`);
 
-    const results: UnifiedLocalSearchResult[] = historyItems
-      .filter(item => item.url && item.title) // Ensure essential fields exist
-      .map(item => ({
-        id: item.url!, // Use URL as ID for history items
-        url: item.url!,
-        title: item.title!,
-        source: 'history',
-        score: 1, // Add default score for history items
-        // Dexie fields are undefined for history source
-        // dexieScore field was removed from UnifiedLocalSearchResult
-        explanation: undefined,
-        pageId: undefined,
-        // History fields
-        lastVisitTime: item.lastVisitTime,
-        visitCount: item.visitCount,
-        typedCount: item.typedCount,
-      }));
+    // Apply comprehensive filtering using the utility function
+    const filteredItems = historyItems.filter(item =>
+      shouldRecordHistoryEntry(item.url, item.title, 'searchHistoryAPI')
+    );
+
+    console.log(`[HistorySearch] Filtered down to ${filteredItems.length} items`);
+
+    const results: UnifiedLocalSearchResult[] = filteredItems.map(item => ({
+      id: item.url!, // Use URL as ID for history items
+      url: item.url!,
+      title: item.title!,
+      source: 'history',
+      score: 1, // Add default score for history items
+      // Dexie fields are undefined for history source
+      // dexieScore field was removed from UnifiedLocalSearchResult
+      explanation: undefined,
+      pageId: undefined,
+      // History fields
+      lastVisitTime: item.lastVisitTime,
+      visitCount: item.visitCount,
+      typedCount: item.typedCount,
+    }));
 
     return results;
 

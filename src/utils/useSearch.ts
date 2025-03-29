@@ -1,11 +1,12 @@
 // src/utils/useSearch.ts
 import { useQuery } from '@tanstack/react-query';
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from 'react';
 import { useDebounce } from 'use-debounce';
 import { semanticSearch } from '../api/client';
 import { getCurrentUserId } from '../services/userService';
 import { UnifiedLocalSearchResult } from '../types/search';
 import { SearchResponse, SearchResult as ApiSearchResultType } from '../api/types';
+import { SEARCH_DEBOUNCE_MS, MIN_SEARCH_QUERY_LENGTH } from '../config';
 
 /** Standard search result interface shared across all search methods */
 interface SearchResult {
@@ -37,6 +38,9 @@ export function useLocalSearch(query: string) {
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<UnifiedLocalSearchResult[]>([]);
 
+  // Debounce the incoming query prop
+  const [debouncedQuery] = useDebounce(query, SEARCH_DEBOUNCE_MS);
+
   useEffect(() => {
     // Listener for results from the background script
     const messageListener = (message: any) => {
@@ -57,16 +61,16 @@ export function useLocalSearch(query: string) {
     };
   }, []); // Run listener setup only once
 
+  // Effect to perform search when debounced query is valid
   useEffect(() => {
-    // Perform search when query is valid
-    if (query && query.length >= 2) {
+    if (debouncedQuery && debouncedQuery.length >= MIN_SEARCH_QUERY_LENGTH) {
       setIsLoading(true);
       setResults([]); // Clear previous results
-      console.log(`[useLocalSearch] Sending PERFORM_LOCAL_SEARCH for: "${query}"`);
+      console.log(`[useLocalSearch] Sending PERFORM_LOCAL_SEARCH for debounced query: \"${debouncedQuery}\"`);
       try {
         chrome.runtime.sendMessage({
           type: 'PERFORM_LOCAL_SEARCH',
-          query: query,
+          query: debouncedQuery,
         });
         // isLoading will be set to false when results arrive
       } catch (error) {
@@ -75,12 +79,12 @@ export function useLocalSearch(query: string) {
         setResults([]);
       }
     } else {
-      // Clear results if query is too short
+      // Clear results if debounced query is too short
       setResults([]);
       setIsLoading(false);
     }
-    // Dependency array ensures this runs when query changes
-  }, [query]);
+    // Dependency array ensures this runs when debounced query changes
+  }, [debouncedQuery]);
 
   // Return data in a shape similar to useQuery for compatibility with useHybridSearch
   return {

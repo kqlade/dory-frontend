@@ -7,7 +7,7 @@
 
 import { createOrGetPage, createOrUpdateEdge } from './dexieBrowsingStore';
 import { getCurrentSessionId } from './dexieSessionManager';
-import { isWebPage } from '../utils/urlUtils';
+import { isWebPage, shouldRecordHistoryEntry } from '../utils/urlUtils';
 
 export interface TabTracking {
   tabToCurrentUrl: Record<number, string | undefined>;
@@ -40,25 +40,29 @@ export async function handleOnCommitted(
   if (details.frameId !== 0) return; // only main frame
 
   const { tabId, url, timeStamp, transitionType, transitionQualifiers } = details;
-  console.log('[DORY] onCommitted =>', { tabId, url, transitionType, transitionQualifiers });
+  // Fetch title early for filtering
+  const title = await tracking.getTabTitle(tabId);
+  console.log('[DORY] onCommitted =>', { tabId, url, title, transitionType, transitionQualifiers });
 
-  // Filter out non-web pages (chrome://, extension://, file://, etc.)
-  if (!isWebPage(url)) {
-    console.log('[DORY] Not a web page => skipping navigation tracking =>', url);
+  // ----- START Filtering Logic (using utility function) -----
+  if (!shouldRecordHistoryEntry(url, title, 'handleOnCommitted')) {
+    console.log('[DORY] Filtered navigation event => skipping tracking =>', url);
     return;
   }
+  // ----- END Filtering Logic -----
 
+
+  // If all filters passed, proceed with tracking logic
   try {
     await tracking.ensureActiveSession();
 
     const isBackNav = transitionQualifiers.includes('forward_back');
     console.log('[DORY] => Navigation type:', isBackNav ? 'BACK/FORWARD' : transitionType.toUpperCase());
     
-    const title = (await tracking.getTabTitle(tabId)) || url;
     const currentTabValue = tracking.tabToCurrentUrl[tabId];
     
     // Create the "toPageId"
-    const toPageId = await createOrGetPage(url, title, timeStamp);
+    const toPageId = await createOrGetPage(url, title || url, timeStamp);
     tracking.tabToCurrentUrl[tabId] = url;
 
     if (currentTabValue && currentTabValue.startsWith('pending:')) {

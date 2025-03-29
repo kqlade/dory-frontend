@@ -30,6 +30,10 @@ export const USE_FIT_MARKDOWN = true;
 export const EVENT_BATCH_SIZE = 50;
 export const EVENT_FLUSH_INTERVAL = 30000;
 
+// Search configuration
+export const SEARCH_DEBOUNCE_MS = 150; // Debounce delay for search inputs
+export const MIN_SEARCH_QUERY_LENGTH = 2; // Minimum length for a query to trigger search
+
 export const QUEUE_CONFIG = {
   // Maximum number of retries for processing a URL
   MAX_RETRIES: 3,
