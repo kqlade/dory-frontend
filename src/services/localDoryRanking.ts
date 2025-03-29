@@ -339,6 +339,7 @@ interface FeatureVector {
   timeOfDay: number;
   session: number;
   regularity: number;
+  fuzzyScore: number; // Added: Jaro-Winkler score vs title
 }
 
 function computeContextualScore(features: FeatureVector, weights: FeatureVector): number {
@@ -359,16 +360,19 @@ class OnlineLinearModel {
 
   constructor(initial?: Partial<FeatureVector>, bias?: number) {
     this.weights = {
-      textMatch: this.initRandom() + 0.1, 
+      textMatch: this.initRandom() + 0.1,
       recency:   this.initRandom(),
       frequency: this.initRandom(),
       navigation:this.initRandom(),
       timeOfDay: this.initRandom(),
       session:   this.initRandom(),
       regularity:this.initRandom(),
+      fuzzyScore:this.initRandom(), // Added fuzzyScore initialization
     };
     if (initial) {
-      Object.assign(this.weights, initial);
+      // Ensure fuzzyScore is also assigned if provided in initial
+      const completeInitial = { fuzzyScore: 0, ...initial };
+      Object.assign(this.weights, completeInitial);
     }
     if (typeof bias === 'number') {
       this.bias = bias;
@@ -380,13 +384,21 @@ class OnlineLinearModel {
   }
 
   /**
-   * Two-tier scoring: 
-   *  finalScore = (weights.textMatch * f.textMatch * 100) + contextualScore + bias
+   * Combined scoring: Learns weights for all features including textMatch and fuzzyScore.
+   * Removed the fixed multiplier for textMatch.
    */
   public predict(f: FeatureVector): number {
-    const contextScore = computeContextualScore(f, this.weights);
-    const textTier = this.weights.textMatch * f.textMatch * 100;
-    return textTier + contextScore + this.bias;
+    const score =
+      this.weights.textMatch   * f.textMatch   +
+      this.weights.recency     * f.recency     +
+      this.weights.frequency   * f.frequency   +
+      this.weights.navigation  * f.navigation  +
+      this.weights.timeOfDay   * f.timeOfDay   +
+      this.weights.session     * f.session     +
+      this.weights.regularity  * f.regularity  +
+      this.weights.fuzzyScore  * f.fuzzyScore; // Added fuzzyScore term
+
+    return score + this.bias;
   }
 
   public update(f: FeatureVector, outcome: number) {
@@ -403,6 +415,7 @@ class OnlineLinearModel {
     this.weights.timeOfDay   += this.learningRate * (error * f.timeOfDay   - reg * this.weights.timeOfDay);
     this.weights.session     += this.learningRate * (error * f.session     - reg * this.weights.session);
     this.weights.regularity  += this.learningRate * (error * f.regularity  - reg * this.weights.regularity);
+    this.weights.fuzzyScore  += this.learningRate * (error * f.fuzzyScore  - reg * this.weights.fuzzyScore); // Added fuzzyScore update
 
     this.constrainWeights();
   }
@@ -417,6 +430,7 @@ class OnlineLinearModel {
     this.weights.timeOfDay   = clamp(this.weights.timeOfDay,   minW, maxW);
     this.weights.session     = clamp(this.weights.session,     minW, maxW);
     this.weights.regularity  = clamp(this.weights.regularity,  minW, maxW);
+    this.weights.fuzzyScore  = clamp(this.weights.fuzzyScore,  minW, maxW); // Added fuzzyScore constraint
     this.bias = Math.max(-3.0, Math.min(3.0, this.bias));
   }
 }
@@ -463,6 +477,7 @@ export class AdvancedLocalRanker {
   ): Promise<Array<{ pageId: string; title: string; url: string; score: number }>> {
     if (!this.bm25) return [];
     const nowSec = toSeconds(now);
+    const qLower = query.toLowerCase(); // Lowercase query once
 
     // 1) BM25 text match
     let results = this.bm25.computeScores(query);
@@ -471,21 +486,17 @@ export class AdvancedLocalRanker {
     results = results.map(r => {
       const page = this.pages.find(p => p.pageId === r.pageId);
       if (!page) return r;
+      // Substring bonus is kept for now as it rewards exact matches/prefixes specifically
       const subBonus = computeSubstringBonus(query, page);
       return { pageId: r.pageId, score: r.score + subBonus };
     });
-    
-    // Filter out results with insufficient text match
-    results = results.filter(r => r.score >= 0.5);
-    
+
+    // Filter out results with very low initial text match (might need tuning)
+    results = results.filter(r => r.score >= 0.1); // Lowered threshold slightly
+
     results.sort((a, b) => b.score - a.score);
 
-    // 3) Fuzzy fallback if needed
-    const allZero = results.every(d => d.score === 0);
-    if (allZero && query.length > 2) {
-      results = this.fuzzyFallback(query);
-      results.sort((a, b) => b.score - a.score);
-    }
+    // 3) REMOVED Fuzzy fallback logic - integrated into features now
 
     // 4) Determine session features
     let sessionId: number | undefined;
@@ -504,9 +515,12 @@ export class AdvancedLocalRanker {
     const finalScores = results.map(r => {
       const page = this.pages.find(px => px.pageId === r.pageId);
       if (!page) {
-        return { pageId: r.pageId, title: '', url: '', score: 0 };
+        // Return a default object for type safety, score 0 ensures it ranks low
+        return { pageId: r.pageId, title: '', url: '', score: -Infinity };
       }
-      const textMatchScore = r.score;
+      const textMatchScore = r.score; // From BM25 + Substring Bonus
+
+      // Calculate features
       const recencyVal = multiScaleRecencyScore(page, this.visits, nowSec);
       const freqVal = Math.log1p(page.visitCount) * (0.5 + page.personalScore);
       const navVal = currentPageId ? computeMarkovTransitionProb(this.markovTable, currentPageId, page.pageId) : 0;
@@ -514,6 +528,7 @@ export class AdvancedLocalRanker {
       const todVal = computeTimeOfDayProb(this.timeOfDayHist, page.pageId, hourNow);
       const sessVal = sessionFeatures ? computeSessionContextWeight(page, sessionFeatures) : 0;
       const regVal = this.computeRegularity(page.pageId);
+      const fuzzyVal = jw(qLower, page.title.toLowerCase()); // Calculate Jaro-Winkler score
 
       const features: FeatureVector = {
         textMatch: textMatchScore,
@@ -522,18 +537,39 @@ export class AdvancedLocalRanker {
         navigation: navVal,
         timeOfDay: todVal,
         session: sessVal,
-        regularity: regVal
+        regularity: regVal,
+        fuzzyScore: fuzzyVal // Added fuzzyScore to features
       };
       this.lastDisplayedFeatures[page.pageId] = features;
-      
+
       const score = this.model.predict(features);
       return { pageId: page.pageId, title: page.title, url: page.url, score };
-    });
+    }).filter(r => r.score > -Infinity); // Filter out any -Infinity scores from missing pages
     finalScores.sort((a, b) => b.score - a.score);
 
     // 6) Optional relevance filter
     const filtered = this.applyRelevanceFilter(finalScores, query);
-    return filtered.map(({ pageId, title, url, score }) => ({ pageId, title, url, score }));
+
+    // 7) Deduplicate results by title and URL, keeping highest score
+    const deduplicatedResults: Array<{ pageId: string; title: string; url: string; score: number }> = [];
+    const seenTitles = new Set<string>();
+    const seenUrls = new Set<string>();
+
+    for (const result of filtered) {
+      // Skip if we've already included a result with this title OR this URL
+      if (!seenTitles.has(result.title) && !seenUrls.has(result.url)) {
+        deduplicatedResults.push({
+          pageId: result.pageId,
+          title: result.title,
+          url: result.url,
+          score: result.score
+        });
+        seenTitles.add(result.title);
+        seenUrls.add(result.url);
+      }
+    }
+
+    return deduplicatedResults;
   }
 
   public recordUserClick(pageId: string, displayedIds: string[]) {
@@ -646,22 +682,6 @@ export class AdvancedLocalRanker {
     } catch (err) {
       console.error('[AdvancedLocalRanker] Failed to update page in DB:', err);
     }
-  }
-
-  /**
-   * Fuzzy fallback if BM25 + substring yields zero for all.
-   */
-  private fuzzyFallback(query: string): Array<{ pageId: string; score: number }> {
-    const res: Array<{ pageId: string; score: number }> = [];
-    const qLower = query.toLowerCase();
-    for (const p of this.pages) {
-      // Jaro-Winkler with threshold 0.5
-      const sim = jw(qLower, p.title.toLowerCase());
-      if (sim > 0.5) {
-        res.push({ pageId: p.pageId, score: sim });
-      }
-    }
-    return res;
   }
 
   /**
