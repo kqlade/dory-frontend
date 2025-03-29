@@ -58,6 +58,11 @@ import {
   ENABLE_GLOBAL_SEARCH,
 } from '../config';
 
+// +++ NEW IMPORTS +++
+import { searchHistoryAPI } from '../services/historySearch';
+import { UnifiedLocalSearchResult } from '../types/search';
+// +++ END NEW IMPORTS +++
+
 console.log('[DORY] Service Worker starting...');
 
 // -------------------- Constants & State --------------------
@@ -191,6 +196,16 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
 async function initializeServices() {
   try {
     await initDexieSystem();
+
+    // +++ Initialize localRanker here +++
+    try {
+      await localRanker.initialize();
+      console.log('[DORY] AdvancedLocalRanker initialized.');
+    } catch (rankerError) {
+        console.error('[DORY] Failed to initialize AdvancedLocalRanker:', rankerError);
+        // Continue initialization even if ranker fails?
+    }
+    // +++ End localRanker init +++
 
     // Start a new session, potentially reusing a recent one
     const sid = await startNewSession(SESSION_IDLE_THRESHOLD);
@@ -794,93 +809,168 @@ async function handleNavigation(
   }
 }
 
-// Handle messages from content scripts
+// Add specific listeners for new search message types
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'PERFORM_SEARCH') {
-    console.log('[DORY] Background received search request:', message.query);
-    
-    if (!sender.tab || !sender.tab.id) {
-      console.error('[DORY] Cannot respond to search request: no tab ID');
-      return true;
-    }
-    
-    const tabId = sender.tab.id;
-    const query = message.query;
-    const semanticEnabled = message.semanticEnabled || false;
-    
-    // Perform the actual search
+  // Ensure sender.tab exists for sending responses
+  if (!sender.tab || !sender.tab.id) {
+    console.warn('[DORY] Message received without sender tab ID, ignoring:', message);
+    return false; // Indicate synchronous return or no response needed
+  }
+  const tabId = sender.tab.id;
+  const query = message.query;
+
+  if (message.type === 'PERFORM_LOCAL_SEARCH') {
+    console.log(`[DORY] Received PERFORM_LOCAL_SEARCH for query: "${query}"`);
+    if (!query) return true; // No query, do nothing but acknowledge
+
     (async () => {
       try {
-        let results = [];
-        
-        // First try to get local results (always available)
-        await localRanker.initialize();
-        const localResults = await localRanker.rank(query);
-        
-        // Format local results
-        const formattedLocalResults = localResults.map(r => ({
-          id: r.pageId,
-          title: r.title,
-          url: r.url,
-          score: r.score,
-          source: 'local',
-        }));
-        
-        results = formattedLocalResults;
-        
-        // If semantic search is enabled, try to get semantic results
-        if (semanticEnabled) {
-          try {
-            const userId = await getCurrentUserId();
-            
-            if (userId) {
-              const semanticResponse = await semanticSearch(query, userId, {
-                limit: 20,
-                useHybridSearch: true,
-                useLLMExpansion: true,
-                useReranking: true,
-              });
-              
-              // Safely cast the response to SearchResponse
-              const semanticResults = semanticResponse as SearchResponse;
-              
-              // Format semantic results
-              const formattedSemanticResults = semanticResults.map(result => ({
-                id: result.docId,
-                pageId: result.pageId,
-                title: result.title,
-                url: result.url,
-                score: result.score,
-                explanation: result.explanation,
-                source: 'semantic',
-              }));
-              
-              // If semantic search is enabled, only return semantic results
-              results = formattedSemanticResults;
-            }
-          } catch (error) {
-            console.error('[DORY] Error performing semantic search:', error);
-            // Fall back to local results if semantic search fails
-          }
-        }
-        
-        // Send results back to the content script
-        console.log('[DORY] Sending search results to tab:', tabId, 'count:', results.length);
+        // Perform combined local search
+        const historyPromise = searchHistoryAPI(query);
+        const dexiePromise = localRanker.rank(query);
+        const [historyResults, dexieResults] = await Promise.all([historyPromise, dexiePromise]);
+
+        // Merge and sort using the corrected function
+        const finalResults = mergeAndSortResults(historyResults, dexieResults);
+
+        console.log(`[DORY] Sending ${finalResults.length} combined local results to tab:`, tabId);
         chrome.tabs.sendMessage(tabId, {
           type: 'SEARCH_RESULTS',
-          results: results
+          results: finalResults
         });
       } catch (error) {
-        console.error('[DORY] Error performing search:', error);
-        // Send empty results if search fails
-        chrome.tabs.sendMessage(tabId, {
-          type: 'SEARCH_RESULTS',
-          results: []
-        });
+        console.error('[DORY] Error performing combined local search:', error);
+        chrome.tabs.sendMessage(tabId, { type: 'SEARCH_RESULTS', results: [] });
       }
     })();
-    
-    // Return true to indicate we'll respond asynchronously
-    return true;
+
+    return true; // Indicate asynchronous response
+
+  } else if (message.type === 'PERFORM_SEMANTIC_SEARCH') {
+    console.log(`[DORY] Received PERFORM_SEMANTIC_SEARCH for query: "${query}"`);
+    if (!query) return true; // No query, do nothing but acknowledge
+
+    (async () => {
+      try {
+        const userId = await getCurrentUserId();
+        if (!userId) {
+          throw new Error('User not authenticated for semantic search');
+        }
+
+        const semanticResponse = await semanticSearch(query, userId, {
+          limit: 20, // Keep parameters as before
+          useHybridSearch: true,
+          useLLMExpansion: true,
+          useReranking: true,
+        });
+
+        const semanticResults = semanticResponse as SearchResponse; // Use existing type
+
+        // Map Semantic results to UnifiedLocalSearchResult or keep separate?
+        // For now, let's send back the original structure for semantic
+        // Or adapt the UI? Let's map to Unified for consistency?
+        // Decision: Map to Unified for consistency in what UI receives
+        const formattedResults: UnifiedLocalSearchResult[] = semanticResults.map(result => ({
+          id: result.docId, // Use docId as primary ID
+          url: result.url,
+          title: result.title,
+          score: result.score, // Add the mandatory score field
+          source: 'semantic',  // Clearly mark the source as semantic
+          explanation: result.explanation,
+          pageId: result.pageId,
+          // lastVisitTime, visitCount, typedCount will be undefined
+        }));
+
+        console.log(`[DORY] Sending ${formattedResults.length} semantic results to tab:`, tabId);
+        chrome.tabs.sendMessage(tabId, {
+          type: 'SEARCH_RESULTS',
+          results: formattedResults
+        });
+
+      } catch (error) {
+        console.error('[DORY] Error performing semantic search:', error);
+        chrome.tabs.sendMessage(tabId, { type: 'SEARCH_RESULTS', results: [] });
+      }
+    })();
+
+    return true; // Indicate asynchronous response
   }
+
+  // Return false if message type wasn't handled here
+  // Allow other listeners (like messageRouter) to potentially handle it
+  return false;
 });
+
+// +++ NEW MERGE FUNCTION (Corrected Parameter Type) +++
+/**
+ * Merges and sorts results from History API and Dexie (AdvancedLocalRanker).
+ * Prioritizes Dexie results for items found in both sources.
+ *
+ * @param historyResults Results from searchHistoryAPI.
+ * @param dexieResults Results directly from localRanker.rank.
+ * @returns A sorted array of UnifiedLocalSearchResult.
+ */
+function mergeAndSortResults(
+  historyResults: UnifiedLocalSearchResult[],
+  // Correct type for results from localRanker.rank
+  dexieResults: Array<{ pageId: string; title: string; url: string; score: number }>
+): UnifiedLocalSearchResult[] {
+  const resultsMap = new Map<string, UnifiedLocalSearchResult>();
+
+  // 1. Add history results first
+  for (const result of historyResults) {
+    if (result.url) { // Ensure URL exists
+      // Assign default score of 1 to history results
+      resultsMap.set(result.url, { ...result, source: 'history', score: 1 });
+    }
+  }
+
+  // 2. Add/Update with Dexie results (prioritize Dexie data)
+  for (const result of dexieResults) { // result is now the raw Dexie result type
+    if (result.url) { // Ensure URL exists
+      const existing = resultsMap.get(result.url);
+      // Map Dexie result to UnifiedLocalSearchResult structure HERE
+      const dexieUnifiedResult: UnifiedLocalSearchResult = {
+        id: result.pageId, // Use pageId as ID
+        url: result.url,
+        title: result.title,
+        source: 'dexie',
+        score: result.score, // Use the mandatory 'score' field from Dexie result
+        pageId: result.pageId,
+        // Merge relevant fields from existing history entry
+        lastVisitTime: existing?.lastVisitTime, // Keep history time if present
+        visitCount: existing?.visitCount,
+        typedCount: existing?.typedCount,
+        // explanation: undefined, // Add if localRanker provides it
+      };
+      resultsMap.set(result.url, dexieUnifiedResult);
+    }
+  }
+
+  // 3. Convert Map to Array
+  const mergedList = Array.from(resultsMap.values());
+
+  // 4. Implement Custom Sort: Primary by score (desc), secondary by source ('dexie' > 'history')
+  mergedList.sort((a, b) => {
+    // Primary sort: score descending
+    const scoreDiff = b.score - a.score;
+    if (scoreDiff !== 0) return scoreDiff;
+
+    // Secondary sort: prioritize 'dexie' if scores are equal
+    if (a.source === 'dexie' && b.source !== 'dexie') return -1;
+    if (a.source !== 'dexie' && b.source === 'dexie') return 1;
+
+    // Tertiary sort (optional, for history items with same default score): lastVisitTime
+    if (a.source === 'history' && b.source === 'history') {
+       const visitTimeDiff = (b.lastVisitTime ?? 0) - (a.lastVisitTime ?? 0);
+       if (visitTimeDiff !== 0) return visitTimeDiff;
+    }
+
+    return 0; // Should only happen if scores and sources are identical
+  });
+
+  // 5. Limit total results (optional)
+  const MAX_TOTAL_RESULTS = 50;
+  return mergedList.slice(0, MAX_TOTAL_RESULTS);
+}
+// +++ END NEW MERGE FUNCTION +++

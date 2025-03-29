@@ -1,21 +1,22 @@
-import React, { useRef, useState, useEffect, KeyboardEvent } from 'react';
+import React, { useRef, useState, useEffect, KeyboardEvent, WheelEvent } from 'react';
 import { useHybridSearch } from '../utils/useSearch';
 import { trackSearchClick } from '../services/eventService';
+import { UnifiedLocalSearchResult } from '../types/search';
 import './NewTabSearchBar.css';
 
 /**
  * Shape of each search result (customize fields as needed).
  */
-interface SearchResult {
-  id: string;
-  title: string;
-  url: string;
-  score: number;
-  source?: string;
-  explanation?: string;
-  pageId?: string;
-  searchSessionId?: string;
-}
+// interface SearchResult {
+//   id: string;
+//   title: string;
+//   url: string;
+//   score: number;
+//   source?: string;
+//   explanation?: string;
+//   pageId?: string;
+//   searchSessionId?: string;
+// }
 
 /**
  * Simple Dory logo for toggling semantic mode (unchanged).
@@ -63,12 +64,12 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   } = useHybridSearch();
 
   // ------------------------------
-  // 2. Local state for keyboard highlight & double-enter
+  // 2. Local state for keyboard highlight, double-enter, AND scrolling
   // ------------------------------
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
-  // --- NEW: State to track which results to display ---
   const [displayMode, setDisplayMode] = useState<'local' | 'semantic'>('local');
+  const [startIndex, setStartIndex] = useState(0); // NEW: State for visible window start
 
   // ------------------------------
   // 3. Ref for focusing the input
@@ -93,9 +94,14 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const currentResults = displayMode === 'semantic' ? semanticSearchResults : localResults;
   const currentLoading = displayMode === 'semantic' ? isSemanticSearching : isSearching;
 
-  // Reset selected index when the displayed results change
+  // Calculate visible results based on startIndex
+  const visibleResults = currentResults.slice(startIndex, startIndex + 3);
+  const maxStartIndex = Math.max(0, currentResults.length - 3);
+
+  // Reset selected index and startIndex when the displayed results change
   useEffect(() => {
     setSelectedIndex(-1);
+    setStartIndex(0); // Reset scroll window too
   }, [currentResults]);
 
   // ------------------------------
@@ -129,7 +135,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   };
 
   // ------------------------------
-  // 7. Keyboard events (arrows, Enter, Escape) - Updated
+  // 7. Keyboard events (arrows, Enter, Escape) - Updated for scrolling
   // ------------------------------
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     const resultsLength = currentResults.length;
@@ -137,22 +143,36 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (resultsLength > 0) {
-        setSelectedIndex((prev) => (prev < resultsLength - 1 ? prev + 1 : 0));
+        const newSelectedIndex = selectedIndex < resultsLength - 1 ? selectedIndex + 1 : 0;
+        setSelectedIndex(newSelectedIndex);
+        // Adjust scroll window if needed
+        if (newSelectedIndex >= startIndex + 3) {
+          setStartIndex(Math.min(newSelectedIndex - 2, maxStartIndex));
+        } else if (newSelectedIndex < startIndex) { // Handle wrapping around to top
+           setStartIndex(0);
+        }
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (resultsLength > 0) {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : resultsLength - 1));
+        const newSelectedIndex = selectedIndex > 0 ? selectedIndex - 1 : resultsLength - 1;
+        setSelectedIndex(newSelectedIndex);
+        // Adjust scroll window if needed
+        if (newSelectedIndex < startIndex) {
+          setStartIndex(newSelectedIndex);
+        } else if (newSelectedIndex === resultsLength - 1) { // Handle wrapping around to bottom
+           setStartIndex(maxStartIndex);
+        }
       }
     } else if (e.key === 'Escape') {
       setSelectedIndex(-1);
       // Reset enter timing on escape
       setLastEnterPressTime(0);
     } else if (e.key === 'Enter') {
-      // Navigate if an item is selected
+      // Use currentResults for navigation check, as selectedIndex refers to the full list
       if (selectedIndex >= 0 && selectedIndex < resultsLength) {
         e.preventDefault();
-        navigateToResult(currentResults[selectedIndex]);
+        navigateToResult(currentResults[selectedIndex]); // Navigate using the correct index from full list
         setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
         // Handle single vs double enter
@@ -178,9 +198,23 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   };
 
   // ------------------------------
+  // NEW: Handle Scroll Wheel for results list
+  // ------------------------------
+  const handleScroll = (event: WheelEvent<HTMLUListElement>) => {
+    event.preventDefault(); // Prevent native scrolling
+    if (event.deltaY > 0 && startIndex < maxStartIndex) {
+      // Scrolling down
+      setStartIndex(prev => Math.min(prev + 1, maxStartIndex));
+    } else if (event.deltaY < 0 && startIndex > 0) {
+      // Scrolling up
+      setStartIndex(prev => Math.max(prev - 1, 0));
+    }
+  };
+
+  // ------------------------------
   // 8. Navigate to a result - Updated
   // ------------------------------
-  const navigateToResult = (result: SearchResult) => {
+  const navigateToResult = (result: UnifiedLocalSearchResult) => {
     const indexInCurrentList = currentResults.findIndex((r) => r.id === result.id);
     trackSearchClick(
       // Use different session IDs based on source if desired, or keep simple
@@ -194,9 +228,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   };
 
   // ------------------------------
-  // 9. Click on a result item - Unchanged
+  // 9. Click on a result item - Unchanged logic, Updated type
   // ------------------------------
-  const handleResultClick = (result: SearchResult) => {
+  const handleResultClick = (result: UnifiedLocalSearchResult) => {
     navigateToResult(result);
   };
 
@@ -250,27 +284,34 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         )}
       </div>
 
-      {/* Show the results list - Use currentResults */}
+      {/* Show the results list - Use visibleResults and add onWheel */}
       {showResultsList && (
-        <ul className="results-list">
-          {currentResults.map((item: SearchResult, idx) => (
-            <li
-              key={item.id} // Use item.id as key
-              className={`result-item ${idx === selectedIndex ? 'selected' : ''}`}
-              onClick={() => handleResultClick(item)}
-              onMouseEnter={() => setSelectedIndex(idx)}
-            >
-              <div className="result-title">{item.title}</div>
-              <div className="result-url">{item.url}</div>
-              {/* Show explanation only for semantic results */}
-              {item.explanation && item.source === 'semantic' && (
-                <div className="result-explanation">
-                  <span className="explanation-label">Why: </span>
-                  {item.explanation}
-                </div>
-              )}
-            </li>
-          ))}
+        <ul className="results-list" onWheel={handleScroll}>
+          {/* Map over the sliced visible results */}
+          {visibleResults.map((item: UnifiedLocalSearchResult, idx) => {
+            // Calculate the actual index in the full list for selection check
+            const actualIndex = startIndex + idx;
+            return (
+              <li
+                key={item.id} // Use item.id as key
+                className={`result-item ${selectedIndex === actualIndex ? 'selected' : ''}`}
+                // Pass the item from visibleResults, click handler is fine
+                onClick={() => handleResultClick(item)}
+                // Set selectedIndex to the actual index in the full list
+                onMouseEnter={() => setSelectedIndex(actualIndex)}
+              >
+                <div className="result-title">{item.title}</div>
+                <div className="result-url">{item.url}</div>
+                {/* Show explanation only for semantic results */}
+                {item.explanation && item.source === 'semantic' && (
+                  <div className="result-explanation">
+                    <span className="explanation-label">Why: </span>
+                    {item.explanation}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 

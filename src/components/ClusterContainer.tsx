@@ -77,10 +77,12 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     setExpandedCluster(null);
   };
   
-  // Handle page click - navigate to the page URL
+  // Handle page click - navigate to the page URL IN A NEW TAB
   const handlePageClick = (page: ClusterPage) => {
-    window.location.href = page.url;
-    // or window.open(page.url, '_blank');
+    // window.location.href = page.url; // Old: Navigates current tab
+    chrome.tabs.create({ url: page.url }); // New: Opens in a new tab
+    // Potentially close the expanded view after opening? Depends on desired UX.
+    // handleCloseExpanded(); 
   };
 
   // Handle clicks outside the expanded view

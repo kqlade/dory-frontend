@@ -2,10 +2,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from 'use-debounce';
-import { localRanker } from '../services/localDoryRanking';
 import { semanticSearch } from '../api/client';
 import { getCurrentUserId } from '../services/userService';
-import { SearchResponse } from '../api/types'; // Import the updated type
+import { UnifiedLocalSearchResult } from '../types/search';
+import { SearchResponse, SearchResult as ApiSearchResultType } from '../api/types';
 
 /** Standard search result interface shared across all search methods */
 interface SearchResult {
@@ -18,7 +18,9 @@ interface SearchResult {
   explanation?: string;
 }
 
-/** API result from the /api/search endpoint */
+// Define ApiSearchResult if it's specific to this file's usage
+// Or ensure it's correctly exported/imported if defined elsewhere.
+// Re-adding based on useSemanticSearch usage:
 interface ApiSearchResult {
   docId: string;
   pageId: string;
@@ -29,27 +31,64 @@ interface ApiSearchResult {
 }
 
 /**
- * Local search hook (always active) to provide immediate results.
+ * Refactored local search hook using messaging to background script.
  */
 export function useLocalSearch(query: string) {
-  return useQuery({
-    queryKey: ['local-search', query],
-    queryFn: async () => {
-      if (!query || query.length < 2) return [];
+  const [isLoading, setIsLoading] = useState(false);
+  const [results, setResults] = useState<UnifiedLocalSearchResult[]>([]);
 
-      await localRanker.initialize();
-      const results = await localRanker.rank(query);
+  useEffect(() => {
+    // Listener for results from the background script
+    const messageListener = (message: any) => {
+      if (message.type === 'SEARCH_RESULTS') {
+        // Check if the results are intended for this hook instance?
+        // For now, assume any SEARCH_RESULTS are for the current local search
+        console.log(`[useLocalSearch] Received ${message.results?.length} results`);
+        setResults(message.results || []);
+        setIsLoading(false);
+      }
+    };
 
-      return results.map(r => ({
-        id: r.pageId,
-        title: r.title,
-        url: r.url,
-        score: r.score,
-        source: 'local',
-      }));
-    },
-    enabled: query.length >= 2,
-  });
+    chrome.runtime.onMessage.addListener(messageListener);
+
+    // Cleanup listener on unmount or query change
+    return () => {
+      chrome.runtime.onMessage.removeListener(messageListener);
+    };
+  }, []); // Run listener setup only once
+
+  useEffect(() => {
+    // Perform search when query is valid
+    if (query && query.length >= 2) {
+      setIsLoading(true);
+      setResults([]); // Clear previous results
+      console.log(`[useLocalSearch] Sending PERFORM_LOCAL_SEARCH for: "${query}"`);
+      try {
+        chrome.runtime.sendMessage({
+          type: 'PERFORM_LOCAL_SEARCH',
+          query: query,
+        });
+        // isLoading will be set to false when results arrive
+      } catch (error) {
+        console.error('[useLocalSearch] Error sending message:', error);
+        setIsLoading(false); // Stop loading on send error
+        setResults([]);
+      }
+    } else {
+      // Clear results if query is too short
+      setResults([]);
+      setIsLoading(false);
+    }
+    // Dependency array ensures this runs when query changes
+  }, [query]);
+
+  // Return data in a shape similar to useQuery for compatibility with useHybridSearch
+  return {
+    data: results,
+    isLoading,
+    // Add other fields if useHybridSearch expects them (e.g., isError)
+    isError: false, // Placeholder, messaging errors handled internally
+  };
 }
 
 /**
@@ -86,12 +125,12 @@ export function useSemanticSearch(query: string, isEnabled: boolean) {
         // The response is now directly an array of search results
         const results = response as SearchResponse;
         
-        // Filter out results with scores below the threshold (0.55)
+        // Filter out results with scores below the threshold (0.25)
         const filteredResults = results.filter(result => result.score >= 0.25);
         
         console.log(`[Search] Filtered ${results.length - filteredResults.length} low-scoring results`);
 
-        return filteredResults.map((result: ApiSearchResult) => ({
+        return filteredResults.map((result: ApiSearchResultType) => ({
           id: result.docId,
           pageId: result.pageId,
           title: result.title,
@@ -123,7 +162,7 @@ export function useHybridSearch() {
   const [immediateQuery, setImmediateQuery] = useState(''); // For triggering local search on Enter
 
   // State specifically for semantic search results and loading state
-  const [semanticSearchResults, setSemanticSearchResults] = useState<SearchResult[]>([]);
+  const [semanticSearchResults, setSemanticSearchResults] = useState<UnifiedLocalSearchResult[]>([]);
   const [isSemanticSearching, setIsSemanticSearching] = useState(false);
   const [semanticError, setSemanticError] = useState<Error | null>(null);
 
@@ -163,14 +202,16 @@ export function useHybridSearch() {
       const results = response as SearchResponse;
       const filteredResults = results.filter(result => result.score >= 0.25);
 
-      const formattedResults = filteredResults.map((result: ApiSearchResult) => ({
-        id: result.docId,
+      // Map to UnifiedLocalSearchResult - ensure all required fields are present
+      const formattedResults: UnifiedLocalSearchResult[] = filteredResults.map((result: ApiSearchResultType) => ({
+        id: result.docId, // Use docId as ID
         pageId: result.pageId,
         title: result.title,
         url: result.url,
-        score: result.score,
+        score: result.score, // Mandatory score
         explanation: result.explanation,
-        source: 'semantic',
+        source: 'semantic', // Explicitly mark source
+        // Optional history fields (lastVisitTime, visitCount, typedCount) are undefined here
       }));
       setSemanticSearchResults(formattedResults);
 
