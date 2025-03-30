@@ -285,47 +285,52 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
 
       {/* Show the results list - Use visibleResults and add onWheel */}
       {showResultsList && (
-        <ul className="results-list" onWheel={handleScroll}>
-          {/* Map over the sliced visible results */}
-          {visibleResults.map((item: UnifiedLocalSearchResult, idx) => {
-            // Calculate the actual index in the full list for selection check
-            const actualIndex = startIndex + idx;
-            return (
-              <li
-                key={item.id} // Use item.id as key
-                className={`result-item ${selectedIndex === actualIndex ? 'selected' : ''}`}
-                // Pass the item from visibleResults, click handler is fine
-                onClick={() => handleResultClick(item)}
-                // Set selectedIndex to the actual index in the full list
-                onMouseEnter={() => setSelectedIndex(actualIndex)}
-              >
-                <div className="result-title">{item.title}</div>
-                <div className="result-url">{item.url}</div>
-                {/* Show explanation only for semantic results */}
-                {item.explanation && item.source === 'semantic' && (
-                  <div className="result-explanation">
-                    <span className="explanation-label">Why: </span>
-                    {item.explanation}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <div className="results-header">
+            {displayMode === 'semantic' ? 'Semantic Engine Results' : 'Quick Launch Results'}
+          </div>
+          <ul className="results-list" onWheel={handleScroll}>
+            {/* Map over the sliced visible results */}
+            {visibleResults.map((item: UnifiedLocalSearchResult, idx) => {
+              // Calculate the actual index in the full list for selection check
+              const actualIndex = startIndex + idx;
+              return (
+                <li
+                  key={item.id} // Use item.id as key
+                  className={`result-item ${selectedIndex === actualIndex ? 'selected' : ''}`}
+                  // Pass the item from visibleResults, click handler is fine
+                  onClick={() => handleResultClick(item)}
+                  // Set selectedIndex to the actual index in the full list
+                  onMouseEnter={() => setSelectedIndex(actualIndex)}
+                >
+                  <div className="result-title">{item.title}</div>
+                  <div className="result-url">{item.url}</div>
+                  {/* Show explanation only for semantic results */}
+                  {item.explanation && item.source === 'semantic' && (
+                    <div className="result-explanation">
+                      <span className="explanation-label">Why: </span>
+                      {item.explanation}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {/* Searching message - Indicate current mode */}
       {showSearching && (
         <div className="status-message searching">
-          Searching {displayMode}...
+          {displayMode === 'semantic' ? 'Searching semantic engine...' : 'Searching quick launcher...'}
         </div>
       )}
 
       {/* No results fallback - Indicate current mode */}
       {showNoResults && (
-         <div className="status-message no-results">
-           No {displayMode} results found.
-         </div>
+        <div className="status-message no-results">
+          {displayMode === 'semantic' ? 'No results found in semantic engine' : 'No results found in quick launcher'}
+        </div>
       )}
        {/* Can add semanticError display here if desired */}
     </div>

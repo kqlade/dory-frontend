@@ -81,6 +81,29 @@ function showSearchOverlay(): void {
   // Create style element
   styleSheet = document.createElement('style');
   styleSheet.textContent = `
+    /* Load Cabinet Grotesk font */
+    @font-face {
+      font-family: 'Cabinet Grotesk';
+      src: url(${chrome.runtime.getURL('fonts/Cabinet-Grotesk/CabinetGrotesk-Regular.otf')}) format('opentype');
+      font-weight: 400;
+      font-style: normal;
+    }
+    
+    @font-face {
+      font-family: 'Cabinet Grotesk';
+      src: url(${chrome.runtime.getURL('fonts/Cabinet-Grotesk/CabinetGrotesk-Medium.otf')}) format('opentype');
+      font-weight: 500;
+      font-style: normal;
+    }
+    
+    @font-face {
+      font-family: 'Cabinet Grotesk';
+      src: url(${chrome.runtime.getURL('fonts/Cabinet-Grotesk/CabinetGrotesk-Bold.otf')}) format('opentype');
+      font-weight: 700;
+      font-style: normal;
+    }
+
+    /* Overlay-specific positioning */
     #dory-search-overlay {
       position: fixed;
       top: 0;
@@ -108,17 +131,225 @@ function showSearchOverlay(): void {
       width: 600px;
       max-width: 90%;
     }
+
+    /* ========== EXACT COPY FROM NewTabSearchBar.css ========== */
+    /* Container that wraps everything */
+    .search-container {
+      width: 100%; /* Fill the parent wrapper */
+      background-color: transparent;
+      border-radius: 12px;
+      padding: 16px 20px;
+      border: 1px solid var(--border-color);
+      transition: all 0.3s ease;
+      position: relative; /* to contain absolutely positioned elements if needed */
+      box-sizing: border-box; /* Ensure padding is included in width calculation */
+      text-align: left; /* Explicit text alignment for input */
+    }
     
+    /* Hover & focus states */
+    .search-container:hover {
+      border-color: var(--border-hover-color);
+      box-shadow: 0 0 20px var(--shadow-color);
+    }
+    .search-container:focus-within {
+      border-color: var(--border-focus-color);
+      box-shadow: 0 0 25px var(--shadow-focus-color);
+    }
+    
+    /* The top bar with the icon + input + spinner */
+    .search-bar-inner-container {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      position: relative;
+      box-sizing: border-box; /* Consistent box model */
+      margin-bottom: 8px;
+    }
+    
+    /* Results header divider line */
+    .results-header-divider {
+      border-bottom: 1px solid var(--border-color);
+      margin: 0 0 4px 0; /* Keep original spacing to results */
+    }
+    
+    /* Icon wrapper */
+    .icon-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-color);
+      cursor: default;
+      padding: 8px;
+      border-radius: 50%;
+      transition: all 0.2s ease;
+    }
+    /* Make clickable if we have toggles */
+    .icon-wrapper.clickable {
+      cursor: pointer;
+    }
+    
+    .icon-wrapper.clickable:hover {
+      opacity: 0.8;
+      transform: scale(1.1);
+    }
+    
+    /* The search input */
+    .search-input {
+      background: transparent;
+      border: none;
+      color: var(--text-color);
+      font-size: 18px;
+      font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 28px;
+      width: 100%;
+      padding: 0;
+      margin: 0;
+      outline: none;
+    }
+    .search-input::placeholder {
+      color: var(--text-color);
+      opacity: 0.7;
+    }
+    
+    /* Spinner wrapper + spinner */
+    .spinner-wrapper {
+      margin-right: 8px;
+      display: flex;
+      align-items: flex-end;
+    }
+    
+    @keyframes spin {
+      0%   { transform: rotate(0deg);   }
+      100% { transform: rotate(360deg); }
+    }
+    .spinner {
+      box-sizing: border-box;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      border-top-color: var(--text-color);
+      border-left-color: var(--text-color);
+      border-right-color: var(--text-color);
+      animation: spin 0.8s linear infinite;
+    }
+    
+    /* Search mode indicator (semantic vs quick launch) */
+    .search-mode-indicator {
+      margin-top: 8px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-style: italic;
+      opacity: 0.7;
+      transition: opacity 0.3s ease;
+    }
+    .search-mode-indicator.hidden {
+      display: none;
+      opacity: 0;
+    }
+    
+    /* Results list below the input */
+    .results-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      max-height: calc(3 * 72px);
+      overflow: hidden;
+    }
+    
+    .results-header {
+      padding: 2px 12px 4px 12px; /* Reduce top padding from 8px to 2px */
+      font-size: 14px;
+      font-style: italic;
+      color: var(--text-secondary);
+      margin-bottom: 0px; /* Reduce from 4px to 0px */
+      text-align: center;
+    }
+    
+    .result-item {
+      padding: 12px;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+      border: none;
+      border-left: 3px solid transparent;
+      border-radius: 12px;
+    }
+    .result-item:hover {
+      background-color: var(--item-hover-bg);
+    }
+    .result-item.selected {
+      background-color: var(--item-hover-bg);
+      border-left: 3px solid var(--border-focus-color);
+      padding-left: 9px; /* 12px - 3px border */
+    }
+    
+    /* Title, URL, explanation */
+    .result-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .result-url {
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .result-explanation {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      line-height: 1.4;
+      opacity: 0.9;
+      font-style: italic;
+    }
+    .explanation-label {
+      font-weight: 600;
+      font-style: normal;
+    }
+    
+    /* Status messages (searching, no-results, etc.) */
+    .status-message {
+      text-align: center;
+      padding: 10px 12px;
+      color: var(--text-secondary);
+      min-height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.2s ease;
+      border-radius: 8px;
+      margin: 4px 0;
+    }
+    .status-message.searching {
+      font-size: 14px;
+      font-style: italic;
+    }
+    .status-message.no-results {
+      font-size: 14px;
+      font-style: italic;
+      color: var(--text-secondary);
+    }
+    /* ========== END EXACT COPY FROM NewTabSearchBar.css ========== */
+    
+    /* Theme-specific overrides for content script environment */
     /* Light theme - for the search bar */
     .dory-light-theme .search-container {
       background-color: #ffffff !important;
       color: #000000 !important;
       border: 1px solid rgba(0, 0, 0, 0.3) !important;
-      --border-color: rgba(0, 0, 0, 0.1);
+      --border-color: rgba(0, 0, 0, 0.2);
       --border-hover-color: rgba(0, 0, 0, 0.2);
-      --border-focus-color: #74d6ff;
+      --border-focus-color: rgba(0, 0, 0, 0.8);
       --shadow-color: rgba(0, 0, 0, 0.1);
-      --shadow-focus-color: rgba(116, 214, 255, 0.2);
+      --shadow-focus-color: rgba(0, 0, 0, 0.2);
       --text-color: #000000;
       --text-primary: #000000;
       --text-secondary: #555555;
@@ -135,18 +366,18 @@ function showSearchOverlay(): void {
     
     /* Dark theme - for the search bar */
     .dory-dark-theme .search-container {
-      background-color: #1e1e1e !important;
+      background-color: #000000 !important;
       color: #ffffff !important;
       border: 1px solid rgba(255, 255, 255, 0.3) !important;
-      --border-color: rgba(255, 255, 255, 0.1);
+      --border-color: rgba(255, 255, 255, 0.2);
       --border-hover-color: rgba(255, 255, 255, 0.2);
-      --border-focus-color: #74d6ff;
+      --border-focus-color: rgba(255, 255, 255, 0.8);
       --shadow-color: rgba(0, 0, 0, 0.3);
-      --shadow-focus-color: rgba(116, 214, 255, 0.2);
+      --shadow-focus-color: rgba(255, 255, 255, 0.2);
       --text-color: #ffffff;
       --text-primary: #ffffff;
       --text-secondary: #bbbbbb;
-      --item-hover-bg: rgba(255, 255, 255, 0.1);
+      --item-hover-bg: rgba(255, 255, 255, 0.05);
     }
     
     .dory-dark-theme .search-input {
@@ -157,92 +388,13 @@ function showSearchOverlay(): void {
       color: rgba(255, 255, 255, 0.7) !important;
     }
     
-    /* Make sure result items also have the right background */
+    /* Make sure background matches theme */
     .dory-light-theme .results-list {
       background-color: #ffffff !important;
     }
     
     .dory-dark-theme .results-list {
-      background-color: #1e1e1e !important;
-    }
-    
-    /* Selected result item styling - light theme */
-    .dory-light-theme .result-item:hover {
-      background-color: rgba(0, 0, 0, 0.05) !important;
-    }
-    
-    .dory-light-theme .result-item.selected {
-      background-color: rgba(0, 0, 0, 0.05) !important;
-      border-left: 3px solid rgba(0, 0, 0, 0.8) !important;
-      padding-left: 9px !important; /* 12px - 3px border */
-    }
-    
-    /* Selected result item styling - dark theme */
-    .dory-dark-theme .result-item:hover {
-      background-color: rgba(255, 255, 255, 0.1) !important;
-    }
-    
-    .dory-dark-theme .result-item.selected {
-      background-color: rgba(255, 255, 255, 0.1) !important;
-      border-left: 3px solid rgba(255, 255, 255, 0.8) !important;
-      padding-left: 9px !important; /* 12px - 3px border */
-    }
-    
-    /* Status messages styling */
-    .dory-light-theme .status-message,
-    .dory-dark-theme .status-message {
-      text-align: center !important;
-      padding: 10px 12px !important;
-      min-height: 24px !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      transition: opacity 0.2s ease !important;
-      border-radius: 8px !important;
-      margin: 4px 0 !important;
-    }
-    
-    .dory-light-theme .status-message {
-      color: #555555 !important;
-    }
-    
-    .dory-dark-theme .status-message {
-      color: #bbbbbb !important;
-    }
-    
-    /* Result text styling */
-    .dory-light-theme .result-title, 
-    .dory-dark-theme .result-title {
-      font-size: 16px !important;
-      font-weight: 500 !important;
-      margin-bottom: 4px !important;
-      white-space: nowrap !important;
-      overflow: hidden !important;
-      text-overflow: ellipsis !important;
-    }
-    
-    .dory-light-theme .result-title {
-      color: #000000 !important;
-    }
-    
-    .dory-dark-theme .result-title {
-      color: #ffffff !important;
-    }
-    
-    .dory-light-theme .result-url,
-    .dory-dark-theme .result-url {
-      font-size: 12px !important;
-      white-space: nowrap !important;
-      overflow: hidden !important;
-      text-overflow: ellipsis !important;
-    }
-    
-    .dory-light-theme .result-url {
-      color: #555555 !important;
-    }
-    
-    .dory-dark-theme .result-url {
-      color: #bbbbbb !important;
+      background-color: #000000 !important;
     }
   `;
   document.head.appendChild(styleSheet);

@@ -34,6 +34,7 @@
     width: 100%;
     position: relative;
     box-sizing: border-box; /* Consistent box model */
+    margin-bottom: 8px;
   }
   
   /* Icon wrapper */
@@ -51,11 +52,7 @@
   .icon-wrapper.clickable {
     cursor: pointer;
   }
-  .icon-wrapper.active {
-    /* background: rgba(116, 214, 255, 0.25); */ /* Removed */
-    /* transform: scale(1.1); */ /* Removed */
-    /* Keep the rule empty or add other non-visual styles if needed */
-  }
+  
   .icon-wrapper.clickable:hover {
     opacity: 0.8;
     transform: scale(1.1);
@@ -119,22 +116,34 @@
   
   /* Results list below the input */
   .results-list {
-    list-style: none;
-    margin: 8px 0 0;
+    margin: 0;
     padding: 0;
-    max-height: 50vh;
-    overflow-y: auto;
-    border-top: 1px solid var(--border-color);
-    transition: max-height 0.3s ease, opacity 0.3s ease;
-    opacity: 1;
+    list-style: none;
+    max-height: calc(3 * 72px);
+    overflow: hidden;
+  }
+  
+  .results-header {
+    padding: 8px 12px;
+    font-size: 14px;
+    font-style: italic;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-align: center;
+  }
+  
+  /* Results header divider line */
+  .results-header-divider {
+    border-bottom: 1px solid var(--border-color);
+    margin: 0 0 4px 0;
   }
   
   .result-item {
-    padding: 10px 12px;
+    padding: 12px;
     cursor: pointer;
-    transition: background-color 0.2s;
-    border-radius: 8px;
-    margin: 4px 0;
+    transition: background-color 0.2s ease;
+    border: none;
+    border-left: 3px solid transparent;
   }
   .result-item:hover {
     background-color: var(--item-hover-bg);
@@ -193,5 +202,7 @@
     font-style: italic;
   }
   .status-message.no-results {
-    font-size: 18px;
+    font-size: 14px;
+    font-style: italic;
+    color: var(--text-secondary);
   }

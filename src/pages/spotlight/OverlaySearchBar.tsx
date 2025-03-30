@@ -60,6 +60,7 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
   const [startIndex, setStartIndex] = useState(0); // NEW: State for visible window start
+  const [isSemanticSearch, setIsSemanticSearch] = useState(false); // Track if semantic search is active
 
   // ------------------------------
   // 3. Ref for focusing the input
@@ -140,10 +141,12 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
         const currentTime = Date.now();
         if (currentTime - lastEnterPressTime < 500) { // Double press
           console.log('[OverlaySearchBar] Double Enter detected - performing semantic search.');
+          setIsSemanticSearch(true); // Set semantic search to active
           performSemanticSearch(inputValue); // Trigger semantic search via messaging
           setLastEnterPressTime(0);         // Reset time
         } else { // Single press
           console.log('[OverlaySearchBar] Single Enter detected.');
+          setIsSemanticSearch(false); // Set semantic search to inactive
           setLastEnterPressTime(currentTime); // Store time of this press
         }
       } else { // Input is empty
@@ -236,44 +239,50 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
 
       {/* Show the results list - Use visibleResults and add onWheel */}
       {showResultsList && (
-        <ul className="results-list" onWheel={handleScroll}>
-          {/* Map over sliced visible results */}
-          {visibleResults.map((item: UnifiedLocalSearchResult, idx) => {
-            // Calculate actual index for selection check
-            const actualIndex = startIndex + idx;
-            return (
-              <li
-                key={item.id || idx}
-                className={`result-item ${selectedIndex === actualIndex ? 'selected' : ''}`}
-                onClick={() => handleResultClick(item)}
-                // Set selectedIndex to actual index
-                onMouseEnter={() => setSelectedIndex(actualIndex)}
-              >
-                <div className="result-title">{item.title}</div>
-                <div className="result-url">{item.url}</div>
-                {item.explanation && item.source === 'semantic' && (
-                  <div className="result-explanation">
-                    <span className="explanation-label">Why: </span>
-                    {item.explanation}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <div className="results-header">
+            {isSemanticSearch ? 'Semantic Engine Results' : 'Quick Launch Results'}
+          </div>
+          <div className="results-header-divider"></div>
+          <ul className="results-list" onWheel={handleScroll}>
+            {/* Map over sliced visible results */}
+            {visibleResults.map((item: UnifiedLocalSearchResult, idx) => {
+              // Calculate actual index for selection check
+              const actualIndex = startIndex + idx;
+              return (
+                <li
+                  key={item.id || idx}
+                  className={`result-item ${selectedIndex === actualIndex ? 'selected' : ''}`}
+                  onClick={() => handleResultClick(item)}
+                  // Set selectedIndex to actual index
+                  onMouseEnter={() => setSelectedIndex(actualIndex)}
+                >
+                  <div className="result-title">{item.title}</div>
+                  <div className="result-url">{item.url}</div>
+                  {item.explanation && item.source === 'semantic' && (
+                    <div className="result-explanation">
+                      <span className="explanation-label">Why: </span>
+                      {item.explanation}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {/* Searching message */}
       {showSearching && (
         <div className="status-message searching">
-          Searching...
+          {isSemanticSearch ? 'Searching semantic engine...' : 'Searching quick launcher...'}
         </div>
       )}
 
       {/* No results fallback */}
       {showNoResults && (
         <div className="status-message no-results">
-          No results found.
+          {isSemanticSearch ? 'No results found in semantic engine' : 'No results found in quick launcher'}
         </div>
       )}
       {/* Can add error display here if desired */}
