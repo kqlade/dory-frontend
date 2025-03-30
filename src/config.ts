@@ -2,8 +2,8 @@ export const API_BASE_URL = process.env.API_BASE_URL || 'https://dory-backend-e1
 
 export const ENDPOINTS = {
   HEALTH: '/api/health',
-  UNIFIED_SEARCH: '/api/search',
-  SEARCH: '/api/search',
+  SEMANTIC_SEARCH: '/api/search',
+  WEB_SEARCH: '/api/search/web',
   CONTENT: '/api/content',
   COLD_STORAGE: {
     BASE: '/api/cold-storage',

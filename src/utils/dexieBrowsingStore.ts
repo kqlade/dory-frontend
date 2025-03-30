@@ -114,31 +114,6 @@ function generateEdgeUuid(): number {
 }
 
 /**
- * Create a brand new navigation edge.
- */
-export async function createNavigationEdge(
-  fromPageId: string,
-  toPageId: string,
-  sessionId: number,
-  timestamp: number
-): Promise<number> {
-  const db = dexieDb.getDB();
-  const edgeId = generateEdgeUuid();
-  const edge: EdgeRecord = {
-    edgeId,
-    fromPageId,
-    toPageId,
-    sessionId,
-    timestamp,
-    count: 1,
-    firstTraversal: timestamp,
-    lastTraversal: timestamp
-  };
-  await db.edges.put(edge);
-  return edgeId;
-}
-
-/**
  * Create or update an existing navigation edge for deduplication.
  */
 export async function createOrUpdateEdge(

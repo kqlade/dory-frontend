@@ -10,7 +10,6 @@ import {
 
 import {
   ApiError,
-  SearchResponse,
 } from './types';
 
 import {
@@ -129,21 +128,6 @@ export async function apiPost<T>(endpoint: string, body: unknown): Promise<T> {
 }
 
 /**
- * Basic search call for browser history or other data.
- */
-export async function searchHistory(
-  query: string,
-  userId: string
-): Promise<SearchResponse> {
-  const payload = {
-    query,
-    userId,
-    timestamp: Date.now(),
-  };
-  return apiPost<SearchResponse>(ENDPOINTS.UNIFIED_SEARCH, payload);
-}
-
-/**
  * Checks the backend health.
  */
 export async function checkHealth(): Promise<{ status: string }> {
@@ -175,7 +159,7 @@ export async function semanticSearch(
 
   try {
     // Use apiRequest instead of direct fetch
-    return await apiPost(ENDPOINTS.SEARCH, {
+    return await apiPost(ENDPOINTS.SEMANTIC_SEARCH, {
       query,
       userId,
       limit: options.limit || 20,

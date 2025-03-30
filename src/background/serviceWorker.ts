@@ -28,14 +28,15 @@ import {
   startVisit,
   updateActiveTimeForPage,
   updateVisitActiveTime,
-  getDB
+  getDB,
+  createOrUpdateEdge
 } from '../utils/dexieBrowsingStore';
 
 import { initDexieSystem } from '../utils/dexieInit';
 import { initEventService, sendContentEvent } from '../services/eventService';
 import { logEvent } from '../utils/dexieEventLogger';
 import { EventType, SearchResponse } from '../api/types';
-import { isWebPage } from '../utils/urlUtils';
+import { isWebPage, shouldRecordHistoryEntry } from '../utils/urlUtils';
 import { ColdStorageSync } from '../services/coldStorageSync';
 import { getClusterSuggestions } from '../services/clusteringService';
 import { localRanker } from '../services/localDoryRanking';
@@ -47,14 +48,8 @@ import {
   authenticateWithGoogleIdTokenDirect
 } from '../services/authService';
 
-import {
-  handleOnCommitted,
-  handleOnCreatedNavigationTarget
-} from '../utils/navigationHandlers';
 
 import { 
-  API_BASE_URL, 
-  ENDPOINTS, 
   ENABLE_GLOBAL_SEARCH,
 } from '../config';
 
@@ -76,8 +71,9 @@ let isStartingSession = false;
  * Track data about each open tab with separate maps for different properties
  */
 const tabToCurrentUrl: Record<number, string | undefined> = {};
-const tabToPageId: Record<number, string> = {};
-const tabToVisitId: Record<number, string> = {};
+const tabToPageId: Record<number, string> = {}; // Tracks PageID of the *last valid* visit
+const tabToVisitId: Record<number, string> = {}; // Tracks VisitID of the *current valid* visit
+const extractionRequestedForVisitId: Record<number, string> = {}; // Tracks the last visitId extraction was requested for
 
 // -------------------- Icon Helpers --------------------
 function updateIcon(isAuthenticated: boolean) {
@@ -398,6 +394,14 @@ function registerMessageHandlers() {
   messageRouter.registerHandler(MessageType.EXTRACTION_COMPLETE, async (msg) => {
     console.log('[DORY] EXTRACTION_COMPLETE =>', msg.data);
     const { title, url, timestamp } = msg.data;
+
+    // --- Add Filter Check ---
+    if (!shouldRecordHistoryEntry(url, title, 'EXTRACTION_COMPLETE')) {
+        console.log('[DORY] Filtered EXTRACTION_COMPLETE => skipping page creation =>', url);
+        return true; // Acknowledge message, but do nothing
+    }
+    // --- End Filter Check ---
+
     const sessionActive = await ensureActiveSession();
     if (!sessionActive) return false;
 
@@ -610,20 +614,19 @@ async function handleAuthStateChange(isAuthenticated: boolean) {
   console.log(`[DORY] Broadcasting AUTH_RESULT: isAuthenticated=${isAuthenticated}`);
 }
 
-async function endCurrentVisit(tabId: number) {
-  console.log('[DORY] Ending visit => tab:', tabId);
+async function endCurrentVisit(tabId: number, visitId?: string) {
+  const visitIdToEnd = visitId || tabToVisitId[tabId];
+  if (!visitIdToEnd) {
+    return;
+  }
+  console.log(`[DORY] Ending visit => tab: ${tabId}, visitId: ${visitIdToEnd}`);
   try {
-    const visitId = tabToVisitId[tabId];
-    if (!visitId) {
-      console.log('[DORY] No visit found for tab =>', tabId);
-      return;
-    }
     const now = Date.now();
-    await endVisit(visitId, now);
+    await endVisit(visitIdToEnd, now);
 
     // Optionally log an event
     const db = await getDB();
-    const visit = await db.visits.get(visitId);
+    const visit = await db.visits.get(visitIdToEnd);
     const sessId = await getCurrentSessionId();
     if (sessId && visit) {
       const timeSpent = Math.round((now - visit.startTime) / 1000);
@@ -635,7 +638,7 @@ async function endCurrentVisit(tabId: number) {
         userId: userId || undefined,
         data: {
           pageId: String(visit.pageId),
-          visitId,
+          visitId: visitIdToEnd,
           url: tabToCurrentUrl[tabId] || '',
           timeSpent
         }
@@ -643,8 +646,6 @@ async function endCurrentVisit(tabId: number) {
     }
   } catch (e) {
     console.error('[DORY] endVisit error =>', e);
-  } finally {
-    delete tabToVisitId[tabId];
   }
 }
 
@@ -767,64 +768,143 @@ async function processNavigationEvent(details: {
 
   const { tabId, url, timeStamp } = details;
 
-  // Ignore invalid tab IDs or non-web pages
+  // Ignore invalid tab IDs or basic non-web schemes (initial quick check)
   if (tabId < 0 || !isWebPage(url)) {
     console.log(`[DORY] Skipping navigation event: Invalid tabId (${tabId}) or non-web page (${url})`);
     return;
   }
 
   try {
-    // Ensure user is authenticated
-    const isAuthenticated = await checkAuthDirect();
-    if (!isAuthenticated) {
-        console.log(`[DORY] Skipping navigation event for ${url}: User not authenticated.`);
-        return; // Stop processing if not authenticated
-    }
+    // Get context for the *new* potential page first
+    const title = (await getTabTitle(tabId)) || url; // Use URL as fallback title
 
-    // Make sure a session is active
-    const sessionActive = await ensureActiveSession();
-    if (!sessionActive) {
-      console.warn(`[DORY] Skipping navigation event for ${url}: Could not ensure active session.`);
-      return;
-    }
+    // --- State Update & Filtering Logic (Revised Flow) ---
 
-
-    const lastUrl = tabToCurrentUrl[tabId];
+    // 1. Get info about the *previous* state for this tab
+    const previousVisitId = tabToVisitId[tabId];
+    const pageIdFromPreviousVisit = tabToPageId[tabId]; // Might be undefined if last page was invalid
+    const previousUrl = tabToCurrentUrl[tabId]; // The actual URL we are navigating away from
 
     // Only process if the URL has meaningfully changed
-    // TODO: Implement more robust URL comparison if needed (e.g., ignoring tracking params)
-    if (!lastUrl || lastUrl !== url) {
-      console.log(`[DORY] Navigation detected for tab ${tabId}: ${lastUrl || 'None'} => ${url}`);
+    if (!previousUrl || previousUrl !== url) {
+      console.log(`[DORY] Navigation detected for tab ${tabId}: ${previousUrl || 'None'} => ${url}`);
+      
+      // 2. End the previous visit *if* it existed (was valid)
+      if (previousVisitId) {
+          await endCurrentVisit(tabId, previousVisitId); // Pass previousVisitId for clarity
+      }
+      
+      // 3. Always clear the current *valid visit* state for the tab before checking the new page
+      // This ensures we don't link across invalid pages
+      delete tabToVisitId[tabId];
+      delete tabToPageId[tabId];
+      // Keep tabToCurrentUrl updated below based on validity
+      
+      // 4. Check validity of the *new* page
+      const isValid = shouldRecordHistoryEntry(url, title, 'processNavigationEvent');
+      
+      // 5. Update the actual current URL being tracked
+      tabToCurrentUrl[tabId] = url;
 
-      // --- State Update Logic ---
-      // 1. End the previous visit for this tab (if one exists)
-      await endCurrentVisit(tabId); // Ends the visit associated with lastUrl
+      if (!isValid) {
+        // 6a. If new page is invalid, stop processing here.
+        // Visit state remains cleared, tabToCurrentUrl is updated.
+        console.log(`[DORY] Filtered navigation event => skipping recording => ${url}`);
+        // Clear extraction requested state if we land on an invalid page
+        delete extractionRequestedForVisitId[tabId]; 
+        return; 
+      }
 
-      // 2. Get context for the new page
-      const title = (await getTabTitle(tabId)) || url; // Use URL as fallback title
-      const isBackNav = details.transitionQualifiers?.includes('forward_back') || false;
+      // 6b. If new page is valid, proceed to record it
+      console.log(`[DORY] Valid navigation event => recording => ${url}`);
+      const isAuthenticated = await checkAuthDirect();
+      const sessionActive = await ensureActiveSession();
 
-      // 3. Create/Get the PageRecord for the *new* URL
-      // Store the previous pageId *before* potentially overwriting it in createOrGetPage or map update
-      const previousPageId = tabToPageId[tabId];
+      if (!isAuthenticated || !sessionActive) {
+          console.warn(`[DORY] Skipping valid navigation event for ${url}: Not authenticated or no active session.`);
+          return; // Stop processing if auth/session check fails
+      }
+
+      // 7. Create/Get PageRecord for the *new* valid URL
       const newPageId = await createOrGetPage(url, title, timeStamp);
       
-      // 4. Update state maps *before* starting the new visit
-      tabToCurrentUrl[tabId] = url;
+      // 8. Create EdgeRecord *if* the previous page had a valid visit
+      const isBackNav = details.transitionQualifiers?.includes('forward_back') || false;
+      const sessionId = await getCurrentSessionId(); // Should be valid due to ensureActiveSession check
+      
+      if (sessionId && pageIdFromPreviousVisit && pageIdFromPreviousVisit !== newPageId) {
+          try {
+              console.log(`[DORY] Creating/updating edge: ${pageIdFromPreviousVisit} -> ${newPageId}`);
+              await createOrUpdateEdge(pageIdFromPreviousVisit, newPageId, sessionId, timeStamp, isBackNav);
+          } catch (edgeError) {
+              console.error(`[DORY] Failed to create/update edge for ${pageIdFromPreviousVisit} -> ${newPageId}:`, edgeError);
+          }
+      }
+
+      // 9. Start the new VisitRecord (pass pageIdFromPreviousVisit, which is undefined if prev page was invalid)
+      const newVisitId = await startNewVisit(tabId, newPageId, pageIdFromPreviousVisit, isBackNav); 
+
+      // 10. Update state maps for the *new valid visit*
       tabToPageId[tabId] = newPageId; 
+      tabToVisitId[tabId] = newVisitId;
 
-      // 5. Start the new visit record, linking from the previous page if appropriate
-      // Only link if previousPageId exists and is different from newPageId
-      const linkFromPageId = (previousPageId && previousPageId !== newPageId) ? previousPageId : undefined;
-      await startNewVisit(tabId, newPageId, linkFromPageId, isBackNav); 
-      // startNewVisit now internally updates tabToVisitId[tabId]
+      console.log(`[DORY] => State updated for valid visit: pageId=${newPageId}, visitId=${newVisitId}`);
 
-      console.log(`[DORY] => State updated: pageId=${newPageId}, visitId=${tabToVisitId[tabId]}`);
-      // --- End State Update Logic ---
+      // --- Trigger Extraction Logic (Moved Here) ---
+      console.log(`[DORY] Checking extraction trigger: sessionId=${sessionId}, requestedForVisit=${extractionRequestedForVisitId[tabId]}, newVisitId=${newVisitId}`);
+      if (sessionId && extractionRequestedForVisitId[tabId] !== newVisitId) {
+        console.log(`[DORY] Requesting extraction for new valid visit: ${newVisitId}`);
+        extractionRequestedForVisitId[tabId] = newVisitId; // Mark as requested
 
+        // Function to attempt sending messages, with up to 2 retries for connection error
+        const attemptSendMessage = (attemptNumber = 0) => { // Start with attempt 0
+          const attemptLabel = attemptNumber === 0 ? 'Initial' : `Retry ${attemptNumber}`;
+          const MAX_ATTEMPTS = 3; // Initial + 2 Retries
+
+          console.log(`[DORY] (${attemptLabel} attempt) Sending SET_EXTRACTION_CONTEXT to tab ${tabId}`);
+          chrome.tabs.sendMessage(
+            tabId,
+            createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId: newPageId, visitId: newVisitId, sessionId }, 'background'),
+            {}, // Options
+            (response) => { // Callback for SET_EXTRACTION_CONTEXT
+              console.log(`[DORY] Callback received for SET_EXTRACTION_CONTEXT (${attemptLabel}, tab ${tabId})`);
+
+              if (chrome.runtime.lastError) {
+                const errorMessage = chrome.runtime.lastError.message || '';
+                // Check specifically for the connection error and if we haven't exceeded max attempts
+                if (errorMessage.includes('Receiving end does not exist') && attemptNumber < MAX_ATTEMPTS - 1) {
+                  const nextAttempt = attemptNumber + 1;
+                  console.warn(`[DORY] Connection error on ${attemptLabel} for SET_EXTRACTION_CONTEXT (tab ${tabId}, visit ${newVisitId}). Retrying (attempt ${nextAttempt}) after 500ms...`);
+                  setTimeout(() => attemptSendMessage(nextAttempt), 500); // Retry after 500ms
+                } else {
+                  // Log other errors or if retries also failed
+                  console.warn(`[DORY] Final error after ${attemptLabel} for SET_EXTRACTION_CONTEXT (tab ${tabId}, visit ${newVisitId}):`, errorMessage);
+                  // Optionally clear extractionRequestedForVisitId here if failure is permanent?
+                  // delete extractionRequestedForVisitId[tabId];
+                }
+              } else {
+                // Success!
+                console.log(`[DORY] SET_EXTRACTION_CONTEXT successful (${attemptLabel}, response: ${JSON.stringify(response)}). Sending TRIGGER_EXTRACTION to tab ${tabId}`);
+                chrome.tabs.sendMessage(
+                  tabId,
+                  createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
+                );
+              }
+            }
+          );
+        };
+
+        // Start the initial attempt (attempt 0)
+        attemptSendMessage();
+
+      } else if (!sessionId) {
+        console.warn(`[DORY] Skipping extraction for new valid visit: sessionId=${sessionId}`);
+      }
     } else {
       // console.log(`[DORY] Skipping navigation event for tab ${tabId}: URL unchanged (${url})`);
     }
+    // --- End State Update & Filtering Logic ---
+
   } catch (err) {
     console.error(`[DORY] Error processing navigation event for ${url} in tab ${tabId}:`, err);
   }
@@ -852,27 +932,39 @@ chrome.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
   const { sourceTabId, tabId, timeStamp, url } = details;
   console.log('[DORY] onCreatedNavigationTarget =>', { sourceTabId, tabId, url });
 
-  // Basic checks needed
-  if (!isWebPage(url)) {
-    console.log('[DORY] Not a web page => skipping new tab tracking =>', url);
-    return;
+  // --- Add Filter Check for Target URL ---
+  // We might not have a reliable title yet, but check URL and basic schemes
+  if (!shouldRecordHistoryEntry(url, null, 'onCreatedNavigationTarget')) {
+      console.log('[DORY] Filtered navigation target => skipping pending state =>', url);
+      return;
   }
+  // --- End Filter Check ---
+
+  // Basic checks needed (isWebPage is implicitly covered by shouldRecordHistoryEntry now)
   const isAuthenticated = await checkAuthDirect();
   if (!isAuthenticated) return;
 
-  // --- Inlined Logic from handleOnCreatedNavigationTarget --- 
+  // --- Inlined Logic --- 
   try {
-    await ensureActiveSession(); // Ensure session exists
+    const sessionActive = await ensureActiveSession(); // Ensure session exists
+    if (!sessionActive) {
+        console.warn(`[DORY] Skipping onCreatedNavigationTarget for ${url}: Could not ensure active session.`);
+        return;
+    }
 
     const oldUrl = tabToCurrentUrl[sourceTabId];
-    if (oldUrl) { // Check if source tab URL is known
-      // Create/get page for the source URL
-      const fromPageId = await createOrGetPage(oldUrl, oldUrl, timeStamp); 
+    // Check if the source URL itself is considered valid before creating a page for it
+    const sourceTitle = (await getTabTitle(sourceTabId)) || oldUrl;
+    if (oldUrl && shouldRecordHistoryEntry(oldUrl, sourceTitle, 'onCreatedNavigationTarget_SourceCheck')) { 
+      // Create/get page for the *source* URL only if it's valid
+      const fromPageId = await createOrGetPage(oldUrl, sourceTitle, timeStamp);
       // Store pending navigation state for the new tab
       tabToCurrentUrl[tabId] = `pending:${fromPageId}`; 
       console.log('[DORY] => Stored pending nav from pageId:', fromPageId);
     } else {
-      console.log('[DORY] => Source tab URL unknown, cannot link navigation target.');
+      console.log(`[DORY] => Source tab URL unknown or invalid (${oldUrl}), cannot link navigation target.`);
+      // Set the new tab's current URL directly so processNavigationEvent doesn't skip it later
+      tabToCurrentUrl[tabId] = url;
     }
   } catch (err) {
     console.error('[DORY] Error in onCreatedNavigationTarget handler:', err);
@@ -880,61 +972,16 @@ chrome.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
   // --- End Inlined Logic ---
 });
 
-chrome.webNavigation.onCompleted.addListener(async (details) => {
-  if (details.frameId !== 0) return;
-
-  // Basic checks
-  const isAuthenticated = await checkAuthDirect();
-  if (!isAuthenticated || !isWebPage(details.url)) return;
-
-  console.log(`[DORY] onCompleted => tab: ${details.tabId}, url: ${details.url}`);
-
-  // --- Refined Extraction Trigger ---
-  // Only trigger extraction if the completed URL matches the *currently tracked* URL for the active visit
-  const currentTrackedUrl = tabToCurrentUrl[details.tabId];
-  const visitId = tabToVisitId[details.tabId]; // Get the current visit ID for this tab
-
-  if (visitId && currentTrackedUrl && currentTrackedUrl === details.url) {
-    console.log(`[DORY] => URL matches tracked state (${currentTrackedUrl}). Triggering extraction.`);
-    const pageId = tabToPageId[details.tabId]; // Get the corresponding pageId
-    const sessionId = await getCurrentSessionId();
-
-    if (pageId && sessionId) {
-       console.log(`[DORY] => Sending SET_EXTRACTION_CONTEXT & TRIGGER_EXTRACTION (pageId: ${pageId}, visitId: ${visitId})`);
-       // Send context first
-       chrome.tabs.sendMessage(
-         details.tabId,
-         createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId, visitId, sessionId }, 'background'),
-         {}, // Options - empty
-         (response) => { // Callback after context is set (or attempted)
-            if (chrome.runtime.lastError) {
-               console.warn(`[DORY] Error setting extraction context for tab ${details.tabId}:`, chrome.runtime.lastError.message);
-               // Optionally retry or just proceed to trigger? For now, proceed.
-            } else {
-               console.log(`[DORY] => Extraction context sent response:`, response);
-            }
-            // Always attempt trigger after trying to set context
-            chrome.tabs.sendMessage(
-               details.tabId,
-               createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
-            );
-         }
-       );
-    } else {
-       console.warn(`[DORY] => Cannot trigger extraction: Missing pageId (${pageId}) or sessionId (${sessionId})`);
-    }
-  } else {
-    console.log(`[DORY] => Skipping extraction trigger: URL mismatch (Completed: ${details.url}, Tracked: ${currentTrackedUrl}) or no active visit (VisitId: ${visitId})`);
-  }
-  // --- End Refined Extraction Trigger ---
-});
-
 // -------------------- Tabs Lifecycle --------------------
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  await endCurrentVisit(tabId);
+  const visitIdToEnd = tabToVisitId[tabId]; // Get visitId before clearing state
+  if (visitIdToEnd) {
+      await endCurrentVisit(tabId, visitIdToEnd);
+  }
   delete tabToCurrentUrl[tabId];
   delete tabToPageId[tabId];
   delete tabToVisitId[tabId];
+  delete extractionRequestedForVisitId[tabId]; // <<< Clear extraction state
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -1063,45 +1110,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 function mergeAndSortResults(
   historyResults: UnifiedLocalSearchResult[],
-  // Correct type for results from localRanker.rank
   dexieResults: Array<{ pageId: string; title: string; url: string; score: number }>
 ): UnifiedLocalSearchResult[] {
+  // Create maps to track seen titles and URLs
+  const seenTitles = new Set<string>();
+  const seenUrls = new Set<string>();
   const resultsMap = new Map<string, UnifiedLocalSearchResult>();
+
+  // Helper function to add a result if it's not a duplicate
+  const addUniqueResult = (result: UnifiedLocalSearchResult) => {
+    // Skip if we've seen this title OR URL before
+    if (seenTitles.has(result.title.toLowerCase()) || seenUrls.has(result.url.toLowerCase())) {
+      // If this result has a higher score than the existing one with the same URL, replace it
+      const existingResult = resultsMap.get(result.url.toLowerCase());
+      if (existingResult && result.score > existingResult.score) {
+        // Remove old title and URL from sets
+        seenTitles.delete(existingResult.title.toLowerCase());
+        seenUrls.delete(existingResult.url.toLowerCase());
+        // Add new result
+        seenTitles.add(result.title.toLowerCase());
+        seenUrls.add(result.url.toLowerCase());
+        resultsMap.set(result.url.toLowerCase(), result);
+      }
+      return;
+    }
+
+    // Add new unique result
+    seenTitles.add(result.title.toLowerCase());
+    seenUrls.add(result.url.toLowerCase());
+    resultsMap.set(result.url.toLowerCase(), result);
+  };
 
   // 1. Add history results first
   for (const result of historyResults) {
-    if (result.url) { // Ensure URL exists
-      // Assign default score of 1 to history results
-      resultsMap.set(result.url, { ...result, source: 'history', score: 1 });
+    if (result.url && result.title) {
+      addUniqueResult({ ...result, source: 'history', score: 1 });
     }
   }
 
   // 2. Add/Update with Dexie results (prioritize Dexie data)
-  for (const result of dexieResults) { // result is now the raw Dexie result type
-    if (result.url) { // Ensure URL exists
-      const existing = resultsMap.get(result.url);
-      // Map Dexie result to UnifiedLocalSearchResult structure HERE
+  for (const result of dexieResults) {
+    if (result.url && result.title) {
+      const existing = resultsMap.get(result.url.toLowerCase());
       const dexieUnifiedResult: UnifiedLocalSearchResult = {
-        id: result.pageId, // Use pageId as ID
+        id: result.pageId,
         url: result.url,
         title: result.title,
         source: 'dexie',
-        score: result.score, // Use the mandatory 'score' field from Dexie result
+        score: result.score,
         pageId: result.pageId,
-        // Merge relevant fields from existing history entry
-        lastVisitTime: existing?.lastVisitTime, // Keep history time if present
+        lastVisitTime: existing?.lastVisitTime,
         visitCount: existing?.visitCount,
         typedCount: existing?.typedCount,
-        // explanation: undefined, // Add if localRanker provides it
       };
-      resultsMap.set(result.url, dexieUnifiedResult);
+      addUniqueResult(dexieUnifiedResult);
     }
   }
 
   // 3. Convert Map to Array
   const mergedList = Array.from(resultsMap.values());
 
-  // 4. Implement Custom Sort: Primary by score (desc), secondary by source ('dexie' > 'history')
+  // 4. Sort results
   mergedList.sort((a, b) => {
     // Primary sort: score descending
     const scoreDiff = b.score - a.score;
@@ -1111,16 +1180,16 @@ function mergeAndSortResults(
     if (a.source === 'dexie' && b.source !== 'dexie') return -1;
     if (a.source !== 'dexie' && b.source === 'dexie') return 1;
 
-    // Tertiary sort (optional, for history items with same default score): lastVisitTime
+    // Tertiary sort: lastVisitTime for history items
     if (a.source === 'history' && b.source === 'history') {
-       const visitTimeDiff = (b.lastVisitTime ?? 0) - (a.lastVisitTime ?? 0);
-       if (visitTimeDiff !== 0) return visitTimeDiff;
+      const visitTimeDiff = (b.lastVisitTime ?? 0) - (a.lastVisitTime ?? 0);
+      if (visitTimeDiff !== 0) return visitTimeDiff;
     }
 
-    return 0; // Should only happen if scores and sources are identical
+    return 0;
   });
 
-  // 5. Limit total results (optional)
+  // 5. Limit total results
   const MAX_TOTAL_RESULTS = 50;
   return mergedList.slice(0, MAX_TOTAL_RESULTS);
 }
