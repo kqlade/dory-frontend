@@ -2,7 +2,7 @@
 
 import { MarkdownGenerationResult } from "./models"; // or wherever your interface is defined
 import { HTML2Text } from "./html2text";       // your TS port of the Python "HTML2Test"
-import { RelevantContentFilter, BM25ContentFilter, PruningContentFilter } from "./content_filter_strategy"; 
+import { RelevantContentFilter, PruningContentFilter } from "./content_filter_strategy"; 
 
 // ---------------------
 //   Regex for finding Markdown links (including images)
@@ -247,21 +247,8 @@ export class DefaultMarkdownGenerator extends MarkdownGenerationStrategy {
       let fitHtml = "";
       if (activeFilter) {
         try {
-          let filteredChunks: string[] = [];
-          let intermediateHtml = cleanedHtml; // Start with the original cleaned HTML
-
-          // --- START HYBRID LOGIC ---
-          // If the active filter is BM25, apply Pruning first
-          if (activeFilter instanceof BM25ContentFilter) {
-            // Use default Pruning filter settings for now
-            const pruningFilter = new PruningContentFilter(); 
-            const prunedChunks = pruningFilter.filterContent(cleanedHtml);
-            // Reconstruct HTML from pruned chunks for BM25 to process
-            intermediateHtml = prunedChunks.map((c) => `<div>${c}</div>`).join("\n");
-          }
-          // Apply the final active filter (either BM25 on pruned HTML, or another filter type on original HTML)
-          filteredChunks = activeFilter.filterContent(intermediateHtml);
-          // --- END HYBRID LOGIC ---
+          // Directly apply the active filter to the original cleaned HTML
+          const filteredChunks = activeFilter.filterContent(cleanedHtml);
 
           fitHtml = filteredChunks.map((c) => `<div>${c}</div>`).join("\n");
 

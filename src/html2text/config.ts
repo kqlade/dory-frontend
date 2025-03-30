@@ -41,9 +41,9 @@ export const GOOGLE_LIST_INDENT = 36;
 export const BOLD_TEXT_STYLE_VALUES: string[] = ["bold", "700", "800", "900"];
 
 // Other ignore/formatting flags.
-export const IGNORE_ANCHORS = false;
-export const IGNORE_MAILTO_LINKS = false;
-export const IGNORE_IMAGES = false;
+export const IGNORE_ANCHORS = true;
+export const IGNORE_MAILTO_LINKS = true;
+export const IGNORE_IMAGES = true;
 export const IMAGES_AS_HTML = false;
 export const IMAGES_TO_ALT = false;
 export const IMAGES_WITH_SIZE = false;

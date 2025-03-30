@@ -20,12 +20,11 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
+    minify: true,
     rollupOptions: {
       output: {
         // Standard naming patterns
         entryFileNames: '[name].js',
-        // Attempt to prevent chunk splitting by removing patterns
-        // Let Rollup/CRXJS decide or hopefully inline
       }
     }
   },

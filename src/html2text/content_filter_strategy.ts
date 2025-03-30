@@ -1,18 +1,15 @@
 import * as cheerio from "cheerio";
-import { BM25 } from "wink-bm25-text-search";
-// Import the EnglishStemmer explicitly - this one has the actual implementation
-import { EnglishStemmer } from "snowball-stemmer.jsx/dest/english-stemmer.common.js";
 import type { Element } from "domhandler";
 
 /**************************************************************************
  * Utility function that mirrors "clean_tokens" from Python
  **************************************************************************/
 function cleanTokens(tokens: string[]): string[] {
-  // Example approach: remove empty/short tokens, punctuation-only, etc.
+  // Remove empty/short tokens, punctuation-only tokens, etc.
   return tokens.filter((t) => {
     const trimmed = t.trim();
     if (!trimmed) return false;
-    // e.g. skip single punctuation or extremely short tokens
+    // Skip tokens that are too short unless they match a basic alphanumeric pattern.
     if (trimmed.length < 2 && !/^[a-z0-9]$/i.test(trimmed)) return false;
     return true;
   });
@@ -20,6 +17,9 @@ function cleanTokens(tokens: string[]): string[] {
 
 /**************************************************************************
  * Abstract base: RelevantContentFilter
+ * 
+ * Provides shared functionality like extracting a query (if needed) and
+ * determining if an element should be excluded.
  **************************************************************************/
 export abstract class RelevantContentFilter {
   protected userQuery?: string;
@@ -62,19 +62,20 @@ export abstract class RelevantContentFilter {
     ]);
 
     this.headerTags = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
-    // Similar negative patterns as Python
-    this.negativePatterns = /nav|footer|header|sidebar|ads|comment|promo|advert|social|share/i;
+    // Negative patterns for class or id that might indicate non-content areas
+    this.negativePatterns = /nav|menu|footer|header|sidebar|aside|ads|comment|promo|advert|social|share|popup|modal|banner|related|widget|signup|author-bio|pagination|breadcrumb|cookie|flyout/i;
     this.minWordCount = 2;
   }
 
   /**
-   * "filter_content" from Python. Subclasses must override.
+   * Abstract method to filter content.
+   * Subclasses must implement this.
    */
   public abstract filterContent(html: string): string[];
 
   /**
-   * Python: "extract_page_query(self, soup, body)"
-   * We replicate by using cheerio. We'll gather <title>, <h1>, meta keywords, etc.
+   * Extracts a page query based on key elements.
+   * If userQuery is provided, it takes precedence.
    */
   protected extractPageQuery($: cheerio.CheerioAPI, $body: cheerio.Cheerio<Element>): string {
     if (this.userQuery) {
@@ -87,11 +88,11 @@ export abstract class RelevantContentFilter {
     const title = $("title").text();
     if (title) parts.push(title);
 
-    // h1
+    // First header
     const h1 = $("h1").text();
     if (h1) parts.push(h1);
 
-    // meta keywords/description
+    // Meta keywords/description
     for (const metaName of ["keywords", "description"]) {
       const meta = $(`meta[name='${metaName}']`);
       if (meta && meta.attr("content")) {
@@ -99,7 +100,7 @@ export abstract class RelevantContentFilter {
       }
     }
 
-    // If still empty, find first <p> > 150 chars
+    // Fallback: find the first paragraph with more than 150 characters
     if (parts.length === 0) {
       const paragraphs = $body.find("p").toArray();
       for (const p of paragraphs) {
@@ -115,18 +116,17 @@ export abstract class RelevantContentFilter {
   }
 
   /**
-   * Python: "is_excluded(self, tag)"
-   * Check if tag is in excluded list or negative pattern.
+   * Determines whether an element should be excluded based on tag, class, or id.
    */
   protected isExcluded($el: cheerio.Cheerio<Element>): boolean {
     const node = $el.get(0);
     if (!node || node.type !== "tag") return false;
     const tagName = node.tagName.toLowerCase();
 
-    // If tag name is in excludedTags
+    // Exclude based on tag name
     if (this.excludedTags.has(tagName)) return true;
 
-    // class + id
+    // Exclude based on class or id patterns
     const className = $el.attr("class") || "";
     const idName = $el.attr("id") || "";
     const combined = (className + " " + idName).trim();
@@ -134,9 +134,7 @@ export abstract class RelevantContentFilter {
   }
 
   /**
-   * Python: "clean_element(self, tag)"
-   * Minimal overhead cleaning, removing some attributes, etc.
-   * We'll just return the outerHTML in this example.
+   * Cleans an element by returning its outerHTML.
    */
   protected cleanElement($node: cheerio.Cheerio<Element>): string {
     return $node.toString();
@@ -144,153 +142,12 @@ export abstract class RelevantContentFilter {
 }
 
 /**************************************************************************
- * BM25ContentFilter
- * 
- * Equivalent to your Python BM25ContentFilter that uses rank_bm25.
- * We use wink-bm25-text-search for near exact functionality.
- *************************************************************************/
-export class BM25ContentFilter extends RelevantContentFilter {
-  private bm25Threshold: number;
-  private language: string;
-  private priorityTags: Record<string, number>;
-  private stemmer: EnglishStemmer;
-
-  constructor(userQuery?: string, bm25Threshold = 1.0, language = "english") {
-    super(userQuery);
-    this.bm25Threshold = bm25Threshold;
-    this.language = language;
-
-    // Same priority weights as your Python code
-    this.priorityTags = {
-      h1: 5.0, h2: 4.0, h3: 3.0, title: 4.0,
-      strong: 2.0, b: 1.5, em: 1.5, blockquote: 2.0,
-      code: 2.0, pre: 1.5, th: 1.5
-    };
-
-    // Initialize EnglishStemmer - the concrete implementation that has working methods
-    console.log('[BM25Filter Constructor] Initializing EnglishStemmer');
-    this.stemmer = new EnglishStemmer();
-    console.log('[BM25Filter Constructor] Initialized EnglishStemmer successfully');
-  }
-
-  public filterContent(html: string): string[] {
-    if (!html || typeof html !== "string") return [];
-
-    // Simple check to verify stemmer is available
-    if (!this.stemmer) {
-        console.error('[BM25Filter filterContent] CRITICAL: Stemmer is invalid!');
-        // Optionally, return early or throw an error to prevent further execution
-        // return []; 
-    }
-
-    // Parse with Cheerio
-    const $ = cheerio.load(html);
-    let $body = $("body");
-    if (!$body.length) {
-      // wrap
-      const $$ = cheerio.load(`<body>${html}</body>`);
-      $body = $$("body");
-    }
-
-    // Get user query fallback
-    const query = this.extractPageQuery($, $body);
-    if (!query) return [];
-
-    // Extract text chunks (like "extract_text_chunks")
-    const candidates = this.extractTextChunks($, $body);
-    if (!candidates.length) return [];
-
-    // Tokenize corpus
-    const corpus = candidates.map(([_, chunkText, el]) => {
-      const words = chunkText.toLowerCase().split(/\s+/);
-      // Stem each word using stemWord method
-      if (!this.stemmer) {
-          console.error('[BM25Filter filterContent] CRITICAL: Stemmer is invalid inside corpus map!');
-          return words; // Return original words if stemmer is broken
-      }
-      const stemmed = words.map((w) => this.stemmer.stemWord(w));
-      return cleanTokens(stemmed);
-    });
-
-    // Tokenize query
-    const qwords = query.toLowerCase().split(/\s+/);
-    if (!this.stemmer) {
-        console.error('[BM25Filter filterContent] CRITICAL: Stemmer is invalid inside query map!');
-        return []; // Return empty tokenized query if stemmer is broken
-    }
-    const qstemmed = qwords.map((w) => this.stemmer.stemWord(w));
-    const tokenizedQuery = cleanTokens(qstemmed);
-
-    // wink-bm25-text-search usage
-    const bm25 = BM25();
-    bm25.init(corpus);
-
-    const scores = bm25.search(tokenizedQuery);
-    
-    // Adjust by priority tags
-    const adjusted: Array<[number, number, string, Element]> = [];
-    for (let i = 0; i < scores.length; i++) {
-      const score = scores[i];
-      const [index, text, elem] = candidates[i];
-      const tagName = elem.tagName?.toLowerCase() || "";
-      const tagWeight = this.priorityTags[tagName] || 1.0;
-      const adjScore = score * tagWeight;
-
-      adjusted.push([adjScore, index, text, elem]);
-    }
-
-    // Filter by threshold
-    const selected = adjusted.filter(([score]) => score >= this.bm25Threshold);
-
-    // Sort by original index
-    selected.sort((a, b) => a[1] - b[1]);
-
-    // Return cleaned HTML
-    return selected.map(([_, __, ___, elem]) => {
-      const $node = $(elem);
-      return this.cleanElement($node);
-    });
-  }
-
-  /**
-   * Python "extract_text_chunks(body, min_word_threshold=None)"
-   * We'll replicate BFS/DFS. We store (index, text, element).
-   */
-  private extractTextChunks($: cheerio.CheerioAPI, $body: cheerio.Cheerio<Element>): Array<[number, string, Element]> {
-    const results: Array<[number, string, Element]> = [];
-    let chunkIndex = 0;
-
-    const stack = [$body];
-    while (stack.length) {
-      const $el = stack.pop()!;
-      $el.each((_, node) => {
-        if (node.type === "tag") {
-          const $node = $(node);
-          if (!this.isExcluded($node)) {
-            const tagName = node.tagName.toLowerCase();
-            // If it's an included or a header
-            if (this.includedTags.has(tagName) || this.headerTags.has(tagName)) {
-              const text = $node.text().trim();
-              const wc = text.split(/\s+/).length;
-              if (wc >= this.minWordCount) {
-                results.push([chunkIndex, text, node]);
-                chunkIndex++;
-              }
-            }
-            // push children
-            stack.push($node.children());
-          }
-        }
-      });
-    }
-    return results;
-  }
-}
-
-/***************************************************************************
  * PruningContentFilter
  * 
- * Mirrors your Python class with dynamic/fixed threshold, text_density, etc.
+ * This filter mimics a reader mode by recursively traversing the DOM,
+ * scoring elements based on several metrics (text density, link density,
+ * tag importance, etc.), and pruning elements that are unlikely to be
+ * part of the main content.
  ***************************************************************************/
 export class PruningContentFilter extends RelevantContentFilter {
   private minWordThreshold?: number;
@@ -316,7 +173,7 @@ export class PruningContentFilter extends RelevantContentFilter {
     this.threshold = threshold;
     this.language = language;
 
-    // from the Python code
+    // Tag importance values (tweak based on your needs)
     this.tagImportance = {
       article: 1.5,
       main: 1.4,
@@ -329,6 +186,7 @@ export class PruningContentFilter extends RelevantContentFilter {
       span: 0.6,
     };
 
+    // Configure which metrics to use when scoring elements
     this.metricConfig = {
       text_density: true,
       link_density: true,
@@ -337,6 +195,7 @@ export class PruningContentFilter extends RelevantContentFilter {
       text_length: true,
     };
 
+    // Weights for each metric
     this.metricWeights = {
       text_density: 0.4,
       link_density: 0.2,
@@ -345,6 +204,7 @@ export class PruningContentFilter extends RelevantContentFilter {
       text_length: 0.1,
     };
 
+    // Weights for specific tags
     this.tagWeights = {
       div: 0.5,
       p: 1.0,
@@ -369,21 +229,22 @@ export class PruningContentFilter extends RelevantContentFilter {
     const $ = cheerio.load(html);
     let $body = $("body");
     if (!$body.length) {
+      // If no body tag is present, wrap the HTML inside one
       const $$ = cheerio.load(`<body>${html}</body>`);
       $body = $$("body");
     }
 
-    // Remove comments and excluded tags
+    // Remove comments and unwanted tags (nav, footer, etc.)
     this.removeComments($);
     this.removeUnwantedTags($);
 
-    // Prune
+    // Recursively prune the DOM tree
     const bodyEl = $body.get(0);
     if (bodyEl) {
       this.pruneTree($, bodyEl);
     }
 
-    // Collect leftover content
+    // Collect and return the cleaned HTML blocks
     const blocks: string[] = [];
     $body.children().each((_, el) => {
       const $el = $(el);
@@ -394,6 +255,9 @@ export class PruningContentFilter extends RelevantContentFilter {
     return blocks;
   }
 
+  /**
+   * Removes all comment nodes from the DOM.
+   */
   private removeComments($: cheerio.CheerioAPI) {
     $("*").contents().each((_, node) => {
       if (node.type === "comment") {
@@ -402,12 +266,18 @@ export class PruningContentFilter extends RelevantContentFilter {
     });
   }
 
+  /**
+   * Removes unwanted tags (like nav, footer, etc.) from the DOM.
+   */
   private removeUnwantedTags($: cheerio.CheerioAPI) {
     this.excludedTags.forEach((tag) => {
       $(tag).remove();
     });
   }
 
+  /**
+   * Recursively prunes the DOM tree based on composite scores.
+   */
   private pruneTree($: cheerio.CheerioAPI, node: Element) {
     if (!node || node.type !== "tag") return;
 
@@ -416,7 +286,7 @@ export class PruningContentFilter extends RelevantContentFilter {
     const htmlContent = $node.toString();
     const tagLen = htmlContent.length;
 
-    // sum of <a> direct text
+    // Sum length of text inside links (<a> tags)
     let linkTextLen = 0;
     $node.find("a").each((_, a) => {
       linkTextLen += $(a).text().length;
@@ -434,6 +304,9 @@ export class PruningContentFilter extends RelevantContentFilter {
     }
   }
 
+  /**
+   * Determines if an element should be removed based on its score and a threshold.
+   */
   private shouldRemoveNode(
     $node: cheerio.Cheerio<Element>,
     score: number,
@@ -444,7 +317,7 @@ export class PruningContentFilter extends RelevantContentFilter {
     if (this.thresholdType === "fixed") {
       return score < this.threshold;
     } else {
-      // dynamic
+      // For dynamic thresholds, adjust based on tag importance and ratios.
       const tagName = $node.get(0)?.tagName.toLowerCase() || "";
       const tagImp = this.tagImportance[tagName] ?? 0.7;
       const textRatio = tagLen > 0 ? textLen / tagLen : 0;
@@ -459,6 +332,9 @@ export class PruningContentFilter extends RelevantContentFilter {
     }
   }
 
+  /**
+   * Computes a composite score for a node using multiple heuristics.
+   */
   private computeCompositeScore(
     $: cheerio.CheerioAPI,
     node: Element,
@@ -466,32 +342,32 @@ export class PruningContentFilter extends RelevantContentFilter {
     tagLen: number,
     linkTextLen: number
   ): number {
-    // If there's a minWordThreshold, check it
+    // Force removal if word count is too low.
     if (this.minWordThreshold) {
       const wc = (($(node).text() || "").split(/\s+/).length);
       if (wc < this.minWordThreshold) {
-        return -1.0; // forced removal
+        return -1.0;
       }
     }
 
     let score = 0;
     let totalWeight = 0;
 
-    // text_density
+    // Text density: ratio of text length to tag length.
     if (this.metricConfig.text_density) {
       const density = tagLen > 0 ? textLen / tagLen : 0;
       score += this.metricWeights.text_density * density;
       totalWeight += this.metricWeights.text_density;
     }
 
-    // link_density
+    // Link density: proportion of text not within links.
     if (this.metricConfig.link_density) {
       const density = textLen > 0 ? 1 - (linkTextLen / textLen) : 1;
       score += this.metricWeights.link_density * density;
       totalWeight += this.metricWeights.link_density;
     }
 
-    // tag_weight
+    // Tag weight: importance of the specific tag.
     if (this.metricConfig.tag_weight) {
       const tagName = node.tagName?.toLowerCase() || "";
       const tw = this.tagWeights[tagName] ?? 0.5;
@@ -499,14 +375,14 @@ export class PruningContentFilter extends RelevantContentFilter {
       totalWeight += this.metricWeights.tag_weight;
     }
 
-    // class_id_weight
+    // Class and ID weight: penalize nodes with negative class/id patterns.
     if (this.metricConfig.class_id_weight) {
       const classScore = this.computeClassIdWeight($, node);
       score += this.metricWeights.class_id_weight * Math.max(0, classScore);
       totalWeight += this.metricWeights.class_id_weight;
     }
 
-    // text_length
+    // Text length: longer text gets a boost (using logarithmic scaling).
     if (this.metricConfig.text_length) {
       const val = Math.log(textLen + 1);
       score += this.metricWeights.text_length * val;
@@ -516,6 +392,9 @@ export class PruningContentFilter extends RelevantContentFilter {
     return totalWeight ? score / totalWeight : 0;
   }
 
+  /**
+   * Computes a small penalty based on class and id attributes.
+   */
   private computeClassIdWeight($: cheerio.CheerioAPI, node: Element): number {
     let classIdScore = 0;
     const $node = $(node);
