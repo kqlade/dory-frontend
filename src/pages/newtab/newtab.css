@@ -60,41 +60,58 @@ body {
 .newtab-container {
   width: 100%;
   height: 100vh;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 32.5vh; /* Keep initial vertical spacing */
 }
 
-/* DORY container & text (unchanged) */
+/* DORY container & text */
 .dory-container {
-  position: absolute;
-  left: 50%;
-  top: 32.5vh;
-  transform: translateX(-50%);
+  width: 600px;
+  max-width: 90%;
   text-align: center;
-  width: 600px;
-  max-width: 90%;
-  box-sizing: border-box; /* Ensure consistent box model */
+  margin-bottom: 24px;
+  box-sizing: border-box;
 }
 
-/* Positioned wrapper for the search bar */
+/* Search section containing search bar and helper text */
+.search-section {
+  width: 600px;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 32px;
+  box-sizing: border-box;
+}
+
+/* Wrapper for the search bar */
 .search-bar-wrapper {
-  position: absolute;
-  left: 50%;
-  top: 42vh; /* Position below the DORY text */
-  transform: translateX(-50%);
-  width: 600px;
-  max-width: 90%;
-  box-sizing: border-box; /* Ensure consistent box model */
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* Positioned wrapper for the clusters */
+/* Helper text for keyboard shortcut */
+.shortcut-helper-text {
+  width: 100%;
+  text-align: right; /* Right-aligned as requested */
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  font-weight: 400;
+  margin-top: 8px;
+  box-sizing: border-box;
+  pointer-events: none; /* Ensure it doesn't interfere with clicks */
+  padding-right: 16px; /* Add some right padding to match the search bar's internal padding */
+}
+
+/* Wrapper for the clusters */
 .clusters-wrapper {
-  position: absolute;
-  left: 50%;
-  top: 52vh; /* Reduced from 55vh to decrease space between search bar and clusters */
-  transform: translateX(-50%);
   width: 600px; /* Same width as search bar */
   max-width: 90%;
-  box-sizing: border-box; /* Ensure consistent box model */
+  box-sizing: border-box;
 }
 
 .dory-text {

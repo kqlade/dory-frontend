@@ -213,9 +213,17 @@ const NewTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Positioned wrapper for the search bar - ADD REF HERE */}
-      <div className="search-bar-wrapper" ref={searchBarWrapperRef}>
-        <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
+      {/* Search section with search bar and helper text */}
+      <div className="search-section">
+        {/* Search bar wrapper */}
+        <div className="search-bar-wrapper" ref={searchBarWrapperRef}>
+          <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
+        </div>
+
+        {/* Helper text for keyboard shortcut - OS specific */}
+        <div className="shortcut-helper-text">
+          Press {detectOS() === 'Mac OS' ? '⌘' : 'Ctrl'}+Shift+Space to search from any page
+        </div>
       </div>
 
       {/* Cluster container - only shown if search is not active AND we have clusters */}
@@ -230,5 +238,33 @@ const NewTab: React.FC = () => {
     </div>
   );
 };
+
+// Helper function to detect the operating system
+function detectOS() {
+  const userAgent = window.navigator.userAgent;
+  const platform = window.navigator.platform;
+  const macosPlatforms = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'];
+  const windowsPlatforms = ['Win32', 'Win64', 'Windows', 'WinCE'];
+  let os = null;
+
+  if (macosPlatforms.indexOf(platform) !== -1) {
+    os = 'Mac OS';
+  } else if (windowsPlatforms.indexOf(platform) !== -1) {
+    os = 'Windows';
+  } else if (/Linux/.test(platform)) {
+    os = 'Linux';
+  } else {
+    // Default to detecting based on userAgent if platform check is inconclusive
+    if (userAgent.indexOf('Mac') !== -1) {
+      os = 'Mac OS';
+    } else if (userAgent.indexOf('Win') !== -1) {
+      os = 'Windows';
+    } else {
+      os = 'Unknown';
+    }
+  }
+
+  return os;
+}
 
 export default NewTab;
