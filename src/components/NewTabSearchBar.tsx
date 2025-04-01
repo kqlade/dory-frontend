@@ -80,6 +80,14 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // ------------------------------
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
 
+  // Detect OS for keyboard shortcut hint
+  const [isMac, setIsMac] = useState(false);
+  
+  useEffect(() => {
+    // Check if user is on macOS
+    setIsMac(navigator.platform.includes('Mac'));
+  }, []);
+
   // Update keystroke time and reset display mode when user types
   useEffect(() => {
     setLastKeystrokeTime(Date.now());
@@ -245,27 +253,22 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   }, [isSearchPotentiallyActive, onSearchStateChange]);
 
   return (
-    <div className="search-container">
-      {/* Top row: Dory icon + input + spinner */}
+    <div 
+      className={`search-container ${inputValue ? 'has-input' : ''}`}
+    >
       <div className="search-bar-inner-container">
-        {/* Icon - No click handler, no active class */}
-        <div
-          className={'icon-wrapper'} // Base class only
-          title="Dory" // Static title
-        >
-          <DoryLogo size={22} />
+        <div className={`icon-wrapper`}>
+          <DoryLogo />
         </div>
-
         <input
           ref={searchInputRef}
-          type="text"
           className="search-input"
-          placeholder="Find what you forgot..."
+          type="text"
+          placeholder="Search for links, people, content..."
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={onInputKeyDown}
         />
-
         {showSpinner && (
           <div className="spinner-wrapper">
             <div className="spinner"></div>
@@ -273,7 +276,12 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         )}
       </div>
 
-      {/* Show the results list - Use visibleResults and add onWheel */}
+      {/* NEW: Keyboard shortcut hint */}
+      <div className="keyboard-shortcut-hint">
+        Press <kbd>{isMac ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space'}</kbd> to search from any webpage
+      </div>
+      
+      {/* Search results header */}
       {showResultsList && (
         <>
           <div className="results-header">

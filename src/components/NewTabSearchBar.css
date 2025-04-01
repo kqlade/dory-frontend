@@ -206,3 +206,20 @@
     font-style: italic;
     color: var(--text-secondary);
   }
+  
+  /* Keyboard shortcut hint */
+  .keyboard-shortcut-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    opacity: 0.8;
+    text-align: right;
+    margin-top: 6px;
+    padding-right: 2px;
+    font-style: italic;
+  }
+  
+  .keyboard-shortcut-hint kbd {
+    font-family: inherit;
+    font-style: normal;
+    font-weight: 500;
+  }
