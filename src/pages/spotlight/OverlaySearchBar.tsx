@@ -55,10 +55,9 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
   } = useOverlaySearch();
 
   // ------------------------------
-  // 2. Local state for keyboard highlight, double-enter, AND scrolling
+  // 2. Local state for keyboard highlight AND scrolling
   // ------------------------------
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
   const [startIndex, setStartIndex] = useState(0); // NEW: State for visible window start
   const [isSemanticSearch, setIsSemanticSearch] = useState(false); // Track if semantic search is active
 
@@ -79,7 +78,8 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
 
   // Reset selected index and startIndex when results change
   useEffect(() => {
-    setSelectedIndex(-1);
+    // Set selectedIndex to 0 if there are results, otherwise -1
+    setSelectedIndex(results.length > 0 ? 0 : -1);
     setStartIndex(0); // Reset scroll window too
   }, [results]);
 
@@ -129,31 +129,23 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
       if (onClose) {
         onClose();
       }
-      setLastEnterPressTime(0);
     } else if (e.key === 'Enter') {
+      // Check if Ctrl/Cmd key is pressed for semantic search
+      if ((e.ctrlKey || e.metaKey) && inputValue.trim()) {
+        console.log('[OverlaySearchBar] Ctrl/Cmd+Enter detected - performing semantic search.');
+        setIsSemanticSearch(true); // Set semantic search to active
+        performSemanticSearch(inputValue); // Trigger semantic search via messaging
+        return;
+      }
+      
       // Use full results list for navigation check
       if (selectedIndex >= 0 && selectedIndex < resultsLength) {
         e.preventDefault();
         navigateToResult(results[selectedIndex]); // Navigate using correct index from full list
-        setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
-        // Handle single vs double enter
-        const currentTime = Date.now();
-        if (currentTime - lastEnterPressTime < 500) { // Double press
-          console.log('[OverlaySearchBar] Double Enter detected - performing semantic search.');
-          setIsSemanticSearch(true); // Set semantic search to active
-          performSemanticSearch(inputValue); // Trigger semantic search via messaging
-          setLastEnterPressTime(0);         // Reset time
-        } else { // Single press
-          console.log('[OverlaySearchBar] Single Enter detected.');
-          setIsSemanticSearch(false); // Set semantic search to inactive
-          setLastEnterPressTime(currentTime); // Store time of this press
-        }
-      } else { // Input is empty
-        setLastEnterPressTime(0);
+        // Regular search is handled automatically by the search hook
+        console.log('[OverlaySearchBar] Enter pressed with no selection - local search active.');
       }
-    } else { // Any other key press
-      setLastEnterPressTime(0);
     }
   };
 

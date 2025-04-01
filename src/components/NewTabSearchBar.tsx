@@ -63,12 +63,11 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   } = useHybridSearch();
 
   // ------------------------------
-  // 2. Local state for keyboard highlight, double-enter, AND scrolling
+  // 2. Local state for keyboard highlight, AND scrolling
   // ------------------------------
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [lastEnterPressTime, setLastEnterPressTime] = useState(0);
+  const [startIndex, setStartIndex] = useState(0); // State for visible window start
   const [displayMode, setDisplayMode] = useState<'local' | 'semantic'>('local');
-  const [startIndex, setStartIndex] = useState(0); // NEW: State for visible window start
 
   // ------------------------------
   // 3. Ref for focusing the input
@@ -99,7 +98,8 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
 
   // Reset selected index and startIndex when the displayed results change
   useEffect(() => {
-    setSelectedIndex(-1);
+    // Set selectedIndex to 0 if there are results, otherwise -1
+    setSelectedIndex(currentResults.length > 0 ? 0 : -1);
     setStartIndex(0); // Reset scroll window too
   }, [currentResults]);
 
@@ -165,34 +165,23 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       }
     } else if (e.key === 'Escape') {
       setSelectedIndex(-1);
-      // Reset enter timing on escape
-      setLastEnterPressTime(0);
     } else if (e.key === 'Enter') {
+      // Check if Ctrl/Cmd key is pressed for semantic search
+      if ((e.ctrlKey || e.metaKey) && inputValue.trim()) {
+        console.log('[SearchBar] Ctrl/Cmd+Enter detected - performing semantic search.');
+        performSemanticSearch(inputValue); // Trigger semantic search
+        setDisplayMode('semantic');
+        return;
+      }
+      
       // Navigate if an item is selected
       if (selectedIndex >= 0 && selectedIndex < resultsLength) {
         e.preventDefault();
         navigateToResult(currentResults[selectedIndex]);
-        setLastEnterPressTime(0);
       } else if (inputValue.trim()) {
-        // Handle single vs double enter
-        const currentTime = Date.now();
-        if (currentTime - lastEnterPressTime < 500) { // Double press
-          console.log('[SearchBar] Double Enter detected - performing semantic search.');
-          performSemanticSearch(inputValue); // Trigger semantic search
-          setDisplayMode('semantic');
-          setLastEnterPressTime(0);
-        } else { // Single press
-          // Local search is now triggered automatically by useLocalSearch via useHybridSearch.
-          // We only need to store the time for double-enter detection.
-          console.log('[SearchBar] Single Enter detected (timing for double-enter).');
-          setLastEnterPressTime(currentTime); // Store time of this press
-        }
-      } else { // Input is empty
-        setLastEnterPressTime(0);
+        // Local search is now triggered automatically by useLocalSearch via useHybridSearch
+        console.log('[SearchBar] Enter pressed with no selection - local search active.');
       }
-    } else { // Any other key press
-      // Reset enter timing if user types something else
-      setLastEnterPressTime(0);
     }
   };
 
@@ -223,7 +212,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       result.url,
       inputValue
     );
-    chrome.tabs.create({ url: result.url });
+    window.open(result.url, '_blank');
   };
 
   // ------------------------------
