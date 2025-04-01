@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect, KeyboardEvent, WheelEvent } from 'r
 import { useHybridSearch } from '../utils/useSearch';
 import { trackSearchClick } from '../services/eventService';
 import { UnifiedLocalSearchResult } from '../types/search';
-import { getFaviconUrl } from '../utils/faviconHelper';
+import Favicon from './Favicon';
 import './NewTabSearchBar.css';
 
 /**
@@ -79,14 +79,6 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // 4. Debounce logic helper state
   // ------------------------------
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
-
-  // Detect OS for keyboard shortcut hint
-  const [isMac, setIsMac] = useState(false);
-  
-  useEffect(() => {
-    // Check if user is on macOS
-    setIsMac(navigator.platform.includes('Mac'));
-  }, []);
 
   // Update keystroke time and reset display mode when user types
   useEffect(() => {
@@ -253,22 +245,27 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   }, [isSearchPotentiallyActive, onSearchStateChange]);
 
   return (
-    <div 
-      className={`search-container ${inputValue ? 'has-input' : ''}`}
-    >
+    <div className="search-container">
+      {/* Top row: Dory icon + input + spinner */}
       <div className="search-bar-inner-container">
-        <div className={`icon-wrapper`}>
-          <DoryLogo />
+        {/* Icon - No click handler, no active class */}
+        <div
+          className={'icon-wrapper'} // Base class only
+          title="Dory" // Static title
+        >
+          <DoryLogo size={22} />
         </div>
+
         <input
           ref={searchInputRef}
-          className="search-input"
           type="text"
-          placeholder="Search for links, people, content..."
+          className="search-input"
+          placeholder="Find what you forgot..."
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={onInputKeyDown}
         />
+
         {showSpinner && (
           <div className="spinner-wrapper">
             <div className="spinner"></div>
@@ -276,12 +273,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
         )}
       </div>
 
-      {/* NEW: Keyboard shortcut hint */}
-      <div className="keyboard-shortcut-hint">
-        Press <kbd>{isMac ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space'}</kbd> to search from any webpage
-      </div>
-      
-      {/* Search results header */}
+      {/* Show the results list - Use visibleResults and add onWheel */}
       {showResultsList && (
         <>
           <div className="results-header">
@@ -301,23 +293,18 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
                   // Set selectedIndex to the actual index in the full list
                   onMouseEnter={() => setSelectedIndex(actualIndex)}
                 >
-                  <img 
-                    src={getFaviconUrl(item.url)} 
-                    alt="" 
-                    className="result-favicon" 
-                    onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
-                  />
-                  <div className="result-content">
-                    <div className="result-title">{item.title}</div>
-                    <div className="result-url">{item.url}</div>
-                    {/* Show explanation only for semantic results */}
-                    {item.explanation && item.source === 'semantic' && (
-                      <div className="result-explanation">
-                        <span className="explanation-label">Why: </span>
-                        {item.explanation}
-                      </div>
-                    )}
+                  <div className="result-title">
+                    <Favicon url={item.url} />
+                    {item.title}
                   </div>
+                  <div className="result-url">{item.url}</div>
+                  {/* Show explanation only for semantic results */}
+                  {item.explanation && item.source === 'semantic' && (
+                    <div className="result-explanation">
+                      <span className="explanation-label">Why: </span>
+                      {item.explanation}
+                    </div>
+                  )}
                 </li>
               );
             })}

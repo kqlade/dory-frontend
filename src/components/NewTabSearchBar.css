@@ -163,6 +163,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
   }
   .result-url {
     font-size: 12px;
@@ -170,6 +172,18 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    padding-left: 24px; /* Align with the title text after favicon */
+  }
+  .favicon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+  /* Add styles for favicon error states */
+  .favicon.error {
+    opacity: 0.4;
   }
   .result-explanation {
     font-size: 12px;
@@ -205,21 +219,4 @@
     font-size: 14px;
     font-style: italic;
     color: var(--text-secondary);
-  }
-  
-  /* Keyboard shortcut hint */
-  .keyboard-shortcut-hint {
-    font-size: 12px;
-    color: var(--text-secondary);
-    opacity: 0.8;
-    text-align: right;
-    margin-top: 6px;
-    padding-right: 2px;
-    font-style: italic;
-  }
-  
-  .keyboard-shortcut-hint kbd {
-    font-family: inherit;
-    font-style: normal;
-    font-weight: 500;
   }

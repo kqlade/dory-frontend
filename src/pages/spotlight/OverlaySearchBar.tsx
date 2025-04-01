@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, KeyboardEvent, WheelEvent } from 'react';
 import { useOverlaySearch } from '../../utils/useOverlaySearch';
 import { UnifiedLocalSearchResult } from '../../types/search';
-import { getFaviconUrl } from '../../utils/faviconHelper';
+import Favicon from '../../components/Favicon';
 import '../../components/NewTabSearchBar.css';
 
 /**
@@ -250,22 +250,17 @@ const OverlaySearchBar: React.FC<OverlaySearchBarProps> = ({ onClose }) => {
                   // Set selectedIndex to actual index
                   onMouseEnter={() => setSelectedIndex(actualIndex)}
                 >
-                  <img 
-                    src={getFaviconUrl(item.url)} 
-                    alt="" 
-                    className="result-favicon" 
-                    onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
-                  />
-                  <div className="result-content">
-                    <div className="result-title">{item.title}</div>
-                    <div className="result-url">{item.url}</div>
-                    {item.explanation && item.source === 'semantic' && (
-                      <div className="result-explanation">
-                        <span className="explanation-label">Why: </span>
-                        {item.explanation}
-                      </div>
-                    )}
+                  <div className="result-title">
+                    <Favicon url={item.url} />
+                    {item.title}
                   </div>
+                  <div className="result-url">{item.url}</div>
+                  {item.explanation && item.source === 'semantic' && (
+                    <div className="result-explanation">
+                      <span className="explanation-label">Why: </span>
+                      {item.explanation}
+                    </div>
+                  )}
                 </li>
               );
             })}
