@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, KeyboardEvent, WheelEvent } from 'r
 import { useHybridSearch } from '../utils/useSearch';
 import { trackSearchClick } from '../services/eventService';
 import { UnifiedLocalSearchResult } from '../types/search';
+import { getFaviconUrl } from '../utils/faviconHelper';
 import './NewTabSearchBar.css';
 
 /**
@@ -292,15 +293,23 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
                   // Set selectedIndex to the actual index in the full list
                   onMouseEnter={() => setSelectedIndex(actualIndex)}
                 >
-                  <div className="result-title">{item.title}</div>
-                  <div className="result-url">{item.url}</div>
-                  {/* Show explanation only for semantic results */}
-                  {item.explanation && item.source === 'semantic' && (
-                    <div className="result-explanation">
-                      <span className="explanation-label">Why: </span>
-                      {item.explanation}
-                    </div>
-                  )}
+                  <img 
+                    src={getFaviconUrl(item.url)} 
+                    alt="" 
+                    className="result-favicon" 
+                    onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+                  />
+                  <div className="result-content">
+                    <div className="result-title">{item.title}</div>
+                    <div className="result-url">{item.url}</div>
+                    {/* Show explanation only for semantic results */}
+                    {item.explanation && item.source === 'semantic' && (
+                      <div className="result-explanation">
+                        <span className="explanation-label">Why: </span>
+                        {item.explanation}
+                      </div>
+                    )}
+                  </div>
                 </li>
               );
             })}
