@@ -1,12 +1,26 @@
 /**
- * Common types used throughout the DORY extension
+ * @file index.ts
+ * 
+ * Barrel file for exporting all type definitions
  */
 
-export interface SearchResult {
-  id: string;
-  title: string;
-  url: string;
-  snippet?: string;
-  timestamp?: number;
-  favIconUrl?: string;
-} 
+// Export user-related types
+export * from './user';
+
+// Export auth-related types
+export * from './auth';
+
+// Export database-related types
+export * from './database';
+
+// Export content-related types
+export * from './content';
+
+// Export search-related types
+export * from './search';
+
+// Export clustering-related types
+export * from './clustering';
+
+// Export UI command-related types
+export * from './ui';

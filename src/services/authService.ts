@@ -1,335 +1,255 @@
 /**
  * @file authService.ts
- *
- * Centralized authentication logic for the DORY extension.
- * - Content scripts (popup, etc.) must use the proxy-based methods to avoid CORS.
- * - The background script can do direct fetch calls (Manifest V3 privileges).
+ * Background-only authentication service for the Dory extension.
  */
 
-import { API_BASE_URL, ENDPOINTS } from '../config';
-import { sendMessageWithTimeout } from '../utils/messagingHelpers';
-import { ApiProxyRequestData, MessageType, createMessage } from '../utils/messageSystem';
+import { API_BASE_URL, AUTH_ENDPOINTS, GOOGLE_CLIENT_ID, STORAGE_KEYS } from '../config';
+import { AuthState, TokenResponse, User } from '../types';
 
-/** Interface for user data from the backend */
-export interface UserInfo {
-  id: string;
-  email: string;
-  name?: string;
-  picture?: string;
-}
+export class AuthService {
+  private authState: AuthState = {
+    isAuthenticated: false,
+    user: null,
+    accessToken: null,
+    refreshToken: null,
+  };
+  private stateChangeListeners: Array<(newState: AuthState) => void> = [];
+  private isInitialized = false;
 
-/* ----------------------------------------------------------------
- * 1) CONTENT SCRIPT METHODS (API Proxy)
- *    Used by InPagePopup, content scripts, etc.
- * ----------------------------------------------------------------*/
+  constructor() {
+    console.log('[AuthService] Instance created.');
+  }
 
-/**
- * checkAuth() – (Content Script)
- * Checks if the user is authenticated by first checking storage for auth token,
- * then verifying with the backend only if needed.
- */
-export async function checkAuth(): Promise<boolean> {
-  try {
-    console.log('[Auth] Checking authentication status');
-    
-    // First, check if we have auth data in storage
-    const storage = await chrome.storage.local.get(['auth_token', 'user']);
-    const authToken = storage.auth_token;
-    const userData = storage.user;
-    
-    // If we have both token and user data, consider authenticated without a network request
-    if (authToken && userData?.id) {
-      console.log('[Auth] Found valid auth token and user data in storage');
-      return true;
-    }
-    
-    // Otherwise, validate with backend
-    console.log('[Auth] No valid auth data in storage, checking with backend');
-    const request: ApiProxyRequestData = {
-      url: `${API_BASE_URL}${ENDPOINTS.AUTH.ME}`,
-      method: 'GET'
-    };
+  /**
+   * Initializes auth state from storage. Optionally verifies token.
+   */
+  public async init(): Promise<void> {
+    if (this.isInitialized) return;
+    await this.loadStateFromStorage();
+    if (this.authState.accessToken) await this.verifyToken();
+    this.isInitialized = true;
+  }
 
-    const responseData = await sendMessageWithTimeout(request);
-    if (!responseData.ok) {
-      console.log('[Auth] Auth check failed:', responseData.status);
-      return false;
-    }
-    
-    const backendUserData = responseData.data;
-    if (!backendUserData?.id) {
-      console.log('[Auth] Invalid user data received');
-      return false;
-    }
-
-    // Store user data in local storage for quick UI access
-    await chrome.storage.local.set({ user: backendUserData });
-    console.log('[Auth] User authenticated (proxy):', backendUserData.email);
-    return true;
-  } catch (err) {
-    console.error('[Auth] Check failed:', err);
-    
-    // Fallback: if we have token and user data in storage but request failed,
-    // we still consider user authenticated to maintain UI state
+  /**
+   * Starts the Google OAuth flow (ID Token retrieval).
+   */
+  public async login(): Promise<void> {
     try {
-      const storage = await chrome.storage.local.get(['auth_token', 'user']);
-      if (storage.auth_token && storage.user?.id) {
-        console.log('[Auth] Network request failed but found valid auth data in storage');
+      const redirectUrl = chrome.identity.getRedirectURL('oauth2');
+      if (!redirectUrl) throw new Error('OAuth Redirect URL not found.');
+      
+      const scopes = ['email', 'profile', 'openid'];
+      const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+      authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
+      authUrl.searchParams.set('redirect_uri', redirectUrl);
+      authUrl.searchParams.set('response_type', 'id_token');
+      authUrl.searchParams.set('scope', scopes.join(' '));
+      authUrl.searchParams.set('nonce', Math.random().toString(36).slice(2));
+      authUrl.searchParams.set('prompt', 'consent select_account');
+
+      const responseUrl = await chrome.identity.launchWebAuthFlow({
+        url: authUrl.toString(),
+        interactive: true,
+      });
+      if (!responseUrl) throw new Error('Authentication flow cancelled or failed.');
+
+      const urlFragment = responseUrl.split('#')[1] || '';
+      const params = new URLSearchParams(urlFragment);
+      const idToken = params.get('id_token');
+      if (!idToken) throw new Error(`OAuth failed: ${params.get('error') || 'No token'}`);
+
+      await this.exchangeGoogleIdToken(idToken);
+    } catch (err) {
+      console.error('[AuthService] Login flow failed:', err);
+    }
+  }
+
+  /**
+   * Logs the user out and calls the backend logout endpoint if possible.
+   */
+  public async logout(): Promise<void> {
+    const token = this.authState.accessToken;
+    this.updateAuthState({
+      isAuthenticated: false,
+      user: null,
+      accessToken: null,
+      refreshToken: null,
+    });
+    await this.saveStateToStorage();
+    if (token) {
+      try {
+        // Directly call logout endpoint with the old token
+        await fetch(`${API_BASE_URL}${AUTH_ENDPOINTS.LOGOUT}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch (err) {
+        console.warn('[AuthService] Backend logout error:', err);
+      }
+    }
+  }
+
+  public getAuthState(): AuthState {
+    return { ...this.authState };
+  }
+
+  public onStateChange(listener: (newState: AuthState) => void): () => void {
+    this.stateChangeListeners.push(listener);
+    return () => {
+      this.stateChangeListeners = this.stateChangeListeners.filter(l => l !== listener);
+    };
+  }
+
+  /**
+   * Verifies the token by calling /me. Refreshes if necessary.
+   */
+  public async verifyToken(): Promise<boolean> {
+    if (!this.authState.accessToken) return false;
+    try {
+      const user = await this.makeRequest<User>(AUTH_ENDPOINTS.ME, { method: 'GET' });
+      if (user?.id) {
+        this.updateAuthState({ user });
         return true;
       }
-    } catch (storageErr) {
-      console.error('[Auth] Storage check failed:', storageErr);
-    }
-    
-    return false;
-  }
-}
-
-/**
- * authenticateWithGoogleIdToken() – (Content Script)
- * Exchanges the Google ID token via the background's API proxy (/auth/token).
- */
-export async function authenticateWithGoogleIdToken(idToken: string): Promise<boolean> {
-  try {
-    console.log('[Auth] Exchanging token via proxy (content script)...');
-    const request: ApiProxyRequestData = {
-      url: `${API_BASE_URL}${ENDPOINTS.AUTH.TOKEN}`,
-      method: 'POST',
-      body: { id_token: idToken }
-    };
-
-    const responseData = await sendMessageWithTimeout(request);
-
-    if (!responseData.ok) {
-      console.error('[Auth] Token exchange failed (proxy):', responseData.error);
+      return false;
+    } catch (err) {
+      console.warn('[AuthService] Token verification failed:', (err as Error).message);
       return false;
     }
+  }
 
-    const data = responseData.data;
-    if (data?.user) {
-      const storageData: Record<string, any> = { user: data.user };
-      
-      // Store access token
-      if (data.access_token || data.token) {
-        storageData.auth_token = data.access_token || data.token;
-      }
-      
-      // Store refresh token if available
-      if (data.refresh_token) {
-        storageData.refresh_token = data.refresh_token;
-      }
-      
-      await chrome.storage.local.set(storageData);
+  // --- Private Methods ---
 
-      // Notify background that we are now authenticated
-      chrome.runtime.sendMessage(
-        createMessage(MessageType.AUTH_RESULT, { isAuthenticated: true }, 'content')
+  private notifyListeners(): void {
+    const stateCopy = { ...this.authState };
+    this.stateChangeListeners.forEach(listener => listener(stateCopy));
+  }
+
+  private updateAuthState(newState: Partial<AuthState>): void {
+    this.authState = { ...this.authState, ...newState };
+    this.notifyListeners();
+  }
+
+  private async loadStateFromStorage(): Promise<void> {
+    try {
+      const result = await chrome.storage.local.get(STORAGE_KEYS.AUTH_STATE);
+      const loaded = result[STORAGE_KEYS.AUTH_STATE];
+      if (loaded && typeof loaded === 'object') {
+        this.updateAuthState({
+          ...loaded,
+          isAuthenticated: !!loaded.isAuthenticated,
+        });
+      }
+    } catch (err) {
+      console.error('[AuthService] Failed to load state:', err);
+    }
+  }
+
+  private async saveStateToStorage(): Promise<void> {
+    try {
+      await chrome.storage.local.set({ [STORAGE_KEYS.AUTH_STATE]: this.authState });
+    } catch (err) {
+      console.error('[AuthService] Failed to save state:', err);
+    }
+  }
+
+  private async makeRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    needsAuth = true
+  ): Promise<T> {
+    let { accessToken, refreshToken } = this.authState;
+
+    if (needsAuth && !accessToken) {
+      throw new Error('Authentication required, but no access token is set.');
+    }
+    options.headers = {
+      ...(options.headers || {}),
+      'Content-Type': 'application/json',
+      ...(needsAuth ? { Authorization: `Bearer ${accessToken}` } : {}),
+    };
+    options.credentials = 'include';
+
+    let response = await fetch(`${API_BASE_URL}${endpoint}`, options);
+
+    // Attempt refresh if 401
+    if (needsAuth && response.status === 401 && refreshToken) {
+      const refreshed = await this.refreshToken();
+      if (refreshed) {
+        accessToken = this.authState.accessToken;
+        options.headers = {
+          ...options.headers,
+          Authorization: `Bearer ${accessToken}`,
+        };
+        response = await fetch(`${API_BASE_URL}${endpoint}`, options);
+      } else {
+        await this.logout();
+        throw new Error('Authentication failed: Unable to refresh token.');
+      }
+    }
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      const error = new Error(`API Error: ${response.statusText}`);
+      (error as any).status = response.status;
+      (error as any).data = errorData;
+      throw error;
+    }
+
+    return response.status === 204 ? null as T : (response.json() as Promise<T>);
+  }
+
+  private async exchangeGoogleIdToken(idToken: string): Promise<void> {
+    const tokenResponse = await this.makeRequest<TokenResponse>(
+      AUTH_ENDPOINTS.TOKEN,
+      {
+        method: 'POST',
+        body: JSON.stringify({ id_token: idToken }),
+      },
+      false
+    );
+    if (!tokenResponse.access_token || !tokenResponse.user) {
+      throw new Error('Invalid token exchange response.');
+    }
+    this.updateAuthState({
+      isAuthenticated: true,
+      user: tokenResponse.user,
+      accessToken: tokenResponse.access_token,
+      refreshToken: tokenResponse.refresh_token || null,
+    });
+    await this.saveStateToStorage();
+  }
+
+  private async refreshToken(): Promise<boolean> {
+    const { refreshToken } = this.authState;
+    if (!refreshToken) return false;
+
+    try {
+      const tokenResponse = await this.makeRequest<TokenResponse>(
+        AUTH_ENDPOINTS.REFRESH,
+        {
+          method: 'POST',
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        },
+        false
       );
+      if (!tokenResponse.access_token || !tokenResponse.user) {
+        throw new Error('Invalid refresh response.');
+      }
+      this.updateAuthState({
+        isAuthenticated: true,
+        user: tokenResponse.user,
+        accessToken: tokenResponse.access_token,
+        refreshToken: tokenResponse.refresh_token || refreshToken,
+      });
+      await this.saveStateToStorage();
       return true;
+    } catch (err: any) {
+      console.warn('[AuthService] Refresh failed:', err.message || err);
+      if (err.status === 401 || `${err}`.includes('Invalid')) await this.logout();
+      return false;
     }
-    return false;
-  } catch (err) {
-    console.error('[Auth] Token auth failed (proxy):', err);
-    return false;
   }
 }
 
-/**
- * logout() – (Content Script)
- * Calls /api/auth/logout via the background proxy, then clears local storage.
- */
-export async function logout(): Promise<void> {
-  try {
-    console.log('[Auth] Logging out via proxy (content script)');
-    const request: ApiProxyRequestData = {
-      url: `${API_BASE_URL}${ENDPOINTS.AUTH.LOGOUT}`,
-      method: 'POST'
-    };
-    await sendMessageWithTimeout(request);
-  } catch (err) {
-    console.error('[Auth] Logout request failed (proxy):', err);
-  }
-
-  // Clear local storage (including refresh token)
-  await chrome.storage.local.remove(['user', 'auth_token', 'refresh_token']);
-  // Notify the background
-  chrome.runtime.sendMessage(
-    createMessage(MessageType.AUTH_RESULT, { isAuthenticated: false }, 'content')
-  );
-}
-
-/**
- * login() – (Content Script)
- * Tells the background script to start the Google OAuth popup flow.
- */
-export function login(): void {
-  chrome.runtime.sendMessage(
-    createMessage(MessageType.AUTH_REQUEST, {}, 'content')
-  );
-}
-
-/* ----------------------------------------------------------------
- * 2) BACKGROUND METHODS (Direct Fetch)
- *    Used only from within the background script.
- * ----------------------------------------------------------------*/
-
-/**
- * checkAuthDirect() – (Background)
- * Performs a direct fetch to /api/auth/me, storing user data locally if authenticated.
- */
-export async function checkAuthDirect(): Promise<boolean> {
-  try {
-    console.log('[Auth] Checking authentication status (direct fetch, background)');
-    
-    // Retrieve auth token from storage
-    const storage = await chrome.storage.local.get(['auth_token']);
-    const authToken = storage.auth_token;
-    
-    // Set up headers with Authorization if token exists
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-      console.log('[Auth] Using stored auth token for verification');
-    }
-    
-    const resp = await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.ME}`, {
-      method: 'GET',
-      headers,
-      credentials: 'include' // Keep cookies for backward compatibility
-    });
-    
-    if (!resp.ok) {
-      console.log('[Auth] checkAuthDirect => not authenticated, status:', resp.status);
-      return false;
-    }
-    
-    const userData = await resp.json().catch(() => null);
-    if (!userData?.id) {
-      console.log('[Auth] checkAuthDirect => invalid user data');
-      return false;
-    }
-    
-    await chrome.storage.local.set({ user: userData });
-    console.log('[Auth] checkAuthDirect => user is authenticated:', userData.email);
-    return true;
-  } catch (err) {
-    console.error('[Auth] checkAuthDirect error:', err);
-    return false;
-  }
-}
-
-/**
- * authenticateWithGoogleIdTokenDirect() – (Background)
- * Exchanges a Google ID token for a session by directly calling /api/auth/token.
- */
-export async function authenticateWithGoogleIdTokenDirect(idToken: string): Promise<boolean> {
-  try {
-    console.log('[Auth] authenticateWithGoogleIdTokenDirect => exchanging with backend');
-    const resp = await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.TOKEN}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id_token: idToken }),
-      credentials: 'include'
-    });
-    if (!resp.ok) {
-      console.error('[Auth] Direct token exchange failed => status:', resp.status);
-      return false;
-    }
-    const data = await resp.json().catch(() => null);
-    if (!data?.user) {
-      console.log('[Auth] No user object returned in direct exchange');
-      return false;
-    }
-
-    // If user + token returned, store them
-    const storageData: Record<string, any> = { user: data.user };
-    
-    // Store access token
-    if (data.access_token || data.token) {
-      storageData.auth_token = data.access_token || data.token;
-    }
-    
-    // Store refresh token if available
-    if (data.refresh_token) {
-      storageData.refresh_token = data.refresh_token;
-    }
-    
-    await chrome.storage.local.set(storageData);
-
-    return true;
-  } catch (err) {
-    console.error('[Auth] authenticateWithGoogleIdTokenDirect error:', err);
-    return false;
-  }
-}
-
-/**
- * refreshAuthToken() – (Background)
- * Refreshes the access token using the stored refresh token.
- * Returns true if successful, false otherwise.
- */
-export async function refreshAuthToken(): Promise<boolean> {
-  try {
-    console.log('[Auth] Attempting to refresh access token');
-    
-    // Get the refresh token from storage
-    const storage = await chrome.storage.local.get(['refresh_token']);
-    const refreshToken = storage.refresh_token;
-    
-    if (!refreshToken) {
-      console.error('[Auth] No refresh token available');
-      return false;
-    }
-    
-    // Call the refresh endpoint
-    const resp = await fetch(`${API_BASE_URL}${ENDPOINTS.AUTH.REFRESH}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-      credentials: 'include'
-    });
-    
-    if (!resp.ok) {
-      console.error('[Auth] Token refresh failed => status:', resp.status);
-      return false;
-    }
-    
-    const data = await resp.json().catch(() => null);
-    if (!data?.access_token) {
-      console.error('[Auth] No access token returned from refresh endpoint');
-      return false;
-    }
-    
-    // Store the new access token
-    const storageData: Record<string, any> = {};
-    if (data.access_token) {
-      storageData.auth_token = data.access_token;
-    }
-    if (data.refresh_token) {
-      storageData.refresh_token = data.refresh_token;
-    }
-    await chrome.storage.local.set(storageData);
-    
-    console.log('[Auth] Successfully refreshed access token');
-    return true;
-  } catch (err) {
-    console.error('[Auth] Token refresh failed:', err);
-    return false;
-  }
-}
-
-export default {
-  // For content scripts:
-  checkAuth,
-  authenticateWithGoogleIdToken,
-  logout,
-  login,
-
-  // For background:
-  checkAuthDirect,
-  authenticateWithGoogleIdTokenDirect,
-  refreshAuthToken
-};
+export const authService = new AuthService();

@@ -1,198 +1,22 @@
-// src/services/eventService.ts
-import { API_BASE_URL, ENDPOINTS } from '../config';
-import { EventType } from '../api/types';
-import { logEvent } from '../utils/dexieEventLogger';
-import { getCurrentSessionId } from '../utils/dexieSessionManager';
-import { refreshAuthToken } from './authService';
-
-// Types
-export interface ContentEvent {
-  pageId: string;
-  visitId: string;
-  url: string;
-  title: string;
-  markdown: string;
-  metadata?: Record<string, any>;
-  sessionId?: string | null;
-}
-
-// Simple user type without auth dependency
-export interface User {
-  id: string;
-  email: string;
-  name?: string;
-  picture?: string;
-}
-
 /**
- * Initialize the event service
+ * @file eventService.ts
+ * 
+ * Service for tracking and reporting user events.
+ * Uses the repository pattern for database access and clean architecture principles.
  */
-export async function initEventService(): Promise<void> {
-  try {
-    console.log('[EventService] Event service initialized');
-  } catch (err) {
-    console.error('[EventService] Initialization error:', err);
-  }
-}
+
+import { authService } from './authService';
+import { eventRepository, sessionRepository, EventType } from '../db/repositories';
 
 /**
- * Get the authenticated user
- */
-async function getUser(): Promise<User> {
-  try {
-    // Direct storage access, no imports that might trigger DOM-dependent code
-    const data = await chrome.storage.local.get(['user']);
-    
-    if (!data.user || !data.user.id) {
-      throw new Error('User authentication required');
-    }
-    
-    return {
-      id: data.user.id,
-      email: data.user.email || 'unknown@example.com',
-      name: data.user.name,
-      picture: data.user.picture
-    };
-  } catch (error) {
-    console.error('[EventService] Authentication error:', error);
-    throw new Error('User authentication required');
-  }
-}
-
-/**
- * Generic API sender with up to 3 retries
- */
-async function sendToAPI(endpoint: string, body: any, attempt = 0): Promise<Response> {
-  const maxAttempts = 3;
-  try {
-    // Get the auth token from storage
-    const storage = await chrome.storage.local.get(['auth_token']);
-    const authToken = storage.auth_token;
-    
-    // Prepare headers
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    
-    // Include auth token if available
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    
-    console.log(`[EventService] API Request to ${API_BASE_URL}${endpoint}:`, {
-      method: 'POST',
-      headers: JSON.stringify(headers),
-      bodySize: JSON.stringify(body).length,
-      attempt: attempt + 1
-    });
-    
-    const resp = await fetch(`${API_BASE_URL}${endpoint}`, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: JSON.stringify(body),
-    });
-    
-    if (!resp.ok) {
-      console.error(`[EventService] API Response Error:`, {
-        status: resp.status,
-        statusText: resp.statusText,
-        endpoint
-      });
-      
-      // Handle 401 Unauthorized errors by refreshing the token
-      if (resp.status === 401) {
-        console.log('[EventService] 401 Unauthorized, attempting token refresh');
-        
-        // Try to refresh the token
-        const refreshSuccess = await refreshAuthToken();
-        
-        if (refreshSuccess) {
-          console.log('[EventService] Token refresh successful, retrying request');
-          // Retry the original request with the new token
-          return sendToAPI(endpoint, body, 0); // Reset retry counter
-        } else {
-          console.error('[EventService] Token refresh failed');
-        }
-      }
-      
-      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-    }
-    
-    console.log(`[EventService] API Response Success:`, {
-      status: resp.status,
-      endpoint
-    });
-    
-    return resp;
-  } catch (error) {
-    console.error(`[EventService] sendToAPI error (attempt ${attempt + 1}):`, error);
-    if (attempt < maxAttempts - 1) {
-      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-      return sendToAPI(endpoint, body, attempt + 1);
-    }
-    throw error;
-  }
-}
-
-/**
- * Real-time content extraction event.
- */
-export async function sendContentEvent(event: ContentEvent): Promise<void> {
-  const user = await getUser();
-  try {
-    let sessionId = event.sessionId;
-    if (!sessionId) {
-      // Optionally load session ID from Dexie
-      const numSessionId = await getCurrentSessionId();
-      sessionId = numSessionId ? String(numSessionId) : null;
-    }
-
-    if (!sessionId) {
-      console.warn('[EventService] No active session, skipping content event');
-      return;
-    }
-
-    const payload = {
-      contentId: `content_${event.pageId}_${event.visitId}_${Date.now()}`,
-      sessionId: String(sessionId),
-      userId: user?.id,
-      timestamp: Date.now(),
-      data: {
-        pageId: event.pageId,
-        visitId: event.visitId,
-        userId: user?.id,
-        url: event.url,
-        content: {
-          title: event.title,
-          markdown: event.markdown,
-          metadata: event.metadata || { language: 'en' }
-        }
-      }
-    };
-
-    // Enhanced logging to show exactly what's being sent
-    console.log('[EventService] Sending content to backend:', {
-      contentId: payload.contentId,
-      sessionId: payload.sessionId,
-      userId: payload.userId,
-      url: payload.data.url,
-      title: payload.data.content.title,
-      pageId: payload.data.pageId,
-      visitId: payload.data.visitId,
-      markdownLength: payload.data.content.markdown.length,
-      markdownPreview: payload.data.content.markdown.substring(0, 100) + '...'
-    });
-
-    await sendToAPI(ENDPOINTS.CONTENT, payload);
-    console.log('[EventService] Content event sent successfully');
-  } catch (err) {
-    console.error('[EventService] Failed to send content event:', err);
-  }
-}
-
-/**
- * Example function to log search click locally for later sync
+ * Track a search result click event
+ * 
+ * @param searchSessionId Unique ID for the search session
+ * @param pageId ID of the clicked page
+ * @param position Position of the result in the list (0-based)
+ * @param url URL of the clicked result
+ * @param query Search query that produced the result
+ * @returns Promise resolving when the event is logged
  */
 export async function trackSearchClick(
   searchSessionId: string,
@@ -200,23 +24,140 @@ export async function trackSearchClick(
   position: number,
   url: string,
   query: string
-): Promise<void> {
+): Promise<number> {
   try {
-    const sessionId = await getCurrentSessionId();
+    // Get the current session ID
+    const sessionId = sessionRepository.getCurrentSessionId();
     if (!sessionId) {
       console.error('[EventService] No active session for trackSearchClick');
-      return;
+      throw new Error('No active session');
+    }
+    
+    // Get the session details
+    const session = await sessionRepository.getSession(sessionId);
+    if (!session) {
+      console.error('[EventService] Could not retrieve session details');
+      throw new Error('Session details not found');
     }
 
-    const timestamp = Date.now();
-    await logEvent({
-      operation: EventType.SEARCH_CLICK,
-      sessionId: String(sessionId),
-      timestamp,
-      data: { searchSessionId, pageId, position, url, query }
+    // Get user ID if authenticated
+    const authState = await authService.getAuthState();
+    const userId = authState.isAuthenticated ? authState.user?.id : undefined;
+    const userEmail = authState.isAuthenticated ? authState.user?.email : undefined;
+
+    // Log the event
+    const eventId = await eventRepository.logEvent(
+      EventType.SEARCH_RESULT_CLICKED, 
+      String(sessionId),
+      { 
+        searchSessionId, 
+        pageId, 
+        position, 
+        url, 
+        query,
+        timestamp: Date.now() 
+      },
+      userId,
+      userEmail
+    );
+
+    console.log('[EventService] Search click logged:', {
+      eventId,
+      pageId,
+      position,
+      query: query.substring(0, 15) + (query.length > 15 ? '...' : '')
     });
-    console.log('[EventService] Search click logged locally');
-  } catch (err) {
-    console.error('[EventService] trackSearchClick error:', err);
+
+    return eventId;
+  } catch (error) {
+    console.error('[EventService] trackSearchClick error:', error);
+    throw error;
   }
 }
+
+/**
+ * Track that a user performed a search
+ * 
+ * @param query The search query
+ * @param resultCount Number of results returned
+ * @param searchType Type of search (local, semantic, hybrid)
+ * @returns Promise resolving to the event ID
+ */
+export async function trackSearchPerformed(
+  query: string,
+  resultCount: number,
+  searchType: 'local' | 'semantic' | 'hybrid' = 'local'
+): Promise<number> {
+  try {
+    // Get the current session ID
+    const sessionId = sessionRepository.getCurrentSessionId();
+    if (!sessionId) {
+      console.error('[EventService] No active session for trackSearchPerformed');
+      throw new Error('No active session');
+    }
+    
+    // Get the session details
+    const session = await sessionRepository.getSession(sessionId);
+    if (!session) {
+      console.error('[EventService] Could not retrieve session details');
+      throw new Error('Session details not found');
+    }
+
+    // Get user ID if authenticated
+    const authState = await authService.getAuthState();
+    const userId = authState.isAuthenticated ? authState.user?.id : undefined;
+    const userEmail = authState.isAuthenticated ? authState.user?.email : undefined;
+
+    // Generate a unique search session ID
+    const searchSessionId = `search_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+
+    // Log the event
+    const eventId = await eventRepository.logEvent(
+      EventType.SEARCH_PERFORMED,
+      String(sessionId),
+      {
+        searchSessionId,
+        query,
+        resultCount,
+        searchType,
+        timestamp: Date.now()
+      },
+      userId,
+      userEmail
+    );
+
+    console.log('[EventService] Search performed:', {
+      eventId,
+      query: query.substring(0, 15) + (query.length > 15 ? '...' : ''),
+      resultCount,
+      searchType
+    });
+
+    return eventId;
+  } catch (error) {
+    console.error('[EventService] trackSearchPerformed error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Class to represent the EventService with all event-related functions
+ * This allows for easier mocking and dependency injection
+ */
+class EventService {
+  /**
+   * Track a search result click
+   */
+  trackSearchClick = trackSearchClick;
+  
+  /**
+   * Track a search being performed
+   */
+  trackSearchPerformed = trackSearchPerformed;
+}
+
+// Create and export a singleton instance
+export const eventService = new EventService();
+
+// Default export for convenience
+export default eventService;

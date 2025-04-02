@@ -1,71 +1,20 @@
 /**
  * @file serviceWorker.ts
- *
- * Main background/service worker script for the DORY extension (Manifest V3).
- * Handles session tracking, navigation events, message routing, OAuth, etc.
+ * 
+ * Background script for the Dory extension.
+ * Sets up the background API, coordinates navigation, and manages extension lifecycle.
  */
 
-import {
-  messageRouter,
-  MessageType,
-  createMessage,
-  ContentDataMessage,
-  ApiProxyRequestData,
-  ApiProxyResponseData
-} from '../utils/messageSystem';
-
-import {
-  startNewSession,
-  endCurrentSession,
-  getCurrentSessionId,
-  checkSessionIdle,
-  updateSessionActivityTime
-} from '../utils/dexieSessionManager';
-
-import {
-  createOrGetPage,
-  endVisit,
-  startVisit,
-  updateActiveTimeForPage,
-  updateVisitActiveTime,
-  getDB,
-  createOrUpdateEdge
-} from '../utils/dexieBrowsingStore';
-
-import { initDexieSystem } from '../utils/dexieInit';
-import { initEventService, sendContentEvent } from '../services/eventService';
-import { logEvent } from '../utils/dexieEventLogger';
-import { EventType, SearchResponse } from '../api/types';
+import { authService } from '../services/authService';
+import { backgroundApi } from './api';
+import { exposeBackgroundAPI } from '../utils/comlinkSetup';
 import { isWebPage, shouldRecordHistoryEntry } from '../utils/urlUtils';
-import { ColdStorageSync } from '../services/coldStorageSync';
-import { getClusterSuggestions } from '../services/clusteringService';
-import { localRanker } from '../services/localDoryRanking';
-import { semanticSearch } from '../api/client';
-import { getCurrentUserId } from '../services/userService';
-
-import {
-  checkAuthDirect,
-  authenticateWithGoogleIdTokenDirect
-} from '../services/authService';
-
-
-import { 
-  ENABLE_GLOBAL_SEARCH,
-} from '../config';
-
-// +++ NEW IMPORTS +++
-import { searchHistoryAPI } from '../services/historySearch';
-import { UnifiedLocalSearchResult } from '../types/search';
-// +++ END NEW IMPORTS +++
-
-console.log('[DORY] Service Worker starting...');
 
 // -------------------- Constants & State --------------------
 const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 min
 
 let isSessionActive = false;
 let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
-let isStartingSession = false;
 
 /**
  * Track data about each open tab with separate maps for different properties
@@ -74,6 +23,28 @@ const tabToCurrentUrl: Record<number, string | undefined> = {};
 const tabToPageId: Record<number, string> = {}; // Tracks PageID of the *last valid* visit
 const tabToVisitId: Record<number, string> = {}; // Tracks VisitID of the *current valid* visit
 const extractionRequestedForVisitId: Record<number, string> = {}; // Tracks the last visitId extraction was requested for
+
+// -------------------- Initialization --------------------
+
+// Initialize auth service
+authService.init().catch(err => {
+  console.error('[Background] Failed to initialize auth service:', err);
+});
+
+// Check auth state and initialize services accordingly
+const currentAuthState = authService.getAuthState();
+const isAuthenticated = currentAuthState.isAuthenticated;
+console.log(`[Background] Auth state checked. Authenticated: ${isAuthenticated}`);
+updateIcon(isAuthenticated);
+if (isAuthenticated) {
+  initializeServices();
+}
+
+// Expose the API to content scripts
+exposeBackgroundAPI(backgroundApi);
+
+// Initialize the extension
+console.log('[Background] Service worker initializing...');
 
 // -------------------- Icon Helpers --------------------
 function updateIcon(isAuthenticated: boolean) {
@@ -91,639 +62,134 @@ function updateIcon(isAuthenticated: boolean) {
   chrome.action.setIcon({ path: iconPath });
 }
 
-// -------------------- Initialization --------------------
-initExtension();
-
-/** Initialize the extension on startup (or service worker wake). */
-async function initExtension() {
-  console.log('[DORY] Initializing extension...');
+// -------------------- Service Initialization --------------------
+async function initializeServices() {
   try {
-    // 1) Initialize message router
-    messageRouter.initialize();
-    registerMessageHandlers();
-    console.log('[DORY] Message system initialized');
+    // 1. Get services from background API
+    console.log('[Background] Initializing services...');
     
-    // 2) Check user auth
-    const isAuthenticated = await checkAuthDirect();
-    updateIcon(isAuthenticated);
-
-    // 3) Listen for extension icon clicks
-    chrome.action.onClicked.addListener(handleExtIconClick);
+    // 2. Initialize session management
+    await backgroundApi.auth.getAuthState(); // Ensure auth is initialized
     
-    // 4) Listen for keyboard shortcut commands
-    chrome.commands.onCommand.addListener(handleCommand);
+    isSessionActive = true;
+    console.log('[Background] Services initialized');
     
-    // 5) Listen for alarms to trigger cold storage sync
-    chrome.alarms.onAlarm.addListener(handleAlarm);
-
-    // If user is authenticated, proceed with full functionality
-    if (isAuthenticated) {
-      await initializeServices();
-    } else {
-      console.log('[DORY] Not authenticated => extension in limited mode');
-    }
-  } catch (err) {
-    console.error('[DORY] Initialization error:', err);
+    // 3. Set up idle check interval (delegated to services via background API)
+    idleCheckInterval = setInterval(checkSessionInactivity, 60000); // Check every minute
+    
+    // 4. Initialize cold storage sync scheduler
+    setupScheduledTasks();
+    
+    // 5. Inject global search into existing tabs
+    injectGlobalSearchIntoExistingTabs();
+  } catch (error) {
+    console.error('[Background] Services initialization error:', error);
     updateIcon(false);
   }
 }
 
-/**
- * Handle Chrome alarms for scheduled tasks
- */
-async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
-  console.log(`[DORY] Alarm triggered: ${alarm.name}`);
-  
-  if (alarm.name === 'doryColdStorageSync') {
-    try {
-      // Make sure the user is authenticated before syncing
-      const isAuthenticated = await checkAuthDirect();
-      if (!isAuthenticated) {
-        console.log('[DORY] Skipping cold storage sync: user not authenticated');
-        return;
-      }
-      
-      // Get the last sync time for logging
-      const store = await chrome.storage.local.get('lastColdStorageSync');
-      const lastSyncTime = store.lastColdStorageSync ? new Date(store.lastColdStorageSync) : 'never';
-      console.log(`[DORY] Starting cold storage sync from alarm trigger. Last sync: ${lastSyncTime}`);
-      
-      // Check database state before sync
-      try {
-        const db = await getDB();
-        const pageCount = await db.pages.count();
-        const visitCount = await db.visits.count();
-        const sessionCount = await db.sessions.count();
-        console.log(`[DORY] Database state before sync - Pages: ${pageCount}, Visits: ${visitCount}, Sessions: ${sessionCount}`);
-      } catch (dbErr) {
-        console.warn('[DORY] Could not count database records:', dbErr);
-      }
-      
-      // Perform the sync
-      const startTime = Date.now();
-      const syncer = new ColdStorageSync('alarm');
-      await syncer.performSync();
-      const syncDuration = Date.now() - startTime;
-      
-      console.log(`[DORY] Cold storage sync completed successfully in ${syncDuration}ms`);
-      
-      // Also refresh clusters while we're at it (piggyback on the existing sync)
-      try {
-        console.log('[DORY] Starting cluster fetch after cold storage sync');
-        const result = await getClusterSuggestions({ forceRefresh: true });
-        console.log(`[DORY] Cluster fetch completed successfully: ${result.current.length} current clusters`);
-      } catch (clusterErr) {
-        console.error('[DORY] Error fetching clusters:', clusterErr);
-      }
-    } catch (error) {
-      console.error('[DORY] Error during cold storage sync:', error);
-      
-      // Report sync error to browser console clearly
-      console.error('==========================================');
-      console.error('DORY COLD STORAGE SYNC FAILED');
-      console.error('Please check authentication and network status');
-      console.error('Error details:', error);
-      console.error('==========================================');
-    }
-  }
-}
+// -------------------- Command Handling --------------------
 
-/** Set up database, event streaming, session watchers, etc. */
-async function initializeServices() {
-  try {
-    await initDexieSystem();
-
-    // +++ Initialize localRanker here +++
-    try {
-      await localRanker.initialize();
-      console.log('[DORY] AdvancedLocalRanker initialized.');
-    } catch (rankerError) {
-        console.error('[DORY] Failed to initialize AdvancedLocalRanker:', rankerError);
-        // Continue initialization even if ranker fails?
-    }
-    // +++ End localRanker init +++
-
-    // Start a new session, potentially reusing a recent one
-    const sid = await startNewSession(SESSION_IDLE_THRESHOLD);
-    isSessionActive = true;
-    console.log('[DORY] Session active =>', sid);
-
-    // Initialize event streaming
-    await initEventService();
-    console.log('[DORY] Event streaming init done');
-
-    // Initialize cold storage sync scheduler (every 5 minutes)
-    ColdStorageSync.initializeScheduling();
-    console.log('[DORY] Cold storage sync scheduled for 5-minute intervals');
-
-    // Start idle check
-    idleCheckInterval = setInterval(checkSessionInactivity, 60_000);
-  } catch (error) {
-    console.error('[DORY] Services initialization error:', error);
-  }
-}
-
-/**
- * Handler for extension icon clicks: opens the side panel.
- */
-async function handleExtIconClick(tab: chrome.tabs.Tab): Promise<void> {
-  if (!tab.id) {
-    console.error('[DORY] No tab ID => cannot interact with tab');
-    return;
-  }
-
-  // Open the side panel
-  try {
-    console.log('[DORY] Opening side panel for authentication');
-    await chrome.sidePanel.open({ tabId: tab.id });
-  } catch (err) {
-    console.error('[DORY] Error opening side panel:', err);
-  }
-}
-
-/**
- * Handle keyboard shortcut commands
- */
-async function handleCommand(command: string): Promise<void> {
-  console.log(`[DORY] Command received: ${command}`);
+// Handle keyboard shortcut commands
+chrome.commands.onCommand.addListener(async (command) => {
+  console.log(`[Background] Command received: ${command}`);
   
   if (command === 'activate-global-search') {
-    // Check if global search is enabled
-    if (!ENABLE_GLOBAL_SEARCH) {
-      console.log('[DORY] Global search is disabled via configuration');
-      return;
-    }
     
-    // Get the active tab
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tabs || !tabs[0] || !tabs[0].id) {
-      console.error('[DORY] No active tab found');
+      console.error('[Background] No active tab found');
       return;
     }
     
     const tabId = tabs[0].id;
+    const url = tabs[0].url;
     
-    try {
-      // Check if the content script is present
-      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
-      console.log('[DORY] Content script responded, showing search overlay');
-      // Show the search overlay
-      await chrome.tabs.sendMessage(tabId, { type: 'SHOW_SEARCH_OVERLAY' });
-    } catch (error) {
-      console.error('[DORY] No content script in tab:', tabId, error);
-      // Inject the content script and then show the overlay
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: ['src/content/globalSearch.tsx']
-        });
-        
-        // Small delay to ensure script is loaded
-        setTimeout(async () => {
-          try {
-            await chrome.tabs.sendMessage(tabId, { type: 'SHOW_SEARCH_OVERLAY' });
-          } catch (err) {
-            console.error('[DORY] Failed to show search overlay after injection:', err);
-          }
-        }, 300);
-      } catch (injectionError) {
-        console.error('[DORY] Failed to inject content script:', injectionError);
-      }
-    }
-  } else if (command === 'toggle-side-panel') {
-    // Get the active tab
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs || !tabs[0] || !tabs[0].id) {
-      console.error('[DORY] No active tab found for side panel');
+    // Skip injection for non-web pages
+    if (!url || !isWebPage(url)) {
+      console.log(`[Background] Skipping global search on non-web page: ${url}`);
       return;
     }
     
-    // Open the side panel for the active tab
+    // Show search overlay using the commands API via Comlink
+    try {
+      const success = await backgroundApi.commands.showSearchOverlay(tabId, 'toggle');
+      if (success) {
+        console.log(`[Background] Search overlay toggled for tab ${tabId}`);
+      } else {
+        console.warn(`[Background] Failed to toggle search overlay for tab ${tabId}`);
+      }
+    } catch (error) {
+      console.error(`[Background] Error toggling search overlay:`, error);
+    }
+  } 
+  else if (command === 'toggle-side-panel') {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || !tabs[0] || !tabs[0].id) {
+      console.error('[Background] No active tab found for side panel');
+      return;
+    }
+    
     try {
       await chrome.sidePanel.open({ tabId: tabs[0].id });
-      console.log('[DORY] Side panel opened via keyboard shortcut');
+      console.log('[Background] Side panel opened via keyboard shortcut');
     } catch (err) {
-      console.error('[DORY] Error opening side panel:', err);
+      console.error('[Background] Error opening side panel:', err);
     }
   }
-}
-
-// -------------------- Session Idle Check --------------------
-async function checkSessionInactivity() {
-  try {
-    const ended = await checkSessionIdle(SESSION_IDLE_THRESHOLD);
-    if (ended) {
-      isSessionActive = false;
-      console.log('[DORY] Session ended due to inactivity');
-    }
-  } catch (err) {
-    console.error('[DORY] Error checking session inactivity:', err);
-  }
-}
-
-/**
- * Ensures we have an active session. If not, tries to start one.
- * Uses a guard (isStartingSession) to avoid double-starting sessions concurrently.
- */
-async function ensureActiveSession(): Promise<boolean> {
-  if (isSessionActive) return true;
-  if (isStartingSession) return isSessionActive;
-
-  isStartingSession = true;
-  try {
-    const isAuthenticated = await checkAuthDirect();
-    if (!isAuthenticated) {
-      console.log('[DORY] Cannot start session: user not authenticated');
-      return false;
-    }
-    if (!isSessionActive) {
-      // Pass the idle threshold to potentially reuse a recent session
-      const newId = await startNewSession(SESSION_IDLE_THRESHOLD);
-      isSessionActive = true;
-      console.log('[DORY] Session active =>', newId);
-    }
-  } catch (err) {
-    console.error('[DORY] Error ensuring active session:', err);
-    return false;
-  } finally {
-    isStartingSession = false;
-  }
-  return isSessionActive;
-}
-
-// -------------------- Register Handlers --------------------
-function registerMessageHandlers() {
-  // ACTIVITY_EVENT
-  messageRouter.registerHandler(MessageType.ACTIVITY_EVENT, async (msg, sender) => {
-    const { isActive, pageUrl, duration } = msg.data;
-    console.log('[DORY] ACTIVITY_EVENT =>', msg.data);
-
-    if (isActive) {
-      const sessionActive = await ensureActiveSession();
-      if (!sessionActive) return false;
-    }
-    if (pageUrl && duration > 0) {
+  else if (command === 'toggle-cluster-view') {
+    // Find the active New Tab page (if any)
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0] && tabs[0].id && tabs[0].url?.startsWith('chrome://newtab')) {
       try {
-        await updateActiveTimeForPage(pageUrl, duration);
-        await updateSessionActivityTime();
-
-        const tabId = sender.tab?.id;
-        if (tabId !== undefined && tabToVisitId[tabId]) {
-          const visitId = tabToVisitId[tabId];
-          await updateVisitActiveTime(visitId, duration);
-
-          const sessId = await getCurrentSessionId();
-          const pageId = tabToPageId[tabId];
-          if (sessId && pageId) {
-            await logEvent({
-              operation: EventType.ACTIVE_TIME_UPDATED,
-              sessionId: String(sessId),
-              timestamp: Date.now(),
-              data: { pageId, visitId, duration, isActive }
-            });
-          }
-        }
-      } catch (error) {
-        console.error('[DORY] Error updating activity info:', error);
-      }
-    }
-    return true;
-  });
-
-  // EXTRACTION_COMPLETE
-  messageRouter.registerHandler(MessageType.EXTRACTION_COMPLETE, async (msg) => {
-    console.log('[DORY] EXTRACTION_COMPLETE =>', msg.data);
-    const { title, url, timestamp } = msg.data;
-
-    // --- Add Filter Check ---
-    if (!shouldRecordHistoryEntry(url, title, 'EXTRACTION_COMPLETE')) {
-        console.log('[DORY] Filtered EXTRACTION_COMPLETE => skipping page creation =>', url);
-        return true; // Acknowledge message, but do nothing
-    }
-    // --- End Filter Check ---
-
-    const sessionActive = await ensureActiveSession();
-    if (!sessionActive) return false;
-
-    try {
-      const pageId = await createOrGetPage(url, title, timestamp);
-      const sessId = await getCurrentSessionId();
-      console.log(
-        '[DORY] ✅ Extraction =>',
-        title,
-        url,
-        ' => pageId=',
-        pageId,
-        'session=',
-        sessId
-      );
-    } catch (err) {
-      console.error('[DORY] Error during extraction complete handler:', err);
-    }
-    return true;
-  });
-
-  // EXTRACTION_ERROR
-  messageRouter.registerHandler(MessageType.EXTRACTION_ERROR, async (msg) => {
-    console.error('[DORY] ❌ EXTRACTION FAILED =>', msg.data);
-    return true;
-  });
-
-  // CONTENT_DATA
-  messageRouter.registerHandler(MessageType.CONTENT_DATA, (msg, _sender, sendResponse) => {
-    console.log('[DORY] Received CONTENT_DATA');
-    try {
-      // 1. Store the content data (we're going to just use a variable for now, but you could use chrome.storage if needed)
-      const contentData = msg.data as ContentDataMessage;
-      
-      // 2. Immediately respond to the content script
-      sendResponse({ status: 'received', success: true });
-      
-      // 3. Process content data in a separate task (using an IIFE)
-      (async () => {
-        try {
-          console.log('[DORY] Processing content data in background task');
-          await sendContentEvent({
-            pageId: contentData.pageId,
-            visitId: contentData.visitId,
-            url: contentData.url,
-            title: contentData.title,
-            markdown: contentData.markdown,
-            metadata: contentData.metadata,
-            sessionId: contentData.sessionId
-          });
-          console.log('[DORY] Content data sent to API successfully');
-        } catch (error) {
-          console.error('[DORY] Error sending content data to API:', error);
-          // Could implement retry logic here if needed
-        }
-      })();
-      
-      // 4. Return false since we already called sendResponse
-      return false;
-    } catch (error) {
-      console.error('[DORY] Error handling CONTENT_DATA message:', error);
-      sendResponse({ status: 'error', error: String(error) });
-      return false;
-    }
-  });
-
-  // AUTH_REQUEST => user clicked "Sign in" in the side panel => do OAuth
-  messageRouter.registerHandler(MessageType.AUTH_REQUEST, async () => {
-    console.log('[DORY] AUTH_REQUEST => starting OAuth flow');
-    openOAuthPopup();
-    return true;
-  });
-
-  // AUTH_RESULT => user changed auth state
-  messageRouter.registerHandler(MessageType.AUTH_RESULT, async (msg) => {
-    const { isAuthenticated } = msg.data;
-    await handleAuthStateChange(isAuthenticated);
-    return true;
-  });
-
-  // Handle side panel ready message
-  messageRouter.registerHandler(MessageType.SIDEPANEL_READY, async (msg, sender) => {
-    console.log('[DORY] SIDEPANEL_READY => side panel initialized');
-    try {
-      // If from a tab, respond with current auth state
-      if (sender.tab?.id) {
-        const isAuthenticated = await checkAuthDirect();
-        chrome.tabs.sendMessage(
-          sender.tab.id,
-          createMessage(MessageType.AUTH_RESULT, { isAuthenticated }, 'background')
-        );
-      }
-    } catch (err) {
-      console.error('[DORY] Error handling SIDEPANEL_READY:', err);
-    }
-    return true;
-  });
-
-  // API_PROXY_REQUEST => content script calls backend with special headers
-  messageRouter.registerHandler(
-    MessageType.API_PROXY_REQUEST,
-    async (msg, _sender, sendResponse) => {
-      console.log('[DORY] API_PROXY_REQUEST received');
-      try {
-        const requestData = msg.data as ApiProxyRequestData;
-        // retrieve token from storage
-        const storage = await chrome.storage.local.get(['auth_token']);
-        const authToken = storage.auth_token;
-
-        // build headers
-        const headers: Record<string, string> = {
-          ...(requestData.headers || {}),
-          'Content-Type': 'application/json'
-        };
-        if (authToken) {
-          headers['Authorization'] = `Bearer ${authToken}`;
-        }
-
-        console.log(
-          `[DORY] Proxy fetch => ${requestData.method || 'GET'}: ${requestData.url}`
-        );
-        const response = await fetch(requestData.url, {
-          method: requestData.method || 'GET',
-          headers,
-          body: requestData.body ? JSON.stringify(requestData.body) : undefined,
-          credentials: 'include'
-        });
-
-        let responseData;
-        try {
-          responseData = await response.json();
-        } catch (e) {
-          responseData = await response.text();
-        }
-
-        sendResponse(
-          createMessage(
-            MessageType.API_PROXY_RESPONSE,
-            {
-              status: response.status,
-              ok: response.ok,
-              data: responseData
-            } as ApiProxyResponseData,
-            'background'
-          )
-        );
-        return true;
-      } catch (error: any) {
-        console.error('[DORY] API Proxy error:', error);
-        sendResponse(
-          createMessage(
-            MessageType.API_PROXY_RESPONSE,
-            { status: 0, ok: false, error: error.message },
-            'background'
-          )
-        );
-        return true;
-      }
-    }
-  );
-
-  // Default
-  messageRouter.setDefaultHandler((msg, _sender, resp) => {
-    console.warn('[DORY] Unhandled message =>', msg);
-    resp({ error: 'Unhandled' });
-  });
-}
-
-// -------------------- Session & Cleanup --------------------
-function cleanupServices(): void {
-  console.log('[DORY] Cleaning up services...');
-  // End the current session if one is active
-  if (isSessionActive) {
-    endCurrentSession().catch(err => {
-      console.error('[DORY] Error ending session:', err);
-    });
-  }
-  // Clear the idle interval
-  if (idleCheckInterval) {
-    clearInterval(idleCheckInterval);
-    idleCheckInterval = null;
-  }
-  isSessionActive = false;
-
-  // End any visits for open tabs
-  Object.keys(tabToVisitId).forEach(async (tabIdStr) => {
-    const tabId = parseInt(tabIdStr, 10);
-    await endCurrentVisit(tabId);
-  });
-  console.log('[DORY] Services cleaned up');
-}
-
-/** Called whenever user logs in or logs out */
-async function handleAuthStateChange(isAuthenticated: boolean) {
-  updateIcon(isAuthenticated);
-  if (isAuthenticated) {
-    console.log('[DORY] Auth success => initializing services');
-    if (!isSessionActive) {
-      await initializeServices();
-    }
-  } else {
-    console.log('[DORY] Auth false => cleaning up services');
-    cleanupServices();
-  }
-  
-  // Broadcast AUTH_RESULT message to all clients (including side panel)
-  chrome.runtime.sendMessage(
-    createMessage(MessageType.AUTH_RESULT, { isAuthenticated }, 'background')
-  );
-  console.log(`[DORY] Broadcasting AUTH_RESULT: isAuthenticated=${isAuthenticated}`);
-}
-
-async function endCurrentVisit(tabId: number, visitId?: string) {
-  const visitIdToEnd = visitId || tabToVisitId[tabId];
-  if (!visitIdToEnd) {
-    return;
-  }
-  console.log(`[DORY] Ending visit => tab: ${tabId}, visitId: ${visitIdToEnd}`);
-  try {
-    const now = Date.now();
-    await endVisit(visitIdToEnd, now);
-
-    // Optionally log an event
-    const db = await getDB();
-    const visit = await db.visits.get(visitIdToEnd);
-    const sessId = await getCurrentSessionId();
-    if (sessId && visit) {
-      const timeSpent = Math.round((now - visit.startTime) / 1000);
-      const userId = await getCurrentUserId();
-      await logEvent({
-        operation: EventType.PAGE_VISIT_ENDED,
-        sessionId: String(sessId),
-        timestamp: now,
-        userId: userId || undefined,
-        data: {
-          pageId: String(visit.pageId),
-          visitId: visitIdToEnd,
-          url: tabToCurrentUrl[tabId] || '',
-          timeSpent
-        }
-      });
-    }
-  } catch (e) {
-    console.error('[DORY] endVisit error =>', e);
-  }
-}
-
-// -------------------- OAuth Flow --------------------
-function openOAuthPopup() {
-  console.log('[DORY] Starting OAuth with chrome.identity.launchWebAuthFlow...');
-  const manifest = chrome.runtime.getManifest();
-  const clientId = manifest.oauth2?.client_id;
-  const scopes = manifest.oauth2?.scopes || [];
-
-  if (!clientId) {
-    console.error('[DORY] OAuth client ID not found in manifest');
-    return;
-  }
-
-  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  authUrl.searchParams.append('client_id', clientId);
-  authUrl.searchParams.append('response_type', 'id_token');
-  authUrl.searchParams.append('redirect_uri', `https://${chrome.runtime.id}.chromiumapp.org/`);
-  authUrl.searchParams.append('scope', scopes.join(' '));
-  authUrl.searchParams.append('nonce', Math.random().toString(36).substring(2));
-  authUrl.searchParams.append('prompt', 'consent');
-
-  chrome.identity.launchWebAuthFlow(
-    { url: authUrl.toString(), interactive: true },
-    async (responseUrl) => {
-      if (chrome.runtime.lastError) {
-        console.error('[DORY] OAuth error =>', chrome.runtime.lastError.message);
-        return;
-      }
-      if (!responseUrl) {
-        console.warn('[DORY] No response URL from Google');
-        return;
-      }
-
-      // Extract ID token from the fragment
-      const urlFragment = responseUrl.split('#')[1];
-      const params = new URLSearchParams(urlFragment);
-      const idToken = params.get('id_token');
-      if (!idToken) {
-        console.error('[DORY] No ID token in OAuth response');
-        return;
-      }
-
-      // Direct fetch approach
-      try {
-        const success = await authenticateWithGoogleIdTokenDirect(idToken);
-        console.log('[DORY] authenticateWithGoogleIdTokenDirect =>', success);
-        if (success) {
-          await handleAuthStateChange(true);
-        } else {
-          console.warn('[DORY] Backend auth failed');
-        }
+        await chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE_CLUSTER_VIEW' });
+        console.log('[Background] Sent TOGGLE_CLUSTER_VIEW message to New Tab');
       } catch (err) {
-        console.error('[DORY] Backend auth error =>', err);
+        console.error('[Background] Failed to send TOGGLE_CLUSTER_VIEW message:', err);
       }
+    } else {
+      console.log('[Background] toggle-cluster-view command ignored: Not on New Tab page.');
     }
-  );
-}
+  }
+});
 
-// -------------------- Helper Functions (Extracted) --------------------
+// -------------------- Navigation & History Tracking --------------------
 
 /**
- * Retrieves the title for a given tab ID.
+ * Helper to get the title for a given tab
  */
 async function getTabTitle(tabId: number): Promise<string | null> {
   try {
-    const t = await chrome.tabs.get(tabId);
-    return t.title || null;
+    const tab = await chrome.tabs.get(tabId);
+    return tab.title || null;
   } catch (err) {
-    console.warn(`[DORY] Failed to get title for tab ${tabId}:`, err);
+    console.warn(`[Background] Failed to get title for tab ${tabId}:`, err);
     return null;
   }
 }
 
 /**
- * Starts a new visit record and updates tab state maps.
- * Assumes an active session exists.
+ * End a visit and update state tracking
+ */
+async function endCurrentVisit(tabId: number, visitId?: string): Promise<void> {
+  const visitIdToEnd = visitId || tabToVisitId[tabId];
+  if (!visitIdToEnd) {
+    return;
+  }
+  
+  console.log(`[Background] Ending visit => tab: ${tabId}, visitId: ${visitIdToEnd}`);
+  
+  try {
+    const now = Date.now();
+    // Use navigation service through backgroundApi - it already handles tracking internally
+    await backgroundApi.navigation.endVisit(visitIdToEnd, now);
+  } catch (error) {
+    console.error('[Background] Error ending visit:', error);
+  }
+}
+
+/**
+ * Start a new visit and update tab state
  */
 async function startNewVisit(
   tabId: number,
@@ -731,466 +197,394 @@ async function startNewVisit(
   fromPageId?: string,
   isBackNav?: boolean
 ): Promise<string> {
-  const sessId = await getCurrentSessionId();
-  if (!sessId) {
-    console.error('[DORY] Cannot start visit, no active session ID found.');
-    // Potentially try ensureActiveSession() here again, or throw
-    throw new Error('No active session found for startNewVisit');
+  try {
+    // Get session ID through navigation service
+    const sessionId = await backgroundApi.navigation.getCurrentSessionId();
+    
+    if (!sessionId) {
+      console.error('[Background] Cannot start visit: no active session');
+      throw new Error('No active session found for startNewVisit');
+    }
+    
+    console.log(`[Background] Starting new visit: tab=${tabId}, page=${pageId}, from=${fromPageId}`);
+    
+    // Start visit through navigation service
+    const visitId = await backgroundApi.navigation.startVisit(pageId, sessionId, fromPageId, isBackNav);
+    
+    // Update local state tracking
+    tabToVisitId[tabId] = visitId;
+    
+    // Navigation service already tracks visit starts internally
+    
+    console.log(`[Background] New visit started: ${visitId}`);
+    return visitId;
+  } catch (error) {
+    console.error(`[Background] Error starting visit to page ${pageId}:`, error);
+    throw error;
   }
-
-  console.log(`[DORY] startNewVisit => tabId=${tabId}, pageId=${pageId}, fromPageId=${fromPageId}, isBackNav=${isBackNav}`);
-
-  const visitId = await startVisit(pageId, sessId, fromPageId, isBackNav);
-  tabToVisitId[tabId] = visitId; // Ensure visitId map is updated here
-  // tabToPageId should be updated *before* calling startNewVisit
-  
-  console.log(`[DORY] => New visit started: ${visitId}`);
-  return visitId;
 }
 
-// -------------------- Unified Navigation Event Processor --------------------
-
 /**
- * Processes navigation events from onCommitted, onHistoryStateUpdated, 
- * and onReferenceFragmentUpdated.
- * Handles ending previous visits, creating page/visit records, and updating state.
+ * Process a navigation event from any source (committed, history state, fragment)
  */
 async function processNavigationEvent(details: {
   tabId: number;
   url: string;
   timeStamp: number;
-  frameId?: number; // Optional frameId
-  transitionType?: string; // Use basic string type
-  transitionQualifiers?: string[]; // Use basic string array type
-}) {
-  // Ignore non-main frames if frameId is available
+  frameId?: number;
+  transitionType?: string;
+  transitionQualifiers?: string[];
+}): Promise<void> {
+  // Skip non-main frames
   if (details.frameId !== undefined && details.frameId !== 0) return;
-
+  
   const { tabId, url, timeStamp } = details;
-
-  // Ignore invalid tab IDs or basic non-web schemes (initial quick check)
+  
+  // Basic validity checks
   if (tabId < 0 || !isWebPage(url)) {
-    console.log(`[DORY] Skipping navigation event: Invalid tabId (${tabId}) or non-web page (${url})`);
+    console.log(`[Background] Skipping navigation: invalid tab or non-web page (${url})`);
+    return;
+  }
+  
+  try {
+    // Get context for the new page
+    const title = (await getTabTitle(tabId)) || url;
+    
+    // Get previous state
+    const previousVisitId = tabToVisitId[tabId];
+    const pageIdFromPreviousVisit = tabToPageId[tabId];
+    const previousUrl = tabToCurrentUrl[tabId];
+    
+    // Only process if URL has meaningfully changed
+    if (!previousUrl || previousUrl !== url) {
+      console.log(`[Background] Navigation in tab ${tabId}: ${previousUrl || 'None'} → ${url}`);
+      
+      // End previous visit if it existed
+      if (previousVisitId) {
+        await endCurrentVisit(tabId, previousVisitId);
+      }
+      
+      // Clear current visit state
+      delete tabToVisitId[tabId];
+      delete tabToPageId[tabId];
+      
+      // Check if the new page should be recorded
+      const isValid = shouldRecordHistoryEntry(url, title, 'processNavigationEvent');
+      
+      // Always update the current URL
+      tabToCurrentUrl[tabId] = url;
+      
+      // Skip invalid pages
+      if (!isValid) {
+        console.log(`[Background] Filtered navigation: skipping recording for ${url}`);
+        delete extractionRequestedForVisitId[tabId];
+        return;
+      }
+      
+      // For valid pages, check auth and session
+      console.log(`[Background] Valid navigation: recording ${url}`);
+      const authState = authService.getAuthState();
+      
+      if (!authState.isAuthenticated) {
+        console.warn(`[Background] Skipping valid navigation: not authenticated`);
+        return;
+      }
+      
+      // Ensure session is active
+      const sessionActive = await backgroundApi.navigation.ensureActiveSession();
+      if (!sessionActive) {
+        console.warn(`[Background] Skipping valid navigation: no active session`);
+        return;
+      }
+      
+      // Create/get page record
+      const newPageId = await backgroundApi.navigation.createOrGetPage(url, title, timeStamp);
+      
+      // Create edge if applicable
+      const isBackNav = details.transitionQualifiers?.includes('forward_back') || false;
+      const sessionId = await backgroundApi.navigation.getCurrentSessionId();
+      
+      if (sessionId && pageIdFromPreviousVisit && pageIdFromPreviousVisit !== newPageId) {
+        try {
+          console.log(`[Background] Creating edge: ${pageIdFromPreviousVisit} → ${newPageId}`);
+          await backgroundApi.navigation.createOrUpdateEdge(
+            pageIdFromPreviousVisit,
+            newPageId,
+            sessionId,
+            timeStamp,
+            isBackNav
+          );
+        } catch (error) {
+          console.error(`[Background] Failed to create edge:`, error);
+        }
+      }
+      
+      // Start new visit
+      const newVisitId = await startNewVisit(tabId, newPageId, pageIdFromPreviousVisit, isBackNav);
+      
+      // Update state for new visit
+      tabToPageId[tabId] = newPageId;
+      tabToVisitId[tabId] = newVisitId;
+      
+      console.log(`[Background] State updated: pageId=${newPageId}, visitId=${newVisitId}`);
+      
+      // Trigger content extraction if needed
+      if (extractionRequestedForVisitId[tabId] !== newVisitId) {
+        console.log(`[Background] Requesting content extraction for visit ${newVisitId}`);
+        try {
+          // Request content extraction through API
+          await backgroundApi.content.extractAndSendContent(tabId, {
+            pageId: newPageId,
+            visitId: newVisitId,
+            sessionId: sessionId
+          });
+          extractionRequestedForVisitId[tabId] = newVisitId;
+        } catch (error) {
+          console.error(`[Background] Content extraction request failed:`, error);
+        }
+      }
+    } else {
+      console.log(`[Background] Skipping navigation: URL unchanged (${url})`);
+    }
+  } catch (error) {
+    console.error(`[Background] Error processing navigation:`, error);
+  }
+}
+
+// -------------------- Navigation Event Listeners --------------------
+
+// Process all committed main-frame navigations
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+  await processNavigationEvent(details);
+});
+
+// Process SPA navigations
+chrome.webNavigation.onHistoryStateUpdated.addListener(async (details) => {
+  await processNavigationEvent(details);
+});
+
+// Process hash fragment navigations
+chrome.webNavigation.onReferenceFragmentUpdated.addListener(async (details) => {
+  await processNavigationEvent(details);
+});
+
+// Handle new tabs created from existing tabs
+chrome.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
+  const { sourceTabId, tabId, timeStamp, url } = details;
+  console.log(`[Background] Created navigation target: source=${sourceTabId}, target=${tabId}, url=${url}`);
+  
+  // Check if target URL should be recorded
+  if (!shouldRecordHistoryEntry(url, null, 'onCreatedNavigationTarget')) {
+    console.log(`[Background] Filtered navigation target: skipping ${url}`);
+    return;
+  }
+  
+  // Check auth
+  const authState = authService.getAuthState();
+  if (!authState.isAuthenticated) return;
+  
+  try {
+    // Ensure active session
+    const sessionActive = await backgroundApi.navigation.ensureActiveSession();
+    if (!sessionActive) {
+      console.warn(`[Background] Skipping navigation target: no active session`);
+      return;
+    }
+    
+    // Track relationship between source and target tabs
+    const oldUrl = tabToCurrentUrl[sourceTabId];
+    // Ensure sourceTitle is always a string, with a fallback to URL or a default value
+    const sourceTitle = (await getTabTitle(sourceTabId)) || oldUrl || 'Unknown Page';
+    
+    if (oldUrl && shouldRecordHistoryEntry(oldUrl, sourceTitle, 'onCreatedNavigationTarget_SourceCheck')) {
+      // Create/get page for source URL
+      const fromPageId = await backgroundApi.navigation.createOrGetPage(oldUrl, sourceTitle, timeStamp);
+      // Store pending navigation state
+      tabToCurrentUrl[tabId] = `pending:${fromPageId}`;
+      console.log(`[Background] Stored pending navigation from pageId: ${fromPageId}`);
+    } else {
+      console.log(`[Background] Source tab URL unknown or invalid (${oldUrl})`);
+      tabToCurrentUrl[tabId] = url;
+    }
+  } catch (error) {
+    console.error(`[Background] Error handling navigation target:`, error);
+  }
+});
+
+// -------------------- Browser Event Handlers --------------------
+
+// Handle extension icon clicks to open the side panel
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab.id) {
+    console.error('[Background] No tab ID => cannot interact with tab');
     return;
   }
 
   try {
-    // Get context for the *new* potential page first
-    const title = (await getTabTitle(tabId)) || url; // Use URL as fallback title
-
-    // --- State Update & Filtering Logic (Revised Flow) ---
-
-    // 1. Get info about the *previous* state for this tab
-    const previousVisitId = tabToVisitId[tabId];
-    const pageIdFromPreviousVisit = tabToPageId[tabId]; // Might be undefined if last page was invalid
-    const previousUrl = tabToCurrentUrl[tabId]; // The actual URL we are navigating away from
-
-    // Only process if the URL has meaningfully changed
-    if (!previousUrl || previousUrl !== url) {
-      console.log(`[DORY] Navigation detected for tab ${tabId}: ${previousUrl || 'None'} => ${url}`);
-      
-      // 2. End the previous visit *if* it existed (was valid)
-      if (previousVisitId) {
-          await endCurrentVisit(tabId, previousVisitId); // Pass previousVisitId for clarity
-      }
-      
-      // 3. Always clear the current *valid visit* state for the tab before checking the new page
-      // This ensures we don't link across invalid pages
-      delete tabToVisitId[tabId];
-      delete tabToPageId[tabId];
-      // Keep tabToCurrentUrl updated below based on validity
-      
-      // 4. Check validity of the *new* page
-      const isValid = shouldRecordHistoryEntry(url, title, 'processNavigationEvent');
-      
-      // 5. Update the actual current URL being tracked
-      tabToCurrentUrl[tabId] = url;
-
-      if (!isValid) {
-        // 6a. If new page is invalid, stop processing here.
-        // Visit state remains cleared, tabToCurrentUrl is updated.
-        console.log(`[DORY] Filtered navigation event => skipping recording => ${url}`);
-        // Clear extraction requested state if we land on an invalid page
-        delete extractionRequestedForVisitId[tabId]; 
-        return; 
-      }
-
-      // 6b. If new page is valid, proceed to record it
-      console.log(`[DORY] Valid navigation event => recording => ${url}`);
-      const isAuthenticated = await checkAuthDirect();
-      const sessionActive = await ensureActiveSession();
-
-      if (!isAuthenticated || !sessionActive) {
-          console.warn(`[DORY] Skipping valid navigation event for ${url}: Not authenticated or no active session.`);
-          return; // Stop processing if auth/session check fails
-      }
-
-      // 7. Create/Get PageRecord for the *new* valid URL
-      const newPageId = await createOrGetPage(url, title, timeStamp);
-      
-      // 8. Create EdgeRecord *if* the previous page had a valid visit
-      const isBackNav = details.transitionQualifiers?.includes('forward_back') || false;
-      const sessionId = await getCurrentSessionId(); // Should be valid due to ensureActiveSession check
-      
-      if (sessionId && pageIdFromPreviousVisit && pageIdFromPreviousVisit !== newPageId) {
-          try {
-              console.log(`[DORY] Creating/updating edge: ${pageIdFromPreviousVisit} -> ${newPageId}`);
-              await createOrUpdateEdge(pageIdFromPreviousVisit, newPageId, sessionId, timeStamp, isBackNav);
-          } catch (edgeError) {
-              console.error(`[DORY] Failed to create/update edge for ${pageIdFromPreviousVisit} -> ${newPageId}:`, edgeError);
-          }
-      }
-
-      // 9. Start the new VisitRecord (pass pageIdFromPreviousVisit, which is undefined if prev page was invalid)
-      const newVisitId = await startNewVisit(tabId, newPageId, pageIdFromPreviousVisit, isBackNav); 
-
-      // 10. Update state maps for the *new valid visit*
-      tabToPageId[tabId] = newPageId; 
-      tabToVisitId[tabId] = newVisitId;
-
-      console.log(`[DORY] => State updated for valid visit: pageId=${newPageId}, visitId=${newVisitId}`);
-
-      // --- Trigger Extraction Logic (Moved Here) ---
-      console.log(`[DORY] Checking extraction trigger: sessionId=${sessionId}, requestedForVisit=${extractionRequestedForVisitId[tabId]}, newVisitId=${newVisitId}`);
-      if (sessionId && extractionRequestedForVisitId[tabId] !== newVisitId) {
-        console.log(`[DORY] Requesting extraction for new valid visit: ${newVisitId}`);
-        extractionRequestedForVisitId[tabId] = newVisitId; // Mark as requested
-
-        // Function to attempt sending messages, with up to 2 retries for connection error
-        const attemptSendMessage = (attemptNumber = 0) => { // Start with attempt 0
-          const attemptLabel = attemptNumber === 0 ? 'Initial' : `Retry ${attemptNumber}`;
-          const MAX_ATTEMPTS = 3; // Initial + 2 Retries
-
-          console.log(`[DORY] (${attemptLabel} attempt) Sending SET_EXTRACTION_CONTEXT to tab ${tabId}`);
-          chrome.tabs.sendMessage(
-            tabId,
-            createMessage(MessageType.SET_EXTRACTION_CONTEXT, { pageId: newPageId, visitId: newVisitId, sessionId }, 'background'),
-            {}, // Options
-            (response) => { // Callback for SET_EXTRACTION_CONTEXT
-              console.log(`[DORY] Callback received for SET_EXTRACTION_CONTEXT (${attemptLabel}, tab ${tabId})`);
-
-              if (chrome.runtime.lastError) {
-                const errorMessage = chrome.runtime.lastError.message || '';
-                // Check specifically for the connection error and if we haven't exceeded max attempts
-                if (errorMessage.includes('Receiving end does not exist') && attemptNumber < MAX_ATTEMPTS - 1) {
-                  const nextAttempt = attemptNumber + 1;
-                  console.warn(`[DORY] Connection error on ${attemptLabel} for SET_EXTRACTION_CONTEXT (tab ${tabId}, visit ${newVisitId}). Retrying (attempt ${nextAttempt}) after 500ms...`);
-                  setTimeout(() => attemptSendMessage(nextAttempt), 500); // Retry after 500ms
-                } else {
-                  // Log other errors or if retries also failed
-                  console.warn(`[DORY] Final error after ${attemptLabel} for SET_EXTRACTION_CONTEXT (tab ${tabId}, visit ${newVisitId}):`, errorMessage);
-                  // Optionally clear extractionRequestedForVisitId here if failure is permanent?
-                  // delete extractionRequestedForVisitId[tabId];
-                }
-              } else {
-                // Success!
-                console.log(`[DORY] SET_EXTRACTION_CONTEXT successful (${attemptLabel}, response: ${JSON.stringify(response)}). Sending TRIGGER_EXTRACTION to tab ${tabId}`);
-                chrome.tabs.sendMessage(
-                  tabId,
-                  createMessage(MessageType.TRIGGER_EXTRACTION, {}, 'background')
-                );
-              }
-            }
-          );
-        };
-
-        // Start the initial attempt (attempt 0)
-        attemptSendMessage();
-
-      } else if (!sessionId) {
-        console.warn(`[DORY] Skipping extraction for new valid visit: sessionId=${sessionId}`);
-      }
-    } else {
-      // console.log(`[DORY] Skipping navigation event for tab ${tabId}: URL unchanged (${url})`);
-    }
-    // --- End State Update & Filtering Logic ---
-
+    console.log('[Background] Opening side panel for authentication');
+    await chrome.sidePanel.open({ tabId: tab.id });
   } catch (err) {
-    console.error(`[DORY] Error processing navigation event for ${url} in tab ${tabId}:`, err);
+    console.error('[Background] Error opening side panel:', err);
   }
-}
-
-// -------------------- Navigation Handlers --------------------
-chrome.webNavigation.onCommitted.addListener(async (details) => {
-  // Process all committed main-frame navigations
-  await processNavigationEvent(details);
 });
 
-chrome.webNavigation.onHistoryStateUpdated.addListener(async (details) => {
-  // Process SPA navigations
-  await processNavigationEvent(details);
-});
+// -------------------- Tab Lifecycle Management --------------------
 
-// Add listener for hash changes
-chrome.webNavigation.onReferenceFragmentUpdated.addListener(async (details) => {
-  // Process hash fragment navigations
-  await processNavigationEvent(details);
-});
-
-// onCreatedNavigationTarget remains separate as it links a *new* tab to a source
-chrome.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
-  const { sourceTabId, tabId, timeStamp, url } = details;
-  console.log('[DORY] onCreatedNavigationTarget =>', { sourceTabId, tabId, url });
-
-  // --- Add Filter Check for Target URL ---
-  // We might not have a reliable title yet, but check URL and basic schemes
-  if (!shouldRecordHistoryEntry(url, null, 'onCreatedNavigationTarget')) {
-      console.log('[DORY] Filtered navigation target => skipping pending state =>', url);
-      return;
-  }
-  // --- End Filter Check ---
-
-  // Basic checks needed (isWebPage is implicitly covered by shouldRecordHistoryEntry now)
-  const isAuthenticated = await checkAuthDirect();
-  if (!isAuthenticated) return;
-
-  // --- Inlined Logic --- 
-  try {
-    const sessionActive = await ensureActiveSession(); // Ensure session exists
-    if (!sessionActive) {
-        console.warn(`[DORY] Skipping onCreatedNavigationTarget for ${url}: Could not ensure active session.`);
-        return;
-    }
-
-    const oldUrl = tabToCurrentUrl[sourceTabId];
-    // Check if the source URL itself is considered valid before creating a page for it
-    const sourceTitle = (await getTabTitle(sourceTabId)) || oldUrl;
-    if (oldUrl && shouldRecordHistoryEntry(oldUrl, sourceTitle, 'onCreatedNavigationTarget_SourceCheck')) { 
-      // Create/get page for the *source* URL only if it's valid
-      const fromPageId = await createOrGetPage(oldUrl, sourceTitle, timeStamp);
-      // Store pending navigation state for the new tab
-      tabToCurrentUrl[tabId] = `pending:${fromPageId}`; 
-      console.log('[DORY] => Stored pending nav from pageId:', fromPageId);
-    } else {
-      console.log(`[DORY] => Source tab URL unknown or invalid (${oldUrl}), cannot link navigation target.`);
-      // Set the new tab's current URL directly so processNavigationEvent doesn't skip it later
-      tabToCurrentUrl[tabId] = url;
-    }
-  } catch (err) {
-    console.error('[DORY] Error in onCreatedNavigationTarget handler:', err);
-  }
-  // --- End Inlined Logic ---
-});
-
-// -------------------- Tabs Lifecycle --------------------
-chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const visitIdToEnd = tabToVisitId[tabId]; // Get visitId before clearing state
-  if (visitIdToEnd) {
-      await endCurrentVisit(tabId, visitIdToEnd);
-  }
+// Handle tab removal
+chrome.tabs.onRemoved.addListener((tabId) => {
+  console.log(`[Background] Tab ${tabId} removed`);
+  
+  // Unregister content extractor for closed tabs
+  backgroundApi.content.unregisterContentExtractor(tabId);
+  
+  // Clean up navigation tracking state
   delete tabToCurrentUrl[tabId];
   delete tabToPageId[tabId];
   delete tabToVisitId[tabId];
-  delete extractionRequestedForVisitId[tabId]; // <<< Clear extraction state
+  delete extractionRequestedForVisitId[tabId];
 });
 
+// Track tab creation
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id !== undefined && tab.url) {
     tabToCurrentUrl[tab.id] = tab.url;
   }
 });
 
-// -------------------- Service Worker Lifecycle --------------------
-self.addEventListener('activate', () => {
-  console.log('[DORY] service worker activated');
-});
+// -------------------- Global Search Integration --------------------
 
-chrome.runtime.onSuspend.addListener(async () => {
-  console.log('[DORY] onSuspend => end session');
-  try {
-    await endCurrentSession();
-    if (idleCheckInterval) {
-      clearInterval(idleCheckInterval);
-    }
-  } catch (err) {
-    console.error('[DORY] Error onSuspend =>', err);
-  }
-});
-
-// Add specific listeners for new search message types
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Ensure sender.tab exists for sending responses
-  if (!sender.tab || !sender.tab.id) {
-    console.warn('[DORY] Message received without sender tab ID, ignoring:', message);
-    return false; // Indicate synchronous return or no response needed
-  }
-  const tabId = sender.tab.id;
-  const query = message.query;
-
-  if (message.type === 'PERFORM_LOCAL_SEARCH') {
-    console.log(`[DORY] Received PERFORM_LOCAL_SEARCH for query: "${query}"`);
-    if (!query) return true; // No query, do nothing but acknowledge
-
-    (async () => {
-      try {
-        // Perform combined local search
-        const historyPromise = searchHistoryAPI(query);
-        const dexiePromise = localRanker.rank(query);
-        const [historyResults, dexieResults] = await Promise.all([historyPromise, dexiePromise]);
-
-        // Merge and sort using the corrected function
-        const finalResults = mergeAndSortResults(historyResults, dexieResults);
-
-        console.log(`[DORY] Sending ${finalResults.length} combined local results to tab:`, tabId);
-        chrome.tabs.sendMessage(tabId, {
-          type: 'SEARCH_RESULTS',
-          results: finalResults
-        });
-      } catch (error) {
-        console.error('[DORY] Error performing combined local search:', error);
-        chrome.tabs.sendMessage(tabId, { type: 'SEARCH_RESULTS', results: [] });
-      }
-    })();
-
-    return true; // Indicate asynchronous response
-
-  } else if (message.type === 'PERFORM_SEMANTIC_SEARCH') {
-    console.log(`[DORY] Received PERFORM_SEMANTIC_SEARCH for query: "${query}"`);
-    if (!query) return true; // No query, do nothing but acknowledge
-
-    (async () => {
-      try {
-        const userId = await getCurrentUserId();
-        if (!userId) {
-          throw new Error('User not authenticated for semantic search');
-        }
-
-        const semanticResponse = await semanticSearch(query, userId, {
-          limit: 20, // Keep parameters as before
-          useHybridSearch: true,
-          useLLMExpansion: true,
-          useReranking: true,
-        });
-
-        const semanticResults = semanticResponse as SearchResponse; // Use existing type
-
-        // Map Semantic results to UnifiedLocalSearchResult or keep separate?
-        // For now, let's send back the original structure for semantic
-        // Or adapt the UI? Let's map to Unified for consistency?
-        // Decision: Map to Unified for consistency in what UI receives
-        const formattedResults: UnifiedLocalSearchResult[] = semanticResults.map(result => ({
-          id: result.docId, // Use docId as primary ID
-          url: result.url,
-          title: result.title,
-          score: result.score, // Add the mandatory score field
-          source: 'semantic',  // Clearly mark the source as semantic
-          explanation: result.explanation,
-          pageId: result.pageId,
-          // lastVisitTime, visitCount, typedCount will be undefined
-        }));
-
-        console.log(`[DORY] Sending ${formattedResults.length} semantic results to tab:`, tabId);
-        chrome.tabs.sendMessage(tabId, {
-          type: 'SEARCH_RESULTS',
-          results: formattedResults
-        });
-
-      } catch (error) {
-        console.error('[DORY] Error performing semantic search:', error);
-        chrome.tabs.sendMessage(tabId, { type: 'SEARCH_RESULTS', results: [] });
-      }
-    })();
-
-    return true; // Indicate asynchronous response
-  }
-
-  // Return false if message type wasn't handled here
-  // Allow other listeners (like messageRouter) to potentially handle it
-  return false;
-});
-
-// +++ NEW MERGE FUNCTION (Corrected Parameter Type) +++
 /**
- * Merges and sorts results from History API and Dexie (AdvancedLocalRanker).
- * Prioritizes Dexie results for items found in both sources.
- *
- * @param historyResults Results from searchHistoryAPI.
- * @param dexieResults Results directly from localRanker.rank.
- * @returns A sorted array of UnifiedLocalSearchResult.
+ * Helper function to inject global search content script into a tab
  */
-function mergeAndSortResults(
-  historyResults: UnifiedLocalSearchResult[],
-  dexieResults: Array<{ pageId: string; title: string; url: string; score: number }>
-): UnifiedLocalSearchResult[] {
-  // Create maps to track seen titles and URLs
-  const seenTitles = new Set<string>();
-  const seenUrls = new Set<string>();
-  const resultsMap = new Map<string, UnifiedLocalSearchResult>();
+async function injectGlobalSearch(tabId: number): Promise<boolean> {
+  try {
+    console.log(`[Background] Injecting global search into tab ${tabId}`);
+    
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['src/content/globalSearch.js']
+    });
+    
+    return true;
+  } catch (error) {
+    console.error(`[Background] Failed to inject global search into tab ${tabId}:`, error);
+    return false;
+  }
+}
 
-  // Helper function to add a result if it's not a duplicate
-  const addUniqueResult = (result: UnifiedLocalSearchResult) => {
-    // Skip if we've seen this title OR URL before
-    if (seenTitles.has(result.title.toLowerCase()) || seenUrls.has(result.url.toLowerCase())) {
-      // If this result has a higher score than the existing one with the same URL, replace it
-      const existingResult = resultsMap.get(result.url.toLowerCase());
-      if (existingResult && result.score > existingResult.score) {
-        // Remove old title and URL from sets
-        seenTitles.delete(existingResult.title.toLowerCase());
-        seenUrls.delete(existingResult.url.toLowerCase());
-        // Add new result
-        seenTitles.add(result.title.toLowerCase());
-        seenUrls.add(result.url.toLowerCase());
-        resultsMap.set(result.url.toLowerCase(), result);
+/**
+ * Function to inject global search into all existing tabs
+ */
+async function injectGlobalSearchIntoExistingTabs(): Promise<void> {
+  try {
+    const tabs = await chrome.tabs.query({});
+    console.log(`[Background] Injecting global search into ${tabs.length} existing tabs`);
+    
+    let injectedCount = 0;
+    for (const tab of tabs) {
+      if (tab.id && tab.url && isWebPage(tab.url)) {
+        try {
+          const success = await injectGlobalSearch(tab.id);
+          if (success) injectedCount++;
+        } catch (err) {
+          console.log(`[Background] Could not inject into tab ${tab.id} (${tab.url}):`, err);
+        }
       }
+    }
+    console.log(`[Background] Successfully injected global search into ${injectedCount}/${tabs.length} tabs`);
+  } catch (error) {
+    console.error('[Background] Error injecting global search into existing tabs:', error);
+  }
+}
+
+// -------------------- Session Management --------------------
+
+/**
+ * Check for session inactivity
+ */
+async function checkSessionInactivity() {
+  if (!isSessionActive) return;
+  
+  try {
+    // Use auth service to check if still authenticated
+    const authState = authService.getAuthState();
+    if (!authState.isAuthenticated) {
+      console.log('[Background] No longer authenticated, ending session');
+      cleanupServices();
       return;
     }
-
-    // Add new unique result
-    seenTitles.add(result.title.toLowerCase());
-    seenUrls.add(result.url.toLowerCase());
-    resultsMap.set(result.url.toLowerCase(), result);
-  };
-
-  // 1. Add history results first
-  for (const result of historyResults) {
-    if (result.url && result.title) {
-      addUniqueResult({ ...result, source: 'history', score: 1 });
-    }
+    
+    // Update session activity tracking
+    console.log('[Background] Checking session activity...');
+  } catch (error) {
+    console.error('[Background] Error checking session activity:', error);
   }
-
-  // 2. Add/Update with Dexie results (prioritize Dexie data)
-  for (const result of dexieResults) {
-    if (result.url && result.title) {
-      const existing = resultsMap.get(result.url.toLowerCase());
-      const dexieUnifiedResult: UnifiedLocalSearchResult = {
-        id: result.pageId,
-        url: result.url,
-        title: result.title,
-        source: 'dexie',
-        score: result.score,
-        pageId: result.pageId,
-        lastVisitTime: existing?.lastVisitTime,
-        visitCount: existing?.visitCount,
-        typedCount: existing?.typedCount,
-      };
-      addUniqueResult(dexieUnifiedResult);
-    }
-  }
-
-  // 3. Convert Map to Array
-  const mergedList = Array.from(resultsMap.values());
-
-  // 4. Sort results
-  mergedList.sort((a, b) => {
-    // Primary sort: score descending
-    const scoreDiff = b.score - a.score;
-    if (scoreDiff !== 0) return scoreDiff;
-
-    // Secondary sort: prioritize 'dexie' if scores are equal
-    if (a.source === 'dexie' && b.source !== 'dexie') return -1;
-    if (a.source !== 'dexie' && b.source === 'dexie') return 1;
-
-    // Tertiary sort: lastVisitTime for history items
-    if (a.source === 'history' && b.source === 'history') {
-      const visitTimeDiff = (b.lastVisitTime ?? 0) - (a.lastVisitTime ?? 0);
-      if (visitTimeDiff !== 0) return visitTimeDiff;
-    }
-
-    return 0;
-  });
-
-  // 5. Limit total results
-  const MAX_TOTAL_RESULTS = 50;
-  return mergedList.slice(0, MAX_TOTAL_RESULTS);
 }
-// +++ END NEW MERGE FUNCTION +++
+
+/**
+ * Clean up services on session end or extension shutdown
+ */
+function cleanupServices() {
+  console.log('[Background] Cleaning up services...');
+  
+  // Clear the idle interval
+  if (idleCheckInterval) {
+    clearInterval(idleCheckInterval);
+    idleCheckInterval = null;
+  }
+  
+  isSessionActive = false;
+  console.log('[Background] Services cleaned up');
+}
+
+/**
+ * Set up scheduled tasks like cold storage sync
+ */
+function setupScheduledTasks() {
+  // Set up an alarm for cold storage sync
+  chrome.alarms.create('doryColdStorageSync', {
+    periodInMinutes: 5 // Every 5 minutes
+  });
+  
+  // Listen for alarms
+  chrome.alarms.onAlarm.addListener(handleAlarm);
+  
+  console.log('[Background] Scheduled tasks set up');
+}
+
+/**
+ * Handle alarm triggers
+ */
+async function handleAlarm(alarm: chrome.alarms.Alarm) {
+  console.log(`[Background] Alarm triggered: ${alarm.name}`);
+  
+  if (alarm.name === 'doryColdStorageSync') {
+    const authState = authService.getAuthState();
+    if (!authState.isAuthenticated) {
+      console.log('[Background] Skipping task: Not authenticated');
+      return;
+    }
+    
+    console.log('[Background] Initiating cold storage sync task');
+    // Would delegate to a service via background API in the full implementation
+  }
+}
+
+// -------------------- Extension Lifecycle --------------------
+
+// Handle install/update
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log(`[Background] Extension ${details.reason}:`, details);
+  
+  // Inject global search on install/update
+  injectGlobalSearchIntoExistingTabs();
+});
+
+// Handle suspension (service worker termination)
+chrome.runtime.onSuspend.addListener(() => {
+  console.log('[Background] Service worker suspending...');
+  cleanupServices();
+});
+
+console.log('[Background] Service worker initialized.');
+

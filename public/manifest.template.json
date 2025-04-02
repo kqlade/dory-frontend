@@ -39,8 +39,8 @@
   "commands": {
     "activate-global-search": {
       "suggested_key": {
-        "default": "Ctrl+Shift+Space",
-        "mac": "Command+Shift+Space"
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
       },
       "description": "Activate DORY global search overlay"
     }
@@ -74,7 +74,8 @@
     ]
   },
   "host_permissions": [
-    "http://localhost:3000/*"
+    "http://localhost:3000/*",
+    "<all_urls>"
   ],
   "web_accessible_resources": [
     {

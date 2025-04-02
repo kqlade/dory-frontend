@@ -2,165 +2,81 @@ import React, { useState, useEffect, useRef } from 'react';
 import NewTabSearchBar from '../../components/NewTabSearchBar';
 import ClusterContainer from '../../components/ClusterContainer';
 import ThemeToggle from '../../components/ThemeToggle';
-import { checkAuth, login } from '../../services/authService';
-import { MessageType } from '../../utils/messageSystem';
-import { ClusterSuggestion } from '../../services/clusteringService';
+import { useAuth } from '../../hooks/useBackgroundAuth';
+import useBackgroundClustering from '../../hooks/useBackgroundClustering';
+import { detectOS } from '../../utils/osUtils';
 import './newtab.css';
 
-// Key for cluster storage
-const CLUSTER_HISTORY_KEY = 'clusterHistory';
-
 /**
- * This page renders the "DORY" text, the search bar, cluster squares, and the ThemeToggle.
- * When user is not authenticated, it shows a sign-in button instead of search and clusters.
+ * NewTab page component for the Dory extension.
+ * Serves as a composition layer for the primary Dory components.
  */
-const NewTab: React.FC = () => {
-  // Add state to track if search is active
-  const [isSearchActive, setIsSearchActive] = useState(false);
-  // Add auth state
-  const [authState, setAuthState] = useState<{
-    isAuthenticated: boolean;
-    isLoading: boolean;
-  }>({
-    isAuthenticated: false,
-    isLoading: true
-  });
-  // Add state for current and previous clusters
-  const [currentClusters, setCurrentClusters] = useState<ClusterSuggestion[]>([]);
-  const [previousClusters, setPreviousClusters] = useState<ClusterSuggestion[]>([]);
-  // Add state to track whether to show previous clusters
-  const [showPreviousClusters, setShowPreviousClusters] = useState(false);
 
-  // Ref for the search bar wrapper to help query within it
+const NewTab: React.FC = () => {
+  // Track if search is active to conditionally show/hide clusters
+  const [isSearchActive, setIsSearchActive] = useState(false);
+  
+  // Use our auth hook to manage authentication
+  const { isAuthenticated, loading: authLoading, login } = useAuth();
+  
+  // Use our clustering hook to manage clusters
+  const { 
+    clusters: currentClusters, 
+    previousClusters,
+    loading: clustersLoading
+  } = useBackgroundClustering();
+  
+  // State to toggle between current and previous clusters
+  const [showPreviousClusters, setShowPreviousClusters] = useState(false);
+  
+  // Ref for the search bar wrapper to help with autofocus
   const searchBarWrapperRef = useRef<HTMLDivElement>(null);
 
-  // Check authentication status
+  // Toggle between current and previous clusters
+  const toggleClusterView = () => {
+    if (previousClusters.length > 0) {
+      setShowPreviousClusters(prev => !prev);
+      console.log('[NewTab] Toggled to', !showPreviousClusters ? 'previous' : 'current', 'clusters');
+    } else {
+      console.log('[NewTab] No previous clusters available to toggle');
+    }
+  };
+
+  // Handle keyboard shortcut commands
   useEffect(() => {
-    const checkUserAuth = async () => {
-      try {
-        // Check if the user is authenticated
-        const isAuthenticated = await checkAuth();
-        setAuthState({ isAuthenticated, isLoading: false });
-      } catch (err) {
-        console.error('[NewTab] checkAuth error:', err);
-        setAuthState({ isAuthenticated: false, isLoading: false });
-      }
-    };
-
-    checkUserAuth();
-
-    // Listen for auth messages (e.g., when auth state changes)
-    const handleMessage = (message: any) => {
-      if (message.type === MessageType.AUTH_RESULT) {
-        const isAuth = message.data.isAuthenticated;
-        setAuthState({ isAuthenticated: isAuth, isLoading: false });
-      }
-    };
-
-    // Set up the message listener
-    chrome.runtime.onMessage.addListener(handleMessage);
-
-    // Clean up when the component unmounts
-    return () => {
-      chrome.runtime.onMessage.removeListener(handleMessage);
-    };
-  }, []);
-
-  // Load clusters directly from storage when authenticated
-  useEffect(() => {
-    const loadClusters = async () => {
-      if (authState.isAuthenticated) {
-        try {
-          // Read directly from storage instead of calling fetchClusterSuggestions
-          const storage = await chrome.storage.local.get(CLUSTER_HISTORY_KEY);
-          const history = storage[CLUSTER_HISTORY_KEY] || {};
-          
-          // Set both current and previous clusters from storage
-          setCurrentClusters(history.current || []);
-          setPreviousClusters(history.previous || []);
-          
-          console.log('[NewTab] Loaded clusters from storage:', 
-            `current: ${history.current?.length || 0}, previous: ${history.previous?.length || 0}`);
-        } catch (error) {
-          console.error('[NewTab] Error loading clusters from storage:', error);
-        }
+    const handleCommand = (command: string) => {
+      if (command === 'toggle-cluster-view') {
+        toggleClusterView();
       }
     };
     
-    loadClusters();
-    
-    // Also listen for cluster updates to refresh from storage after animation
-    const handleClusterUpdate = (message: any) => {
-      if (message.type === MessageType.CLUSTERS_UPDATED && authState.isAuthenticated) {
-        // Wait slightly longer than the animation (3 seconds) to update
-        setTimeout(async () => {
-          await loadClusters();
-        }, 3100); // 3.1 seconds
-      }
-    };
-    
-    chrome.runtime.onMessage.addListener(handleClusterUpdate);
+    // Add command listener for keyboard shortcuts defined in manifest.json
+    chrome.commands?.onCommand?.addListener(handleCommand);
     
     return () => {
-      chrome.runtime.onMessage.removeListener(handleClusterUpdate);
+      chrome.commands?.onCommand?.removeListener(handleCommand);
     };
-  }, [authState.isAuthenticated]);
+  }, [previousClusters.length]);
 
-  // Add keyboard shortcut listener for Alt+P / Option+P
+  // Autofocus search input when authenticated
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Alt+P (Windows) or Option+P (Mac)
-      if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'p') {
-        // Only toggle if previous clusters exist
-        if (previousClusters.length > 0) {
-          setShowPreviousClusters(prev => !prev);
-          console.log('[NewTab] Toggled to', !showPreviousClusters ? 'previous' : 'current', 'clusters');
-        } else {
-          console.log('[NewTab] No previous clusters available to toggle');
-        }
-      }
-    };
-
-    // Add the event listener
-    document.addEventListener('keydown', handleKeyDown);
-
-    // Clean up
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [previousClusters.length, showPreviousClusters]);
-
-  // --- NEW useEffect for Autofocus ---
-  useEffect(() => {
-    // Only run if authenticated and the wrapper ref is available
-    if (authState.isAuthenticated && searchBarWrapperRef.current) {
-      // Use a short timeout to potentially bypass Chrome's focus restrictions
+    if (isAuthenticated && searchBarWrapperRef.current) {
       const focusTimeoutId = setTimeout(() => {
-        // Try to find the input element within the search bar component
-        // Adjust the selector if the actual input has a specific ID or class
         const inputElement = searchBarWrapperRef.current?.querySelector<HTMLInputElement>(
-          'input[type="search"], input[type="text"]' // Common selectors for search inputs
+          'input[type="text"]'
         );
         if (inputElement) {
           inputElement.focus();
-          console.log('[NewTab] Attempted to focus search input.');
-        } else {
-          console.warn('[NewTab] Could not find search input element to focus.');
+          console.log('[NewTab] Focused search input');
         }
-      }, 100); // 100ms delay
+      }, 100);
 
-      // Cleanup the timeout if the component unmounts or auth state changes
       return () => clearTimeout(focusTimeoutId);
     }
-  }, [authState.isAuthenticated]); // Depend on authentication state
+  }, [isAuthenticated]);
 
-  const handleSignIn = () => {
-    // This is the key function that's being reused from the popup
-    login(); 
-  };
-
-  // Show loading state for the entire component while checking auth
-  if (authState.isLoading) {
+  // Show loading state while checking auth
+  if (authLoading) {
     return (
       <div className="newtab-container">
         <div className="dory-container">
@@ -177,7 +93,7 @@ const NewTab: React.FC = () => {
   }
 
   // Not authenticated - show login button
-  if (!authState.isAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <div className="newtab-container">
         <div className="dory-container">
@@ -189,7 +105,7 @@ const NewTab: React.FC = () => {
           <div className="google-button-container">
             <button 
               className="google-sign-in-button"
-              onClick={handleSignIn}
+              onClick={login}
             >
               Sign in with Google
             </button>
@@ -200,7 +116,7 @@ const NewTab: React.FC = () => {
     );
   }
 
-  // Get the appropriate clusters based on toggle state
+  // Determine which clusters to display based on toggle state
   const displayClusters = showPreviousClusters ? previousClusters : currentClusters;
 
   // Authenticated - show regular content with search bar and clusters
@@ -222,7 +138,7 @@ const NewTab: React.FC = () => {
 
         {/* Helper text for keyboard shortcut - OS specific */}
         <div className="shortcut-helper-text">
-          Press {detectOS() === 'Mac OS' ? '⌘' : 'Ctrl'}+Shift+Space to search from any page
+          Press {detectOS() === 'Mac OS' ? '⌘' : 'Ctrl'}+Shift+K to search from any page
         </div>
       </div>
 
@@ -239,32 +155,6 @@ const NewTab: React.FC = () => {
   );
 };
 
-// Helper function to detect the operating system
-function detectOS() {
-  const userAgent = window.navigator.userAgent;
-  const platform = window.navigator.platform;
-  const macosPlatforms = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'];
-  const windowsPlatforms = ['Win32', 'Win64', 'Windows', 'WinCE'];
-  let os = null;
 
-  if (macosPlatforms.indexOf(platform) !== -1) {
-    os = 'Mac OS';
-  } else if (windowsPlatforms.indexOf(platform) !== -1) {
-    os = 'Windows';
-  } else if (/Linux/.test(platform)) {
-    os = 'Linux';
-  } else {
-    // Default to detecting based on userAgent if platform check is inconclusive
-    if (userAgent.indexOf('Mac') !== -1) {
-      os = 'Mac OS';
-    } else if (userAgent.indexOf('Win') !== -1) {
-      os = 'Windows';
-    } else {
-      os = 'Unknown';
-    }
-  }
-
-  return os;
-}
 
 export default NewTab;

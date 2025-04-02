@@ -1,4 +1,10 @@
-// src/utils/urlUtils.ts
+/**
+ * @file urlUtils.ts
+ * 
+ * URL utilities for filtering and standardizing web URLs
+ */
+
+import { URL_FILTER_CONFIG } from '../config';
 
 /**
  * Checks if a URL is a standard web page. 
@@ -8,47 +14,12 @@ export function isWebPage(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
-// --- Centralized Filtering Logic ---
-
-const IGNORED_URL_SCHEMES = ['about:', 'data:', 'blob:', 'javascript:', 'mailto:', 'tel:'];
-const GENERIC_TITLES = new Set(['', 'untitled']); // Case-insensitive check done later
-const GOOGLE_SEARCH_DOMAINS = new Set([
-  'www.google.com',
-  'www.google.co.uk',
-  'www.google.ca',
-  'www.google.com.au',
-  'www.google.de',
-  'www.google.fr',
-  'www.google.es',
-  'www.google.it',
-  'www.google.co.jp',
-  'www.google.com.br',
-  // Add more as needed
-]);
-
-// New constants for filtering auth pages
-const AUTH_PATH_ENDINGS = new Set([
-  // Login/Signup
-  '/login', '/signin', '/signup', '/auth', '/authenticate',
-  '/sso', '/oauth', '/account/login', '/account/signin', '/login.php', '/login.aspx',
-  // Logout
-  '/logout', '/signout', '/account/logout', '/account/signout',
-  // Password Reset
-  '/password/reset', '/forgot-password', '/reset-password', '/account/reset'
-  // Add more specific paths or common endings as needed
-]);
-const AUTH_TITLE_PREFIXES_OR_KEYWORDS = [
-  // Login/Signup
-  'log in', 'login', 'sign in', 'signin', 'sign up', 'signup',
-  'authenticate', 'authentication', 'account access', 'access account',
-  // Logout
-  'log out', 'logout', 'sign out', 'signout',
-  // Password Reset
-  'reset password', 'forgot password',
-  // Error Pages (Added keywords here for simplicity, could be separate list)
-  '404', 'not found', 'error', 'server error', 'oops', 'problem loading page'
-  // Add more common prefixes/keywords as needed
-];
+// Create Sets from config arrays for more efficient lookups
+const IGNORED_URL_SCHEMES = URL_FILTER_CONFIG.IGNORED_URL_SCHEMES;
+const GENERIC_TITLES = new Set(URL_FILTER_CONFIG.GENERIC_TITLES); 
+const GOOGLE_SEARCH_DOMAINS = new Set(URL_FILTER_CONFIG.GOOGLE_SEARCH_DOMAINS);
+const AUTH_PATH_ENDINGS = new Set(URL_FILTER_CONFIG.AUTH_PATH_ENDINGS);
+const AUTH_TITLE_KEYWORDS = URL_FILTER_CONFIG.AUTH_TITLE_KEYWORDS;
 
 /**
  * Checks if a given URL and title should be recorded or included in history results,
@@ -111,7 +82,7 @@ export function shouldRecordHistoryEntry(
     // Check Title Prefixes/Keywords (using the already normalized title)
     // This now checks if the normalized title *includes* any keyword for errors,
     // or *starts with* for auth/action prefixes.
-    for (const keyword of AUTH_TITLE_PREFIXES_OR_KEYWORDS) {
+    for (const keyword of AUTH_TITLE_KEYWORDS) {
       if (normalizedTitle.includes(keyword)) { // Changed to includes for broader matching (e.g., error codes)
         // Add specific startsWith check for auth terms if needed to avoid over-filtering
         // Example: if (keyword.includes('login') && !normalizedTitle.startsWith(keyword)) continue;

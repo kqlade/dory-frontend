@@ -1,6 +1,7 @@
 /**
  * @file globalSearch.tsx
  * Content script that, when triggered, shows a floating search overlay with React.
+ * Uses Comlink for type-safe background API access with bidirectional communication.
  */
 
 import React from 'react';
@@ -8,7 +9,13 @@ import { createRoot } from 'react-dom/client';
 import SearchOverlay from '../pages/spotlight/SearchOverlay';
 import '../pages/spotlight/spotlight.css';
 
-console.log('[DORY] globalSearch.tsx loaded and waiting...');
+// Comlink and background API imports
+import * as Comlink from 'comlink';
+import { getBackgroundAPI } from '../utils/comlinkSetup';
+import type { BackgroundAPI } from '../background/api';
+import type { ContentCommandAPI } from '../types';
+
+console.log('[DORY] globalSearch.tsx loaded and initializing with Comlink...');
 
 let overlayContainer: HTMLDivElement | null = null;
 let styleSheet: HTMLStyleElement | null = null;
@@ -16,26 +23,109 @@ let rootElement: HTMLElement | null = null;
 let reactRoot: any = null;
 let previouslyFocusedElement: Element | null = null;
 
-// Listen for messages from the background script
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'PING') {
-    console.log('[DORY] Received PING');
-    return true;
-  }
-  if (message.type === 'SHOW_SEARCH_OVERLAY') {
-    console.log('[DORY] SHOW_SEARCH_OVERLAY message received');
-    // Toggle the overlay - hide if visible, show if not
-    if (overlayContainer) {
-      console.log('[DORY] Overlay already visible, hiding it');
-      hideSearchOverlay();
-    } else {
-      console.log('[DORY] Rendering search overlay');
-      showSearchOverlay();
+/**
+ * Initialize background API and register this content script for command routing.
+ * This establishes a bidirectional Comlink connection with the background API.
+ */
+async function initBackgroundAPI() {
+  try {
+    // Get the background API using Comlink
+    const api = getBackgroundAPI<BackgroundAPI>();
+    console.log('[DORY] Successfully connected to background API via Comlink');
+    
+    // Get current tab ID for registration
+    const tabId = await getCurrentTabId();
+    if (!tabId) {
+      throw new Error('Could not determine current tab ID');
     }
-    return true;
+    
+    // Create the content command API implementation
+    const commandHandler: ContentCommandAPI = {
+      showSearchOverlay: async (action: 'show' | 'hide' | 'toggle'): Promise<boolean> => {
+        console.log(`[DORY] Received command via Comlink: showSearchOverlay(${action})`);
+        handleToggleOverlay(action);
+        return true;
+      }
+    };
+    
+    // Create a message channel for background to communicate with content
+    const { port1, port2 } = new MessageChannel();
+    
+    // Expose our command API on port1
+    Comlink.expose(commandHandler, port1);
+    
+    // Send port2 to the background script
+    const commands = await api.commands;
+    const registered = await commands.registerCommandHandler(tabId, Comlink.transfer(port2, [port2]));
+    
+    if (registered) {
+      console.log(`[DORY] Tab ${tabId} registered with background command service via Comlink`);
+    } else {
+      console.error(`[DORY] Failed to register tab ${tabId} with background command service`);
+    }
+    
+    // No need for message listener anymore since we're using Comlink
+    // Remove any existing listeners just to be safe
+    try {
+      chrome.runtime.onMessage.removeListener(function(message) {
+        return message.type === 'SHOW_SEARCH_OVERLAY';
+      });
+    } catch (err) {
+      // Ignore errors from removing non-existent listeners
+    }
+    
+  } catch (error) {
+    console.error('[DORY] Error initializing background API:', error);
   }
-  return false;
-});
+}
+
+/**
+ * Helper function to get the current tab ID
+ * @returns Promise resolving to the current tab ID or undefined
+ */
+async function getCurrentTabId(): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'GET_CURRENT_TAB_ID' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('[DORY] Error getting tab ID:', chrome.runtime.lastError);
+          resolve(undefined);
+        } else {
+          resolve(response?.tabId);
+        }
+      });
+    } catch (error) {
+      console.error('[DORY] Error requesting tab ID:', error);
+      resolve(undefined);
+    }
+  });
+}
+
+/**
+ * Handle overlay visibility command received from the background script.
+ * @param action The action to perform ('show', 'hide', or 'toggle')
+ */
+/**
+ * Handle overlay visibility command received via Comlink
+ * @param action The action to perform ('show', 'hide', or 'toggle')
+ */
+function handleToggleOverlay(action: 'show' | 'hide' | 'toggle' = 'toggle'): void {
+  console.log(`[DORY] Overlay command received via Comlink: ${action}`);
+  
+  if (action === 'hide' || (action === 'toggle' && overlayContainer)) {
+    console.log('[DORY] Hiding overlay');
+    hideSearchOverlay();
+  } else if (action === 'show' || (action === 'toggle' && !overlayContainer)) {
+    console.log('[DORY] Showing overlay');
+    // Use async function and handle any errors
+    showSearchOverlay().catch(err => {
+      console.error('[DORY] Error showing search overlay:', err);
+    });
+  }
+}
+
+// Initialize right away
+initBackgroundAPI();
 
 // Also listen for keyboard shortcut directly in the content script
 document.addEventListener('keydown', (e) => {
@@ -45,7 +135,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-function showSearchOverlay(): void {
+async function showSearchOverlay(): Promise<void> {
   removeExistingOverlay();
   
   // Store the currently focused element to restore focus when we close
@@ -55,18 +145,27 @@ function showSearchOverlay(): void {
   overlayContainer = document.createElement('div');
   overlayContainer.id = 'dory-search-overlay';
   
-  // Check for theme preference
+  // Get theme preference from background API
   let prefersDarkMode = false;
   try {
-    const storedTheme = localStorage.getItem('preferredTheme');
-    if (storedTheme) {
-      prefersDarkMode = storedTheme === 'dark';
-    } else {
-      // Fall back to system preference
+    // Get background API and preferences service
+    const api = getBackgroundAPI<BackgroundAPI>();
+    const preferences = await api.preferences;
+    
+    // Get theme from the preferences service
+    const theme = await preferences.getTheme();
+    
+    if (theme === 'dark') {
+      prefersDarkMode = true;
+    } else if (theme === 'system') {
+      // Check system preference
       prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
+    // For theme === 'light', prefersDarkMode remains false
+    
+    console.log(`[DORY] Using theme: ${theme} (dark mode: ${prefersDarkMode})`);
   } catch (err) {
-    console.error('[DORY] Error reading theme preference:', err);
+    console.error('[DORY] Error getting theme from background API:', err);
     // Fall back to system preference
     prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
@@ -131,8 +230,14 @@ function showSearchOverlay(): void {
       width: 600px;
       max-width: 90%;
     }
+    
+    /* Spotlight-specific container */
+    .spotlight-search {
+      width: 100%;
+      height: 100%;
+    }
 
-    /* ========== EXACT COPY FROM NewTabSearchBar.css ========== */
+    /* ========== NewTabSearchBar.css for Content Script Context ========== */
     /* Container that wraps everything */
     .search-container {
       width: 100%; /* Fill the parent wrapper */
@@ -337,7 +442,7 @@ function showSearchOverlay(): void {
       font-style: italic;
       color: var(--text-secondary);
     }
-    /* ========== END EXACT COPY FROM NewTabSearchBar.css ========== */
+    /* ========== END NewTabSearchBar.css styles ========== */
     
     /* Theme-specific overrides for content script environment */
     /* Light theme - for the search bar */
@@ -395,6 +500,15 @@ function showSearchOverlay(): void {
     
     .dory-dark-theme .results-list {
       background-color: #000000 !important;
+    }
+    
+    /* Specific overrides for SearchOverlay in content script context */
+    .dory-light-theme .spotlight-search[data-active="true"] .search-container {
+      box-shadow: 0 0 35px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    .dory-dark-theme .spotlight-search[data-active="true"] .search-container {
+      box-shadow: 0 0 35px rgba(255, 255, 255, 0.2) !important;
     }
   `;
   document.head.appendChild(styleSheet);
@@ -459,12 +573,25 @@ function hideSearchOverlay(): void {
   }
 }
 
+/**
+ * Renders the SearchOverlay React component in the provided container.
+ * Includes error handling and fallback UI.
+ * 
+ * @param container The DOM element to render the React component in
+ */
 function renderReactApp(container: HTMLElement): void {
   try {
     console.log('[DORY] Creating React root...');
     reactRoot = createRoot(container);
+    
+    // Initialize React context providers if needed
     console.log('[DORY] React root created, rendering SearchOverlay...');
-    reactRoot.render(<SearchOverlay onClose={hideSearchOverlay} />);
+    
+    // Render our refactored SearchOverlay component that uses the background API
+    reactRoot.render(
+      <SearchOverlay onClose={hideSearchOverlay} />
+    );
+    
     console.log('[DORY] SearchOverlay rendered successfully');
   } catch (err: any) {
     console.error('[DORY] Error rendering React:', err);
@@ -473,6 +600,13 @@ function renderReactApp(container: HTMLElement): void {
       stack: err.stack,
       name: err.name
     });
-    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #333; background-color: white; border-radius: 12px;"><h3 style="margin-top: 0;">DORY Search Error</h3><p>There was an error loading the search overlay.</p></div>';
+    
+    // Provide a user-friendly error message
+    container.innerHTML = `
+      <div style="padding: 20px; text-align: center; color: #333; background-color: white; border-radius: 12px;">
+        <h3 style="margin-top: 0;">DORY Search Error</h3>
+        <p>There was an error loading the search overlay.</p>
+        <p style="font-size: 12px; color: #777;">${err.message}</p>
+      </div>`;
   }
 } 

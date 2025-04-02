@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef, WheelEvent } from 'react';
 import ReactDOM from 'react-dom';
 import ClusterSquare from './ClusterSquare';
-import { 
-  fetchClusterSuggestions, 
-  ClusterSuggestion,
-  ClusterPage
-} from '../services/clusteringService';
-import { MessageType } from '../utils/messageSystem';
+import { ClusterSuggestion, ClusterPage } from '../types';
+import useBackgroundClustering from '../hooks/useBackgroundClustering';
 import './ClusterContainer.css';
 
 interface ClusterContainerProps {
@@ -15,159 +11,119 @@ interface ClusterContainerProps {
 }
 
 /**
- * ClusterContainer - Displays cluster squares based on available data.
- * When a cluster is clicked, it will show an expanded view with more details.
+ * Displays a grid of cluster squares. Clicking a cluster shows an expanded view with pages.
  */
-const ClusterContainer: React.FC<ClusterContainerProps> = ({ 
+const ClusterContainer: React.FC<ClusterContainerProps> = ({
   clusters = [],
-  clusterCount = 3
+  clusterCount = 3,
 }) => {
-  // State to track which cluster is expanded (null means none are expanded)
   const [expandedCluster, setExpandedCluster] = useState<ClusterSuggestion | null>(null);
-
-  // State to track if we're showing loading animation for new clusters
-  const [isLoadingNewClusters, setIsLoadingNewClusters] = useState(false);
-  
-  // State for the starting index of the visible window (showing 3 items at a time)
   const [startIndex, setStartIndex] = useState(0);
+  const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Reference to the expanded view
   const expandedViewRef = useRef<HTMLDivElement>(null);
 
-  // State for selected page index (for keyboard navigation)
-  const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
-  
-  // Listen for cluster update messages
-  useEffect(() => {
-    const handleMessage = (message: any) => {
-      if (message.type === MessageType.CLUSTERS_UPDATED) {
-        console.log('[ClusterContainer] Received CLUSTERS_UPDATED message');
-        
-        // Show loading animation for 3 seconds
-        setIsLoadingNewClusters(true);
-        
-        // After 3 seconds, refresh the display with latest data
-        setTimeout(() => {
-          setIsLoadingNewClusters(false);
-        }, 3000);
-      }
-    };
-    
-    // Add message listener
-    chrome.runtime.onMessage.addListener(handleMessage);
-    
-    // Remove listener on cleanup
-    return () => {
-      chrome.runtime.onMessage.removeListener(handleMessage);
-    };
-  }, []);
+  const { clusters: hookClusters, loading: loadingClusters, getClusters } =
+    useBackgroundClustering();
 
-  // Handle cluster click
+  // Decide which cluster data to use (explicit prop vs. hook)
+  const effectiveClusters = clusters.length ? clusters : hookClusters;
+
+  // Fetch clusters on mount (or when clusterCount changes)
+  useEffect(() => {
+    if (clusterCount) getClusters({ count: clusterCount });
+  }, [clusterCount, getClusters]);
+
+  // Manually refresh clusters
+  const refreshClusters = async () => {
+    setIsRefreshing(true);
+    await getClusters({ forceRefresh: true, count: clusterCount });
+    setTimeout(() => setIsRefreshing(false), 3000);
+  };
+
+  // Opens expanded view for a cluster
   const handleClusterClick = (cluster?: ClusterSuggestion) => {
     if (cluster) {
       setExpandedCluster(cluster);
       setSelectedPageIndex(-1);
-      // Reset start index when opening a new cluster
       setStartIndex(0);
     }
   };
 
-  // Close expanded view
-  const handleCloseExpanded = () => {
-    setExpandedCluster(null);
-  };
-  
-  // Handle page click - navigate to the page URL IN A NEW TAB
+  // Closes the expanded view
+  const handleCloseExpanded = () => setExpandedCluster(null);
+
+  // Opens pages in a new tab
   const handlePageClick = (page: ClusterPage) => {
-    // window.location.href = page.url; // Old: Navigates current tab
-    chrome.tabs.create({ url: page.url }); // New: Opens in a new tab
-    // Potentially close the expanded view after opening? Depends on desired UX.
-    // handleCloseExpanded(); 
+    chrome.tabs.create({ url: page.url });
+    // Optionally close expanded view, depending on UX preference
   };
 
-  // Handle clicks outside the expanded view
+  // Close the expanded view if user clicks outside it
   useEffect(() => {
     if (!expandedCluster) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent) => {
       if (
         expandedViewRef.current &&
-        !expandedViewRef.current.contains(event.target as Node)
+        !expandedViewRef.current.contains(e.target as Node)
       ) {
         handleCloseExpanded();
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [expandedCluster]);
-  
-  // Handle scroll events to shift the visible window
-  const handleScroll = (event: WheelEvent<HTMLUListElement>) => {
+
+  // Scroll the expanded cluster pages (3 at a time)
+  const handleScroll = (e: WheelEvent<HTMLUListElement>) => {
     if (!expandedCluster) return;
-    
     const pages = expandedCluster.top_pages || [];
-    const maxStartIndex = Math.max(0, pages.length - 3);
-    
-    if (event.deltaY > 0 && startIndex < maxStartIndex) {
-      // Scrolling down
-      event.preventDefault();
-      setStartIndex(prev => Math.min(prev + 1, maxStartIndex));
-    } else if (event.deltaY < 0 && startIndex > 0) {
-      // Scrolling up
-      event.preventDefault();
+    const maxIndex = Math.max(0, pages.length - 3);
+
+    if (e.deltaY > 0 && startIndex < maxIndex) {
+      e.preventDefault();
+      setStartIndex(prev => Math.min(prev + 1, maxIndex));
+    } else if (e.deltaY < 0 && startIndex > 0) {
+      e.preventDefault();
       setStartIndex(prev => Math.max(prev - 1, 0));
     }
   };
-  
-  // Handle keyboard navigation for pages
+
+  // Keyboard navigation for the expanded cluster
   useEffect(() => {
     if (!expandedCluster) return;
-    
     const pages = expandedCluster.top_pages || [];
-    const maxStartIndex = Math.max(0, pages.length - 3);
-    
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Only handle keys if the pop-up is open
+    const maxIndex = Math.max(0, pages.length - 3);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
       if (!expandedViewRef.current) return;
-      
-      switch (event.key) {
-        case 'ArrowDown':
-          event.preventDefault();
-          if (pages.length > 0) {
-            const newSelectedIndex = selectedPageIndex < pages.length - 1 
-              ? selectedPageIndex + 1 
-              : 0;
-            
-            setSelectedPageIndex(newSelectedIndex);
-            
-            // Adjust the window if necessary
-            if (newSelectedIndex >= startIndex + 3) {
-              setStartIndex(Math.min(newSelectedIndex - 2, maxStartIndex));
-            } else if (newSelectedIndex < startIndex) {
-              setStartIndex(newSelectedIndex);
+      switch (e.key) {
+        case 'ArrowDown': {
+          e.preventDefault();
+          if (pages.length) {
+            const newIndex =
+              selectedPageIndex < pages.length - 1 ? selectedPageIndex + 1 : 0;
+            setSelectedPageIndex(newIndex);
+            if (newIndex >= startIndex + 3) {
+              setStartIndex(Math.min(newIndex - 2, maxIndex));
+            } else if (newIndex < startIndex) {
+              setStartIndex(newIndex);
             }
           }
           break;
-        case 'ArrowUp':
-          event.preventDefault();
-          if (pages.length > 0) {
-            const newSelectedIndex = selectedPageIndex > 0 
-              ? selectedPageIndex - 1 
-              : pages.length - 1;
-            
-            setSelectedPageIndex(newSelectedIndex);
-            
-            // Adjust the window if necessary
-            if (newSelectedIndex < startIndex) {
-              setStartIndex(newSelectedIndex);
-            } else if (newSelectedIndex >= startIndex + 3) {
-              setStartIndex(newSelectedIndex - 2);
-            }
+        }
+        case 'ArrowUp': {
+          e.preventDefault();
+          if (pages.length) {
+            const newIndex =
+              selectedPageIndex > 0 ? selectedPageIndex - 1 : pages.length - 1;
+            setSelectedPageIndex(newIndex);
+            if (newIndex < startIndex) setStartIndex(newIndex);
+            else if (newIndex >= startIndex + 3) setStartIndex(newIndex - 2);
           }
           break;
+        }
         case 'Enter':
           if (selectedPageIndex >= 0 && selectedPageIndex < pages.length) {
             handlePageClick(pages[selectedPageIndex]);
@@ -176,85 +132,66 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         case 'Escape':
           handleCloseExpanded();
           break;
-        default:
-          break;
       }
     };
-    
+
     document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [expandedCluster, selectedPageIndex, startIndex]);
 
-  // Render the expanded view using a portal
+  // Render expanded cluster view via portal
   const renderExpandedView = () => {
     if (!expandedCluster) return null;
-    
     const pages = expandedCluster.top_pages || [];
-    const hasPages = pages.length > 0;
-    
-    // Create a slice of 3 items from the current startIndex
-    const visiblePages = hasPages 
-      ? pages.slice(startIndex, startIndex + 3) 
-      : [];
-    
-    const view = (
+    const visible = pages.slice(startIndex, startIndex + 3);
+
+    const content = (
       <div className="expanded-cluster-view" ref={expandedViewRef}>
         <div className="expanded-cluster-header">
           <h2>{expandedCluster.label}</h2>
         </div>
         <div className="expanded-cluster-content">
-          {hasPages ? (
-            <ul 
-              className="results-list"
-              onWheel={handleScroll}
-            >
-              {visiblePages.map((page, idx) => {
-                // Calculate the actual index in the full list
+          {pages.length ? (
+            <ul className="results-list" onWheel={handleScroll}>
+              {visible.map((p, idx) => {
                 const actualIndex = startIndex + idx;
                 return (
                   <li
-                    key={page.page_id}
-                    className={`result-item ${actualIndex === selectedPageIndex ? 'selected' : ''}`}
-                    onClick={() => handlePageClick(page)}
+                    key={p.page_id}
+                    className={`result-item ${
+                      actualIndex === selectedPageIndex ? 'selected' : ''
+                    }`}
+                    onClick={() => handlePageClick(p)}
                   >
-                    <div className="result-title">{page.title}</div>
-                    <div className="result-url">{page.url}</div>
+                    <div className="result-title">{p.title}</div>
+                    <div className="result-url">{p.url}</div>
                   </li>
                 );
               })}
             </ul>
           ) : (
-            <div className="status-message">
-              No pages to display yet.
-            </div>
+            <div className="status-message">No pages found.</div>
           )}
         </div>
       </div>
     );
-    
-    // Portal to <body> to avoid container overflow
-    return ReactDOM.createPortal(view, document.body);
+    return ReactDOM.createPortal(content, document.body);
   };
 
   return (
     <div className="cluster-container">
       <div className="cluster-grid">
-        {clusters.length > 0 ? (
-          // Only show clusters if we have data
-          Array.from({ length: Math.min(clusterCount, clusters.length) }).map((_, index) => {
-            // When loading new clusters, pass undefined to show loading animation
-            const clusterData = isLoadingNewClusters ? undefined : clusters[index];
+        {clusters.length > 0 &&
+          Array.from({ length: Math.min(clusterCount, clusters.length) }).map((_, i) => {
+            const clusterData = isRefreshing ? undefined : effectiveClusters[i];
             return (
               <ClusterSquare
-                key={`cluster-${index}`}
+                key={`cluster-${i}`}
                 cluster={clusterData}
                 onClick={handleClusterClick}
               />
             );
-          })
-        ) : null}
+          })}
       </div>
       {renderExpandedView()}
     </div>

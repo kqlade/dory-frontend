@@ -1,40 +1,32 @@
-import { SearchResult } from '../api/types';
+/**
+ * @file search.ts
+ * 
+ * Type definitions for search functionality
+ */
 
-export interface DoryMessageProps {
-  type: 'suggestion' | 'alternative' | 'error';
-  children: React.ReactNode;
-}
-
-export interface SearchResultCardProps {
-  result: SearchResult;
-}
-
-export interface ExpandableSectionProps {
-  title: string;
-  children: React.ReactNode;
-  defaultExpanded?: boolean;
+/**
+ * Standard search result interface used across the application
+ */
+export interface SearchResult {
+  id: string;             // Unique ID for the result
+  pageId?: string;        // Optional page ID (from Dexie/internal storage)
+  title: string;          // Page title
+  url: string;            // URL
+  score: number;          // Relevance score for ranking
+  source?: string;        // Source of the result (e.g., 'history', 'dexie')
+  explanation?: string;   // Optional explanation of why this result matched
+  snippet?: string;       // Optional text snippet
+  timestamp?: number;     // Optional timestamp
+  favIconUrl?: string;    // Optional favicon URL
+  searchSessionId?: string; // Optional search session ID
+  isHighlighted?: boolean;  // Whether result is highlighted
+  // History API specific fields
+  lastVisitTime?: number; 
+  visitCount?: number;   
+  typedCount?: number;    
 }
 
 /**
- * Represents a search result item after potentially merging
- * data from the History API and the internal Dexie database (via AdvancedLocalRanker).
+ * Search response type
  */
-export interface UnifiedLocalSearchResult {
-  // Common fields - guaranteed to be present
-  id: string;        // Unique ID (use pageId from Dexie, url from History)
-  url: string;
-  title: string;
-  score: number;       // Combined or default score for ranking/display
-
-  // Source indicator
-  source: 'dexie' | 'history' | 'semantic';
-
-  // Dexie-specific data (from AdvancedLocalRanker) - now only optional fields
-  explanation?: string; // Explanation from Dexie/Semantic
-  pageId?: string;      // Specifically from Dexie page record
-
-  // History API specific data (useful for sorting fallback)
-  lastVisitTime?: number; // Milliseconds since epoch
-  visitCount?: number;
-  typedCount?: number;
-} 
+export type SearchResponse = SearchResult[];

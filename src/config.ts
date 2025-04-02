@@ -1,39 +1,155 @@
-export const API_BASE_URL = process.env.API_BASE_URL || 'https://dory-backend-e18a6624326d.herokuapp.com';
+/**
+ * @file config.ts
+ * 
+ * Centralized configuration for API endpoints and constants
+ */
 
-export const ENDPOINTS = {
-  HEALTH: '/api/health',
-  SEMANTIC_SEARCH: '/api/search',
-  WEB_SEARCH: '/api/search/web',
-  CONTENT: '/api/content',
-  COLD_STORAGE: {
-    BASE: '/api/cold-storage',
-    PAGES: '/api/cold-storage/pages',
-    VISITS: '/api/cold-storage/visits',
-    SESSIONS: '/api/cold-storage/sessions',
-    SEARCH_CLICKS: '/api/cold-storage/search-clicks'
+// Debug flags
+export const DEBUG = process.env.NODE_ENV !== 'production';
+
+// API Configuration
+export const API_BASE_URL = 'https://api.dory.app';
+
+// Endpoint Groups
+export const AUTH_ENDPOINTS = {
+  ME: '/api/auth/me',
+  TOKEN: '/api/auth/token',
+  REFRESH: '/api/auth/refresh',
+  LOGOUT: '/api/auth/logout',
+};
+
+export const COLD_STORAGE_ENDPOINTS = {
+  BASE: '/api/cold-storage',
+  PAGES: '/api/cold-storage/pages',
+  VISITS: '/api/cold-storage/visits',
+  SESSIONS: '/api/cold-storage/sessions',
+  SEARCH_CLICKS: '/api/cold-storage/search-clicks'
+};
+
+export const CONTENT_ENDPOINTS = {
+  CONTENT: '/api/content'
+};
+
+export const CLUSTERING_ENDPOINTS = {
+  SUGGESTIONS: '/api/clustering/suggestions'
+};
+
+export const SEARCH_ENDPOINTS = {
+  SEMANTIC: '/api/search/semantic'
+};
+
+// Search Configuration Constants are defined lower in the file
+
+// OAuth Configuration
+export const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+
+// Storage Keys
+export const STORAGE_KEYS = {
+  AUTH_STATE: 'authState',
+  LAST_SYNC_KEY: 'lastColdStorageSync',
+  CIRCUIT_BREAKER_KEY: 'coldStorageSyncCircuitBreaker',
+  TELEMETRY_KEY: 'coldStorageSyncTelemetry',
+  CLUSTER_HISTORY_KEY: 'clusterHistory',
+  PREFERRED_THEME_KEY: 'preferredTheme'
+};
+
+
+
+// Cold Storage Sync Configuration
+export const COLD_STORAGE_CONFIG = {
+  SYNC_INTERVAL_MINUTES: 5,
+  BATCH_SIZE: 500,
+  MAX_CONSECUTIVE_FAILURES: 3,
+  CIRCUIT_RESET_TIME_MS: 30 * 60 * 1000, // 30 minutes
+};
+
+// URL Filtering Configuration
+export const URL_FILTER_CONFIG = {
+  // URL schemes to ignore
+  IGNORED_URL_SCHEMES: [
+    'about:', 'data:', 'blob:', 'javascript:', 'mailto:', 'tel:'
+  ],
+  
+  // Generic titles to filter out
+  GENERIC_TITLES: [
+    '', 'untitled'
+  ],
+  
+  // Google search domains to filter
+  GOOGLE_SEARCH_DOMAINS: [
+    'www.google.com',
+    'www.google.co.uk',
+    'www.google.ca',
+    'www.google.com.au',
+    'www.google.de',
+    'www.google.fr',
+    'www.google.es',
+    'www.google.it',
+    'www.google.co.jp',
+    'www.google.com.br',
+  ],
+  
+  // Authentication path endings to filter
+  AUTH_PATH_ENDINGS: [
+    // Login/Signup
+    '/login', '/signin', '/signup', '/auth', '/authenticate',
+    '/sso', '/oauth', '/account/login', '/account/signin', '/login.php', '/login.aspx',
+    // Logout
+    '/logout', '/signout', '/account/logout', '/account/signout',
+    // Password Reset
+    '/password/reset', '/forgot-password', '/reset-password', '/account/reset'
+  ],
+  
+  // Authentication title keywords to filter
+  AUTH_TITLE_KEYWORDS: [
+    // Login/Signup
+    'log in', 'login', 'sign in', 'signin', 'sign up', 'signup',
+    'authenticate', 'authentication', 'account access', 'access account',
+    // Logout
+    'log out', 'logout', 'sign out', 'signout',
+    // Password Reset
+    'reset password', 'forgot password',
+    // Error Pages
+    '404', 'not found', 'error', 'server error', 'oops', 'problem loading page'
+  ]
+};
+
+// Dory Ranking Configuration
+export const RANKING_CONFIG = {
+  // BM25 parameters
+  BM25: {
+    K1: 1.2,
+    B_TITLE: 0.75,
+    B_URL: 0.75,
+    WEIGHT_TITLE: 1.0,
+    WEIGHT_URL: 2.0,
   },
-  AUTH: {
-    ME: '/api/auth/me',
-    TOKEN: '/api/auth/token',     // Exchange Google token for session
-    REFRESH: '/api/auth/refresh', // Refresh access token using refresh token
-    LOGOUT: '/api/auth/logout'    // Logout endpoint
+  
+  // Time decay half-lives in seconds
+  TIME_DECAY: {
+    SHORT_TERM: 7200,  // 2-hour half-life
+    MEDIUM_TERM: 86400, // 1-day half-life
+    LONG_TERM: 604800,  // 7-day half-life
   },
-  CLUSTERING: {
-    SUGGESTIONS: '/api/clustering/suggestions'
+  
+  // Recency weighting factors
+  RECENCY_WEIGHTS: {
+    SHORT_TERM: 1.0,
+    MEDIUM_TERM: 0.5,
+    LONG_TERM: 0.2,
+  },
+  
+  // Substring matching bonus weights
+  SUBSTRING_BONUS: {
+    URL_PREFIX: 2.0,
+    URL_CONTAINS: 1.0,
+    TITLE_PREFIX: 1.0,
+    TITLE_CONTAINS: 0.5,
   }
-} as const;
+};
 
-export const REQUEST_TIMEOUT = 60000;
-export const RETRY_ATTEMPTS = 3;
-export const RETRY_DELAY = 5000;
+// Content Extraction Configuration
 export const USE_FIT_MARKDOWN = true;
-export const EVENT_BATCH_SIZE = 50;
-export const EVENT_FLUSH_INTERVAL = 30000;
-
-// Search configuration
-export const SEARCH_DEBOUNCE_MS = 150; // Debounce delay for search inputs
-export const MIN_SEARCH_QUERY_LENGTH = 2; // Minimum length for a query to trigger search
-
 export const QUEUE_CONFIG = {
   // Maximum number of retries for processing a URL
   MAX_RETRIES: 3,
@@ -51,16 +167,22 @@ export const QUEUE_CONFIG = {
   DOM_IDLE_CHECK_DELAY_MS: 500
 } as const;
 
-// ============================================================================
-// Debug Configuration
-// ============================================================================
+// Search Configuration
+export const SEARCH_CONFIG = {
+  // Debounce delay for search inputs (in milliseconds)
+  DEBOUNCE_MS: 150,
+  SEARCH_DEBOUNCE_MS: 300, // For the refactored components
+  
+  // Minimum length for a query to trigger search
+  MIN_QUERY_LENGTH: 2,
+  
+  // Maximum number of history results to request
+  MAX_HISTORY_RESULTS: 100,
+  
+  // Maximum number of local results to show
+  MAX_LOCAL_RESULTS: 10,
+  
+  // Maximum number of semantic results to show
+  MAX_SEMANTIC_RESULTS: 20
+} as const;
 
-// Debug mode flag - controls verbose logging
-export const DEBUG = true; // Force debug logs on 
-
-// ============================================================================
-// Feature Flags
-// ============================================================================
-
-// Controls whether the global search shortcut (Command+Shift+Space) is enabled
-export const ENABLE_GLOBAL_SEARCH = true; 

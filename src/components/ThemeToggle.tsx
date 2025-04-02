@@ -1,15 +1,21 @@
-// src/pages/newtab/ThemeToggle.tsx
+/**
+ * @file ThemeToggle.tsx
+ * 
+ * A toggle button component for switching between light and dark mode
+ * Uses the background API via useBackgroundPreferences
+ */
+
 import React from 'react';
 import { FiSun, FiMoon } from 'react-icons/fi';
-import useDarkMode from '../utils/useDarkMode';
-import './ThemeToggle.css'; // Import the direct CSS
+import useBackgroundPreferences from '../hooks/useBackgroundPreferences';
+import './ThemeToggle.css';
 
 const ThemeToggle: React.FC = () => {
-  const { isDarkMode, toggle } = useDarkMode();
+  const { isDarkMode, toggleTheme } = useBackgroundPreferences();
 
   return (
     <button
-      onClick={toggle}
+      onClick={toggleTheme}
       aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
       title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
       className="theme-toggle"

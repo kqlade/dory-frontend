@@ -1,4 +1,7 @@
-// src/pages/newtab/index.tsx
+/**
+ * @file index.tsx
+ * Entry point for the New Tab page
+ */
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -7,23 +10,8 @@ import { queryClient } from '../../background/queryClient';
 import NewTab from './NewTab';
 import './newtab.css';
 
-// Dexie imports
-import { initializeDexieDB } from '../../db/dexieDB';
-/**
- * Initialize Dexie in the new-tab context.
- */
-async function initDexieForNewTab() {
-  try {
-    // Initialize Dexie without authentication dependency
-    await initializeDexieDB();
-    console.log('[NewTab] Dexie DB initialized');
-  } catch (err) {
-    console.error('[NewTab] Error initializing Dexie =>', err);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', async () => {
-  await initDexieForNewTab();
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('[NewTab] Initializing New Tab page');
 
   const container = document.getElementById('app-container');
   if (!container) {

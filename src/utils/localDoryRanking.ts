@@ -6,61 +6,21 @@
  *  2) Contextual intelligence (recency, Markov transitions, time-of-day, etc.) as tie-breakers.
  */
 
-import { getDB } from '../db/dexieDB';  // Adjust to your Dexie instance path
-import { DEBUG } from '../config';
+import { DEBUG, RANKING_CONFIG } from '../config';
 import jw from 'jaro-winkler';    // Optional for fuzzy fallback
 import * as mathjs from 'mathjs'; // For numeric/entropy ops as needed
+import { PageRecord, VisitRecord, EdgeRecord, BrowsingSession } from '../types';
+import { 
+  pageRepository, 
+  visitRepository, 
+  edgeRepository, 
+  sessionRepository,
+  metadataRepository 
+} from '../db/repositories';
 
 // -------------------------------------------------------------------------
-// 1) Data Interfaces
+// 1) Helper Functions
 // -------------------------------------------------------------------------
-export interface PageRecord {
-  pageId: string;
-  url: string;
-  title: string;
-  domain: string;
-  firstVisit: number;
-  lastVisit: number;
-  visitCount: number;
-  totalActiveTime: number;
-  personalScore: number; // in [0..1]
-  syncStatus?: 'synced' | 'pending' | 'conflict';
-  updatedAt?: number;
-  hasExtractedContent?: boolean;
-  contentAvailability?: 'local' | 'server' | 'both' | 'none';
-}
-
-export interface VisitRecord {
-  visitId: string;
-  pageId: string;
-  sessionId: number;
-  startTime: number;
-  totalActiveTime: number;
-  fromPageId?: string;
-  endTime?: number;
-  isBackNavigation?: boolean;
-}
-
-export interface EdgeRecord {
-  edgeId?: number;
-  fromPageId: string;
-  toPageId: string;
-  sessionId: number;
-  timestamp: number;
-  count: number;
-  firstTraversal: number;
-  lastTraversal: number;
-  isBackNavigation?: boolean;
-}
-
-export interface BrowsingSession {
-  sessionId?: number;
-  startTime: number;
-  endTime?: number;
-  lastActivityAt: number;
-  totalActiveTime: number;
-  isActive: boolean;
-}
 
 function log(...args: any[]) {
   if (DEBUG) console.log(...args);
@@ -115,14 +75,14 @@ function computeSubstringBonus(query: string, page: PageRecord): number {
 
   let bonus = 0;
   if (url.startsWith(q)) {
-    bonus += 2;
+    bonus += RANKING_CONFIG.SUBSTRING_BONUS.URL_PREFIX;
   } else if (url.includes(q)) {
-    bonus += 1;
+    bonus += RANKING_CONFIG.SUBSTRING_BONUS.URL_CONTAINS;
   }
   if (title.startsWith(q)) {
-    bonus += 1;
+    bonus += RANKING_CONFIG.SUBSTRING_BONUS.TITLE_PREFIX;
   } else if (title.includes(q)) {
-    bonus += 0.5;
+    bonus += RANKING_CONFIG.SUBSTRING_BONUS.TITLE_CONTAINS;
   }
   return bonus;
 }
@@ -143,12 +103,12 @@ class BM25Engine {
   private avgTitleLen = 1;
   private avgUrlLen = 1;
 
-  // BM25 parameters; note heavier wUrl to prioritize URL matches
-  private k1 = 1.2;
-  private bTitle = 0.75;
-  private bUrl = 0.75;
-  private wTitle = 1.0;
-  private wUrl = 2.0;
+  // BM25 parameters from config
+  private k1 = RANKING_CONFIG.BM25.K1;
+  private bTitle = RANKING_CONFIG.BM25.B_TITLE;
+  private bUrl = RANKING_CONFIG.BM25.B_URL;
+  private wTitle = RANKING_CONFIG.BM25.WEIGHT_TITLE;
+  private wUrl = RANKING_CONFIG.BM25.WEIGHT_URL;
 
   constructor(pageRecords: PageRecord[]) {
     this.buildIndex(pageRecords);
@@ -285,9 +245,9 @@ function multiScaleRecencyScore(
     const delta = nowSec - toSeconds(pv.startTime);
     if (delta < 0) continue;
 
-    const shortDecay = Math.exp(- (log2 * delta) / 7200);     // 2-hour half-life
-    const medDecay   = Math.exp(- (log2 * delta) / 86400);    // 1-day half-life
-    const longDecay  = Math.exp(- (log2 * delta) / 604800);   // 7-day half-life
+    const shortDecay = Math.exp(- (log2 * delta) / RANKING_CONFIG.TIME_DECAY.SHORT_TERM);
+    const medDecay   = Math.exp(- (log2 * delta) / RANKING_CONFIG.TIME_DECAY.MEDIUM_TERM);
+    const longDecay  = Math.exp(- (log2 * delta) / RANKING_CONFIG.TIME_DECAY.LONG_TERM);
 
     const dwell = pv.totalActiveTime || 0;
     const dwellFactor = 1 + (Math.atan(dwell / 30) / (Math.PI / 2)) * 0.3;
@@ -296,7 +256,11 @@ function multiScaleRecencyScore(
     mediumTerm += medDecay  * dwellFactor;
     longTerm   += longDecay * dwellFactor;
   }
-  return shortTerm + 0.5 * mediumTerm + 0.2 * longTerm;
+  return (
+    RANKING_CONFIG.RECENCY_WEIGHTS.SHORT_TERM * shortTerm + 
+    RANKING_CONFIG.RECENCY_WEIGHTS.MEDIUM_TERM * mediumTerm + 
+    RANKING_CONFIG.RECENCY_WEIGHTS.LONG_TERM * longTerm
+  );
 }
 
 interface SessionFeatures {
@@ -622,12 +586,11 @@ export class AdvancedLocalRanker {
   // -----------------------------------------------------------------------
   private async loadDataFromDB(): Promise<void> {
     try {
-      const db = await getDB();
       const [pages, visits, edges, sessions] = await Promise.all([
-        db.pages.toArray(),
-        db.visits.toArray(),
-        db.edges.toArray(),
-        db.sessions.toArray()
+        pageRepository.getAllPages(),
+        visitRepository.getAllVisits(),
+        edgeRepository.getAllEdges(),
+        sessionRepository.getAllSessions()
       ]);
       this.pages = pages;
       this.visits = visits;
@@ -644,8 +607,7 @@ export class AdvancedLocalRanker {
 
   private async loadModelWeights() {
     try {
-      const db = await getDB();
-      const record = await db.metadata.get('rankingModel');
+      const record = await metadataRepository.getByKey('rankingModel');
       if (record) {
         const parsed = JSON.parse(record.value);
         this.model.bias = parsed.bias;
@@ -658,15 +620,13 @@ export class AdvancedLocalRanker {
 
   private async saveModelWeights() {
     try {
-      const db = await getDB();
-      await db.metadata.put({
-        key: 'rankingModel',
-        value: JSON.stringify({
+      await metadataRepository.saveValue(
+        'rankingModel',
+        JSON.stringify({
           bias: this.model.bias,
           weights: this.model.weights
-        }),
-        updatedAt: Date.now()
-      });
+        })
+      );
     } catch (err) {
       console.error('[AdvancedLocalRanker] Failed to persist model weights:', err);
     }
@@ -674,11 +634,7 @@ export class AdvancedLocalRanker {
 
   private async updatePageInDB(page: PageRecord) {
     try {
-      const db = await getDB();
-      await db.pages.update(page.pageId, {
-        personalScore: page.personalScore,
-        updatedAt: Date.now()
-      });
+      await pageRepository.updatePersonalScore(page.pageId, page.personalScore);
     } catch (err) {
       console.error('[AdvancedLocalRanker] Failed to update page in DB:', err);
     }

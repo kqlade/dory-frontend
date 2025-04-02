@@ -1,59 +1,56 @@
-// src/services/activityTracker.ts
+/**
+ * @file activityTracker.ts
+ * Tracks user activity (tab visibility) and notifies the background script.
+ */
 
-import { createMessage, MessageType } from '../utils/messageSystem';
+import { getBackgroundAPI } from '../utils/comlinkSetup';
+import type { BackgroundAPI } from '../background/api';
 
-console.log('[ActivityTracker] Running...');
+/** Timestamp of the last time the page became active. */
+let lastActiveTime: number | null = document.hidden ? null : Date.now();
 
 /**
- * Tracks user activity (tab visibility).
- * When tab is visible: "active",
- * when tab is hidden or closed: "inactive".
+ * Reports activity data to the background script using Comlink.
  */
-let lastActiveTime: number | null = null;
-
-/**
- * Send an ACTIVITY_EVENT to the background.
- */
-function notifyActivity(isActive: boolean, duration: number) {
-  const msg = createMessage(MessageType.ACTIVITY_EVENT, {
-    isActive,
-    pageUrl: window.location.href,
-    duration
-  });
-  chrome.runtime.sendMessage(msg).catch((err) => {
-    console.error('[ActivityTracker] Error sending ACTIVITY_EVENT:', err);
-  });
+async function notifyActivity(isActive: boolean, duration: number): Promise<void> {
+  try {
+    const api = getBackgroundAPI<BackgroundAPI>();
+    const activity = await api.activity;
+    await activity.reportActivity({
+      isActive,
+      pageUrl: window.location.href,
+      duration,
+    });
+  } catch (err) {
+    console.error('[ActivityTracker] Error reporting activity:', err);
+  }
 }
 
 /**
- * Handle changes in visibility (from document.hidden).
+ * Handles visibility changes (document.hidden).
  */
-function handleVisibilityChange() {
-  if (document.hidden) {
-    // Going inactive
-    if (lastActiveTime !== null) {
-      const now = Date.now();
-      const diffSec = (now - lastActiveTime) / 1000;
-      lastActiveTime = null;
-      notifyActivity(false, diffSec);
-    }
-  } else {
-    // Becoming active
+function handleVisibilityChange(): void {
+  if (document.hidden && lastActiveTime !== null) {
+    // Transitioning from active to inactive
+    const now = Date.now();
+    const diffSec = (now - lastActiveTime) / 1000;
+    lastActiveTime = null;
+    notifyActivity(false, diffSec);
+  } else if (!document.hidden) {
+    // Transitioning from inactive to active
     lastActiveTime = Date.now();
     notifyActivity(true, 0);
   }
 }
 
-// Listen for visibility changes
+/** Listen for visibility changes. */
 document.addEventListener('visibilitychange', handleVisibilityChange);
 
 /**
- * Handle pagehide when user leaves the page.
- * Use this instead of unload for bfcache compatibility.
+ * Handle pagehide (for when the user actually leaves the page,
+ * not just bfcache).
  */
-window.addEventListener('pagehide', (event) => {
-  // Only send final data if the page is truly unloading,
-  // i.e. not just being put into bfcache.
+window.addEventListener('pagehide', event => {
   if (!event.persisted && lastActiveTime !== null) {
     const now = Date.now();
     const diffSec = (now - lastActiveTime) / 1000;
@@ -61,9 +58,3 @@ window.addEventListener('pagehide', (event) => {
     lastActiveTime = null;
   }
 });
-
-// Initialize state on load
-if (!document.hidden) {
-  lastActiveTime = Date.now();
-  notifyActivity(true, 0);
-}

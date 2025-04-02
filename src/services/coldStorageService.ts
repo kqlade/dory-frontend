@@ -3,26 +3,31 @@
  * 
  * Cold Storage Sync Service
  * Runs every 5 minutes to batch-upload data from IndexedDB to the backend.
+ * Uses the repository pattern for database access and clean architecture principles.
  */
 
-import { getDB } from '../db/dexieDB';
-import { API_BASE_URL, ENDPOINTS } from '../config';
-import { EventType } from '../api/types';
-import { getCurrentUserId } from '../services/userService';
+// Configuration and constants
+import { 
+  API_BASE_URL, 
+  COLD_STORAGE_ENDPOINTS, 
+  COLD_STORAGE_CONFIG, 
+  STORAGE_KEYS,
+  DEBUG 
+} from '../config';
 
-// Typical daily interval in minutes
-const SYNC_INTERVAL_MINUTES = 5; // Changed from 10 minutes to 5 minutes
-const LAST_SYNC_KEY = 'lastColdStorageSync';
-const BATCH_SIZE = 500; // Number of records per batch
-const DEBUG_MODE = process.env.NODE_ENV === 'development';
+// Repositories and types
+import { 
+  pageRepository, 
+  visitRepository, 
+  sessionRepository,
+  eventRepository,
+  EventType
+} from '../db/repositories';
 
-// Circuit breaker settings
-const CIRCUIT_BREAKER_KEY = 'coldStorageSyncCircuitBreaker';
-const MAX_CONSECUTIVE_FAILURES = 3;
-const CIRCUIT_RESET_TIME_MS = 30 * 60 * 1000; // 30 minutes
+// Services
+import { authService } from './authService';
 
-// Telemetry settings
-const TELEMETRY_KEY = 'coldStorageSyncTelemetry';
+// Sync sources - keeping this as local since it's specific to this service's implementation
 const SYNC_SOURCE = {
   ALARM: 'alarm',
   SESSION_END: 'session_end',
@@ -54,7 +59,7 @@ export class ColdStorageSync {
     chrome.alarms.clear('doryColdStorageSync');
     // Create a new daily alarm
     chrome.alarms.create('doryColdStorageSync', {
-      periodInMinutes: SYNC_INTERVAL_MINUTES,
+      periodInMinutes: COLD_STORAGE_CONFIG.SYNC_INTERVAL_MINUTES,
       when: Date.now() + 60_000 // start ~1 min from now
     });
     console.log('[ColdStorageSync] Alarm scheduled for 5-minute sync intervals');
@@ -84,11 +89,12 @@ export class ColdStorageSync {
 
       // Get the current database statistics for logging
       try {
-        const db = await getDB();
-        const pageCount = await db.pages.count();
-        const visitCount = await db.visits.count();
-        const sessionCount = await db.sessions.count();
-        const eventCount = await db.events.count();
+        const [pageCount, visitCount, sessionCount, eventCount] = await Promise.all([
+          pageRepository.getCount(),
+          visitRepository.getCount(),
+          sessionRepository.getCount(),
+          eventRepository.getCount()
+        ]);
         
         console.log(
           `[ColdStorageSync] Database status - ` +
@@ -103,7 +109,7 @@ export class ColdStorageSync {
       await this.syncData();
 
       // Record successful completion
-      await chrome.storage.local.set({ [LAST_SYNC_KEY]: Date.now() });
+      await chrome.storage.local.set({ [STORAGE_KEYS.LAST_SYNC_KEY]: Date.now() });
       
       const syncDuration = Date.now() - this.syncStartTime;
       console.log(
@@ -140,21 +146,16 @@ export class ColdStorageSync {
    * The core logic that fetches data from Dexie and sends it in batches.
    */
   private async syncData(): Promise<void> {
-    const db = await getDB();
-
     // Get last sync time from chrome.storage.local
-    const store = await chrome.storage.local.get(LAST_SYNC_KEY);
-    const lastSyncTime: number = store[LAST_SYNC_KEY] ?? 0;
+    const store = await chrome.storage.local.get(STORAGE_KEYS.LAST_SYNC_KEY);
+    const lastSyncTime: number = store[STORAGE_KEYS.LAST_SYNC_KEY] ?? 0;
 
     // Current user ID for stamping records
     const userId = await this.getCurrentUserId();
 
     // First sync visits to have the data available for page duration calculations
     {
-      const visits = await db.visits
-        .where('startTime')
-        .above(lastSyncTime)
-        .toArray();
+      const visits = await visitRepository.getVisitsAfterTime(lastSyncTime);
 
       // Create map of page durations using visit data
       const pageDurations: Record<string, number> = {};
@@ -169,10 +170,7 @@ export class ColdStorageSync {
       await this.syncCollection('visits', visits, userId);
       
       // Now sync pages with accurate duration data
-      const pages = await db.pages
-        .where('updatedAt')
-        .above(lastSyncTime)
-        .toArray();
+      const pages = await pageRepository.getPagesUpdatedAfterTime(lastSyncTime);
 
       // Enhance pages with duration data before syncing
       const pagesWithDuration = pages.map(page => ({
@@ -186,23 +184,17 @@ export class ColdStorageSync {
 
     // sessions, events, search clicks, etc.
     {
-      const sessions = await db.sessions
-        .where('startTime')
-        .above(lastSyncTime)
-        .toArray();
-
+      const sessions = await sessionRepository.getSessionsAfterTime(lastSyncTime);
       await this.syncCollection('sessions', sessions, userId);
     }
 
     // Example: sync search click events
     {
-      const clickEvents = await db.events
-        .where('operation')
-        .equals(EventType.SEARCH_CLICK)
-        .and(e => e.timestamp > lastSyncTime)
-        .toArray();
-
-      await this.syncEvents(EventType.SEARCH_CLICK, clickEvents, userId);
+      const clickEvents = await eventRepository.getEventsByTypeAfterTime(
+        EventType.SEARCH_RESULT_CLICKED, 
+        lastSyncTime
+      );
+      await this.syncEvents(EventType.SEARCH_RESULT_CLICKED, clickEvents, userId);
     }
 
     // Add more collections as needed...
@@ -212,11 +204,11 @@ export class ColdStorageSync {
    * Get the current user ID, throws error if not authenticated
    */
   private async getCurrentUserId(): Promise<string> {
-    const userId = await getCurrentUserId();
-    if (!userId) {
+    const authState = authService.getAuthState();
+    if (!authState.isAuthenticated || !authState.user?.id) {
       throw new Error('User not authenticated');
     }
-    return userId;
+    return authState.user.id;
   }
 
   /**
@@ -232,8 +224,8 @@ export class ColdStorageSync {
     const enriched = records.map(r => ({ ...r, userId: r.userId || userId }));
     let syncedCount = 0;
 
-    for (let i = 0; i < enriched.length; i += BATCH_SIZE) {
-      const batch = enriched.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < enriched.length; i += COLD_STORAGE_CONFIG.BATCH_SIZE) {
+      const batch = enriched.slice(i, i + COLD_STORAGE_CONFIG.BATCH_SIZE);
       
       try {
         const batchStartTime = Date.now();
@@ -245,7 +237,7 @@ export class ColdStorageSync {
         
         console.log(
           `[ColdStorageSync] Synced ${collectionName} batch ` +
-          `${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(enriched.length / BATCH_SIZE)} ` +
+          `${Math.floor(i / COLD_STORAGE_CONFIG.BATCH_SIZE) + 1}/${Math.ceil(enriched.length / COLD_STORAGE_CONFIG.BATCH_SIZE)} ` +
           `(${batch.length} records in ${batchDuration}ms)`
         );
       } catch (error: any) {
@@ -283,7 +275,7 @@ export class ColdStorageSync {
 
     switch (collectionName) {
       case 'sessions':
-        endpoint = ENDPOINTS.COLD_STORAGE.SESSIONS;
+        endpoint = COLD_STORAGE_ENDPOINTS.SESSIONS;
         transformed = batch.map(s => ({
           sessionId: String(s.sessionId),
           userId: s.userId,
@@ -295,7 +287,7 @@ export class ColdStorageSync {
         break;
 
       case 'visits':
-        endpoint = ENDPOINTS.COLD_STORAGE.VISITS;
+        endpoint = COLD_STORAGE_ENDPOINTS.VISITS;
         transformed = batch.map(v => ({
           visitId: String(v.visitId),
           userId: v.userId,
@@ -310,7 +302,7 @@ export class ColdStorageSync {
         break;
 
       case 'pages':
-        endpoint = ENDPOINTS.COLD_STORAGE.PAGES;
+        endpoint = COLD_STORAGE_ENDPOINTS.PAGES;
         transformed = batch.map(p => ({
           pageId: String(p.pageId),
           userId: p.userId,
@@ -328,12 +320,12 @@ export class ColdStorageSync {
 
       default:
         // Generic fallback if you have a catch-all
-        endpoint = `${ENDPOINTS.COLD_STORAGE.BASE}/${collectionName}`;
+        endpoint = `${COLD_STORAGE_ENDPOINTS.BASE}/${collectionName}`;
         transformed = batch;
     }
 
     // Debug
-    if (DEBUG_MODE) {
+    if (DEBUG) {
       console.log(`[ColdStorageSync] POSTing ${transformed.length} ${collectionName} items to ${endpoint}`, 
         transformed.length > 5 
           ? [transformed[0], '(...omitted...)', transformed[transformed.length - 1]]
@@ -368,14 +360,14 @@ export class ColdStorageSync {
 
     const enriched = events.map(e => ({ ...e, userId: e.userId || userId }));
 
-    for (let i = 0; i < enriched.length; i += BATCH_SIZE) {
-      const batch = enriched.slice(i, i + BATCH_SIZE);
-      if (eventType === EventType.SEARCH_CLICK) {
+    for (let i = 0; i < enriched.length; i += COLD_STORAGE_CONFIG.BATCH_SIZE) {
+      const batch = enriched.slice(i, i + COLD_STORAGE_CONFIG.BATCH_SIZE);
+      if (eventType === EventType.SEARCH_RESULT_CLICKED) {
         await this.sendSearchClickBatch(batch);
       } else {
         console.warn(`[ColdStorageSync] No direct sync logic for ${eventType}, skipping`);
       }
-      console.log(`[ColdStorageSync] Synced ${eventType} batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(enriched.length / BATCH_SIZE)}`);
+      console.log(`[ColdStorageSync] Synced ${eventType} batch ${Math.floor(i / COLD_STORAGE_CONFIG.BATCH_SIZE) + 1}/${Math.ceil(enriched.length / COLD_STORAGE_CONFIG.BATCH_SIZE)}`);
     }
   }
 
@@ -383,7 +375,7 @@ export class ColdStorageSync {
    * Example specialized method for search click events
    */
   private async sendSearchClickBatch(events: any[]): Promise<void> {
-    const endpoint = ENDPOINTS.COLD_STORAGE.SEARCH_CLICKS;
+    const endpoint = COLD_STORAGE_ENDPOINTS.SEARCH_CLICKS;
     const transformed = events.map(e => ({
       clickId: `click_${e.data?.searchSessionId}_${e.data?.pageId}_${e.timestamp}`,
       userId: e.userId,
@@ -394,7 +386,7 @@ export class ColdStorageSync {
       // etc...
     }));
 
-    if (DEBUG_MODE) {
+    if (DEBUG) {
       console.log('[ColdStorageSync] Posting search clicks =>', transformed);
     }
 
@@ -416,22 +408,22 @@ export class ColdStorageSync {
    * Checks if the circuit breaker is open (too many failures recently)
    */
   private async isCircuitOpen(): Promise<boolean> {
-    const circuitData = await chrome.storage.local.get(CIRCUIT_BREAKER_KEY);
-    const breakerState = circuitData[CIRCUIT_BREAKER_KEY];
+    const circuitData = await chrome.storage.local.get(STORAGE_KEYS.CIRCUIT_BREAKER_KEY);
+    const breakerState = circuitData[STORAGE_KEYS.CIRCUIT_BREAKER_KEY];
     
     if (!breakerState) return false;
     
     // If we've had too many failures and we're within the reset time window
     if (
-      breakerState.failureCount >= MAX_CONSECUTIVE_FAILURES && 
-      Date.now() - breakerState.lastFailure < CIRCUIT_RESET_TIME_MS
+      breakerState.failureCount >= COLD_STORAGE_CONFIG.MAX_CONSECUTIVE_FAILURES && 
+      Date.now() - breakerState.lastFailure < COLD_STORAGE_CONFIG.CIRCUIT_RESET_TIME_MS
     ) {
       console.log(`[ColdStorageSync] Circuit breaker open: ${breakerState.failureCount} consecutive failures`);
       return true;
     }
     
     // If the circuit reset time has passed, we can close the circuit
-    if (Date.now() - breakerState.lastFailure >= CIRCUIT_RESET_TIME_MS) {
+    if (Date.now() - breakerState.lastFailure >= COLD_STORAGE_CONFIG.CIRCUIT_RESET_TIME_MS) {
       console.log('[ColdStorageSync] Circuit breaker reset time reached, closing circuit');
       await this.resetCircuitBreaker();
     }
@@ -443,14 +435,14 @@ export class ColdStorageSync {
    * Record a failure in the circuit breaker
    */
   private async recordSyncFailure(error: any): Promise<void> {
-    const circuitData = await chrome.storage.local.get(CIRCUIT_BREAKER_KEY);
-    const breakerState = circuitData[CIRCUIT_BREAKER_KEY] || { failureCount: 0, lastFailure: 0 };
+    const circuitData = await chrome.storage.local.get(STORAGE_KEYS.CIRCUIT_BREAKER_KEY);
+    const breakerState = circuitData[STORAGE_KEYS.CIRCUIT_BREAKER_KEY] || { failureCount: 0, lastFailure: 0 };
     
     breakerState.failureCount += 1;
     breakerState.lastFailure = Date.now();
     breakerState.lastError = error?.message || String(error);
     
-    await chrome.storage.local.set({ [CIRCUIT_BREAKER_KEY]: breakerState });
+    await chrome.storage.local.set({ [STORAGE_KEYS.CIRCUIT_BREAKER_KEY]: breakerState });
     
     console.error(
       `[ColdStorageSync] Recorded sync failure #${breakerState.failureCount}: ${breakerState.lastError}`
@@ -465,7 +457,7 @@ export class ColdStorageSync {
    */
   private async recordSyncSuccess(): Promise<void> {
     await chrome.storage.local.set({ 
-      [CIRCUIT_BREAKER_KEY]: { 
+      [STORAGE_KEYS.CIRCUIT_BREAKER_KEY]: { 
         failureCount: 0, 
         lastFailure: 0,
         lastSuccess: Date.now()
@@ -481,7 +473,7 @@ export class ColdStorageSync {
    */
   private async resetCircuitBreaker(): Promise<void> {
     await chrome.storage.local.set({ 
-      [CIRCUIT_BREAKER_KEY]: { 
+      [STORAGE_KEYS.CIRCUIT_BREAKER_KEY]: { 
         failureCount: 0, 
         lastFailure: 0 
       } 
@@ -497,8 +489,8 @@ export class ColdStorageSync {
     recordCount: number, 
     error?: any
   ): Promise<void> {
-    const telemetryData = await chrome.storage.local.get(TELEMETRY_KEY);
-    const telemetry = telemetryData[TELEMETRY_KEY] || {
+    const telemetryData = await chrome.storage.local.get(STORAGE_KEYS.TELEMETRY_KEY);
+    const telemetry = telemetryData[STORAGE_KEYS.TELEMETRY_KEY] || {
       totalSyncs: 0,
       successfulSyncs: 0,
       failedSyncs: 0,
@@ -526,7 +518,7 @@ export class ColdStorageSync {
     telemetry.lastSync = Date.now();
     telemetry.lastSyncDuration = syncDuration;
     
-    await chrome.storage.local.set({ [TELEMETRY_KEY]: telemetry });
+    await chrome.storage.local.set({ [STORAGE_KEYS.TELEMETRY_KEY]: telemetry });
   }
 }
 
@@ -559,7 +551,7 @@ export const coldStorageSync = new ColdStorageSync();
  */
 export async function resetColdStorageSyncCircuitBreaker(): Promise<void> {
   await chrome.storage.local.set({ 
-    [CIRCUIT_BREAKER_KEY]: { 
+    [STORAGE_KEYS.CIRCUIT_BREAKER_KEY]: { 
       failureCount: 0, 
       lastFailure: 0,
       lastSuccess: Date.now() 

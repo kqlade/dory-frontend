@@ -1,319 +1,136 @@
-// src/services/contentExtractor.ts
-"use strict";
-
-import { DefaultMarkdownGenerator } from "../html2text/markdownGenerator";
-import { PruningContentFilter } from "../html2text/content_filter_strategy";
-import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from "../config";
-import {
-  createMessage,
-  MessageType,
-  ExtractionData,
-  ContentDataMessage
-} from "../utils/messageSystem";
-
-console.log("[ContentExtractor] Loaded content script...");
-
-/** 
- * Current context for extraction. 
- * We only store these so we can pass them back to the background script 
- * once we generate markdown. 
- */
-let currentPageId: string | null = null;
-let currentVisitId: string | null = null;
-let currentSessionId: string | null = null;
-
-/** 
- * A promise that resolves once we have the extraction context. 
- */
-let contextReady: Promise<void>;
-let resolveContext: (() => void) | null = null;
-
-function initContextPromise() {
-  contextReady = new Promise<void>((resolve) => {
-    if (currentPageId && currentVisitId && currentSessionId) {
-      resolve();
-    } else {
-      resolveContext = resolve;
-    }
-  });
-}
-initContextPromise();
-
 /**
- * Called from SET_EXTRACTION_CONTEXT message to store new IDs
+ * @file contentExtractor.ts
+ * Exposes an API to extract content from the current page, via Comlink.
  */
-export function setExtractionContext(
-  pageId: string,
-  visitId: string,
-  sessionId: string | null
-): void {
-  console.log("[ContentExtractor] setExtractionContext =>", pageId, visitId, sessionId);
-  currentPageId = pageId;
-  currentVisitId = visitId;
-  currentSessionId = sessionId;
-  if (resolveContext) {
-    resolveContext();
-    resolveContext = null;
-  }
-}
 
-/** Config constants (loaded from QUEUE_CONFIG) */
+import { exposeBackgroundAPI } from '../utils/comlinkSetup';
+import { DefaultMarkdownGenerator } from '../html2text/markdownGenerator';
+import { PruningContentFilter } from '../html2text/content_filter_strategy';
+import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from '../config';
+import { ExtractedContent } from '../types';
+
 const {
-  DOM_IDLE_TIMEOUT_MS,
-  DOM_IDLE_CHECK_DELAY_MS,
-  PROCESSING_TIMEOUT_MS,
-  RETRY_DELAY_MS,
-  MAX_RETRIES
+  DOM_IDLE_TIMEOUT_MS = 10000,
+  DOM_IDLE_CHECK_DELAY_MS = 1000,
+  PROCESSING_TIMEOUT_MS = 30000,
+  RETRY_DELAY_MS = 2000,
+  MAX_RETRIES = 3,
 } = QUEUE_CONFIG;
-
-const MARKDOWN_BODY_WIDTH = 80;
-const CONTENT_FILTER_MIN_BLOCKS = 5;
-const CONTENT_FILTER_STRATEGY = "dynamic";
-const CONTENT_FILTER_THRESHOLD = 0.5;
-const CONTENT_FILTER_LANGUAGE = "english";
-const DEFAULT_TITLE = "Untitled";
 
 let extractionTimeoutId: number | null = null;
 
+const contentAPI = {
+  async extractContent(options: { retryCount?: number } = {}): Promise<ExtractedContent> {
+    const { retryCount = 0 } = options;
+    setupExtractionTimeout();
+
+    try {
+      await waitForDomIdle();
+      const html = document.body?.innerHTML || '';
+      if (!html) throw new Error('Empty document');
+
+      const filter = new PruningContentFilter(
+        undefined,
+        5,             // Min blocks
+        'dynamic',     // Strategy
+        0.5,           // Threshold
+        'english'      // Language
+      );
+
+      const mdGen = new DefaultMarkdownGenerator(undefined, { body_width: 80 });
+      const result = mdGen.generateMarkdown(html, location.href, { body_width: 80 }, filter, true);
+
+      const sourceMarkdown = USE_FIT_MARKDOWN
+        ? result.fitMarkdown
+        : result.markdownWithCitations || result.rawMarkdown;
+
+      if (!sourceMarkdown) throw new Error('Markdown generation failed');
+
+      clearExtractionTimeout();
+
+      return {
+        title: document.title || 'Untitled',
+        url: location.href,
+        markdown: sourceMarkdown,
+        timestamp: Date.now(),
+        metadata: { language: 'en' },
+      };
+    } catch (err) {
+      if (retryCount < MAX_RETRIES) {
+        await delay(RETRY_DELAY_MS);
+        return this.extractContent({ retryCount: retryCount + 1 });
+      }
+      clearExtractionTimeout();
+      throw err;
+    }
+  },
+
+  isPageReady(): boolean {
+    return document.readyState === 'complete';
+  },
+};
+
+function setupExtractionTimeout() {
+  clearExtractionTimeout();
+  extractionTimeoutId = window.setTimeout(() => {
+    console.warn('[ContentExtractor] Extraction timed out');
+    extractionTimeoutId = null;
+  }, PROCESSING_TIMEOUT_MS);
+
+  window.addEventListener('pagehide', ev => {
+    if (!ev.persisted) clearExtractionTimeout();
+  });
+}
+
+function clearExtractionTimeout() {
+  if (extractionTimeoutId !== null) {
+    clearTimeout(extractionTimeoutId);
+    extractionTimeoutId = null;
+  }
+}
+
 /**
- * Waits until the DOM has not changed for a short while,
- * or times out after DOM_IDLE_TIMEOUT_MS
+ * Waits for the DOM to remain idle for a short period, or times out.
  */
-function waitForDomIdle(): Promise<void> {
-  return new Promise((resolve) => {
+async function waitForDomIdle(): Promise<void> {
+  return new Promise(resolve => {
     let observer: MutationObserver | null = null;
-    let lastMutationTime = Date.now();
+    let lastMutation = Date.now();
 
     const checkIdle = () => {
-      if (Date.now() - lastMutationTime >= DOM_IDLE_CHECK_DELAY_MS) {
-        if (observer) observer.disconnect();
+      if (Date.now() - lastMutation >= DOM_IDLE_CHECK_DELAY_MS) {
+        observer?.disconnect();
         resolve();
       }
     };
 
     try {
-      observer = new MutationObserver(() => {
-        lastMutationTime = Date.now();
-      });
+      observer = new MutationObserver(() => (lastMutation = Date.now()));
       observer.observe(document.body, { childList: true, attributes: true, characterData: true, subtree: true });
-    } catch (err) {
-      console.error("[ContentExtractor] MutationObserver error =>", err);
-      resolve(); // Fallback if we cannot observe
+    } catch {
+      // If MutationObserver fails, proceed immediately
+      resolve();
     }
 
-    // Force end after DOM_IDLE_TIMEOUT_MS
-    const maxTimeoutId = setTimeout(() => {
-      if (observer) observer.disconnect();
+    const idleInterval = setInterval(checkIdle, Math.min(DOM_IDLE_CHECK_DELAY_MS / 2, 1000));
+    const fallbackTimer = setTimeout(() => {
+      observer?.disconnect();
       resolve();
     }, DOM_IDLE_TIMEOUT_MS);
 
-    const intervalId = setInterval(() => {
-      checkIdle();
-    }, Math.min(DOM_IDLE_CHECK_DELAY_MS / 2, 1000));
-
-    // Cleanup
-    setTimeout(() => clearInterval(intervalId), DOM_IDLE_TIMEOUT_MS + 100);
+    // Cleanup once we're done
+    setTimeout(() => clearInterval(idleInterval), DOM_IDLE_TIMEOUT_MS + 200);
+    setTimeout(() => clearTimeout(fallbackTimer), DOM_IDLE_TIMEOUT_MS + 200);
   });
 }
 
-function delay(ms: number) {
-  return new Promise((res) => setTimeout(res, ms));
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Notifies background that extraction succeeded
- */
-function sendExtractionComplete(title: string, url: string, timestamp: number) {
-  if (!chrome?.runtime?.id) return;
-  const msg = createMessage<ExtractionData>(
-    MessageType.EXTRACTION_COMPLETE,
-    { title, url, timestamp }
-  );
-  chrome.runtime.sendMessage(msg).catch(err => {
-    console.error("[ContentExtractor] ExtractionComplete sendMessage error =>", err);
-  });
+// Expose the contentAPI via Comlink using the utility from comlinkSetup
+
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  exposeBackgroundAPI(contentAPI);
+  console.log('[ContentExtractor] Ready and exposing API via Comlink.');
 }
-
-/**
- * Notifies background that extraction had an error
- */
-function sendExtractionError(code: string, message: string, url: string, stack?: string) {
-  if (!chrome?.runtime?.id) return;
-  const errMsg = createMessage(
-    MessageType.EXTRACTION_ERROR,
-    { code, message, stack, context: { url } }
-  );
-  chrome.runtime.sendMessage(errMsg).catch(err => {
-    console.error("[ContentExtractor] ExtractionError sendMessage error =>", err);
-  });
-}
-
-/**
- * Kick off extraction (triggered by TRIGGER_EXTRACTION message).
- */
-export function extract() {
-  setupExtractionTimeout();
-  void extractAndSendContent();
-}
-
-async function extractAndSendContent(retryCount = 0): Promise<void> {
-  const currentUrl = window.location.href;
-  console.log("[ContentExtractor] extractAndSendContent =>", currentUrl, "retry=", retryCount);
-
-  try {
-    // Wait for DOM to settle
-    await waitForDomIdle();
-    const html = document.body?.innerHTML || "";
-    if (!html) throw new Error("Empty document body");
-
-    // Instantiate PruningContentFilter instead of BM25
-    const pruningFilter = new PruningContentFilter(
-      undefined, // No explicit user query
-      CONTENT_FILTER_MIN_BLOCKS,
-      CONTENT_FILTER_STRATEGY as "fixed" | "dynamic", // Cast strategy type
-      CONTENT_FILTER_THRESHOLD,
-      CONTENT_FILTER_LANGUAGE
-    );
-
-    // Instantiate the generator (without a default filter)
-    const mdGen = new DefaultMarkdownGenerator(undefined, { body_width: MARKDOWN_BODY_WIDTH });
-
-    // Convert HTML -> Markdown, passing the Pruning filter
-    const result = mdGen.generateMarkdown(
-      html,
-      currentUrl,
-      { body_width: MARKDOWN_BODY_WIDTH },
-      pruningFilter, // <-- Pass the Pruning filter here
-      true
-    );
-    const sourceMarkdown = USE_FIT_MARKDOWN
-      ? result.fitMarkdown
-      : (result.markdownWithCitations || result.rawMarkdown);
-
-    if (!sourceMarkdown) {
-      throw new Error("Markdown generation failed");
-    }
-
-    const now = Date.now();
-    const title = document.title || DEFAULT_TITLE;
-
-    // Clear timeout
-    if (extractionTimeoutId !== null) {
-      clearTimeout(extractionTimeoutId);
-      extractionTimeoutId = null;
-    }
-
-    // Notify background extraction succeeded
-    sendExtractionComplete(title, currentUrl, now);
-
-    // Wait for context (pageId/visitId/sessionId)
-    if (!currentPageId || !currentVisitId) {
-      await Promise.race([
-        contextReady,
-        new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error("Context Timeout")), 30000)
-        )
-      ]);
-    }
-
-    // If we do have context, send the content data
-    if (currentSessionId && currentPageId && currentVisitId) {
-      const contentData: ContentDataMessage = {
-        pageId: currentPageId,
-        visitId: currentVisitId,
-        sessionId: currentSessionId,
-        url: currentUrl,
-        title,
-        markdown: sourceMarkdown,
-        metadata: { language: 'en' }
-      };
-
-      console.log("[ContentExtractor] Sending content data to background script");
-      try {
-        chrome.runtime.sendMessage(
-          createMessage(MessageType.CONTENT_DATA, contentData, 'content'),
-          (response) => {
-            if (chrome.runtime.lastError) {
-              // This is normal if the port closes before response - just log it
-              console.warn("[ContentExtractor] Message response error (this is often normal):", chrome.runtime.lastError.message);
-            } else {
-              console.log("[ContentExtractor] Content data sent to background:", response);
-            }
-          }
-        );
-        // Fire-and-forget approach - we don't need to wait for a response
-        // The service worker will process the content asynchronously
-      } catch (err) {
-        // This would only happen if there's an issue sending the message
-        console.error("[ContentExtractor] Failed to send content data:", err);
-        // We can continue execution - this error shouldn't block the page experience
-      }
-    } else {
-      console.warn("[ContentExtractor] Missing session or context => skipping content data send");
-    }
-  } catch (err) {
-    console.error("[ContentExtractor] Extraction error =>", err);
-    if (retryCount < MAX_RETRIES) {
-      console.log(`[ContentExtractor] Retrying => attempt ${retryCount + 1}`);
-      await delay(RETRY_DELAY_MS);
-      return extractAndSendContent(retryCount + 1);
-    }
-    sendExtractionError("EXTRACTION_FAILED", String(err), currentUrl, (err as Error)?.stack);
-  }
-}
-
-/**
- * Sets up a fallback timer in case extraction never completes
- */
-function setupExtractionTimeout() {
-  if (extractionTimeoutId !== null) {
-    clearTimeout(extractionTimeoutId);
-  }
-  extractionTimeoutId = window.setTimeout(() => {
-    console.warn("[ContentExtractor] Extraction timed out");
-    sendExtractionError("EXTRACTION_TIMEOUT", "Extraction took too long", window.location.href);
-  }, PROCESSING_TIMEOUT_MS);
-
-  window.addEventListener("pagehide", (ev) => {
-    // If the page is unloading (not being saved in bfcache), cancel the extraction timeout
-    if (!ev.persisted && extractionTimeoutId !== null) {
-      clearTimeout(extractionTimeoutId);
-      extractionTimeoutId = null;
-    }
-  });
-}
-
-// Listen for TRIGGER_EXTRACTION + SET_EXTRACTION_CONTEXT messages
-if (chrome?.runtime?.onMessage) {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === MessageType.TRIGGER_EXTRACTION) {
-      console.log("[ContentExtractor] Received TRIGGER_EXTRACTION");
-      sendResponse({ received: true });
-      if (document.readyState === "complete") {
-        setTimeout(() => extract(), 1000);
-      } else {
-        window.addEventListener(
-          "load",
-          () => setTimeout(() => extract(), 1000),
-          { once: true }
-        );
-      }
-      return true;
-    }
-
-    if (message.type === MessageType.SET_EXTRACTION_CONTEXT) {
-      console.log("[ContentExtractor] Received SET_EXTRACTION_CONTEXT =>", message.data);
-      const { pageId, visitId, sessionId } = message.data;
-      setExtractionContext(pageId, visitId, sessionId);
-      sendResponse({ received: true });
-      return true;
-    }
-
-    sendResponse({ received: false, error: "Unhandled message" });
-    return false;
-  });
-} else {
-  console.warn("[ContentExtractor] chrome.runtime.onMessage not available");
-}
-
-console.log("[ContentExtractor] contentExtractor script loaded.");

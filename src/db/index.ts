@@ -1,9 +1,12 @@
 /**
  * @file index.ts
  * 
- * Barrel file to export all database-related modules from dexieDB.
- * This lets you import from 'src/db' in the rest of your code.
+ * Barrel file for the database module.
+ * Exports all database-related functionality.
  */
 
-export * from './dexieDB';
-export { default } from './dexieDB';
+// Export everything from DatabaseCore
+export * from './DatabaseCore';
+
+// Export default object from DatabaseCore
+export { default } from './DatabaseCore';

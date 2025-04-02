@@ -1,6 +1,6 @@
 import React from 'react';
 import './ClusterSquare.css';
-import { ClusterSuggestion } from '../services/clusteringService';
+import { ClusterSuggestion } from '../types';
 
 interface ClusterSquareProps {
   cluster?: ClusterSuggestion;
