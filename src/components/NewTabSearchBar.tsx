@@ -101,8 +101,13 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // Semantic search
   const performSemanticSearch = (query: string) => {
     if (!query.trim()) return;
+    
     setIsSemanticSearching(true);
     setSemanticError(null);
+    
+    // Reset pagination for consistency with local search
+    setStartIndex(0);
+    
     searchSemantic(query)
       .then(results => {
         setSemanticResults(results);
@@ -110,7 +115,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       })
       .catch(err => {
         console.error('[NewTabSearchBar] Semantic search error:', err);
-        setSemanticError(err instanceof Error ? err : new Error(String(err)));
+        setSemanticError(err);
         setSemanticResults([]);
         setIsSemanticSearching(false);
       });
@@ -234,7 +239,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
 
       {showSearching && (
         <div className="status-message searching">
-          {displayMode === 'semantic' ? 'Searching semantic engine...' : 'Searching quick launcher...'}
+          {displayMode === 'semantic' ? 'Using semantic engine...' : 'Using quick launcher...'}
         </div>
       )}
 

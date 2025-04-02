@@ -16,6 +16,7 @@ import {
   MetadataRecord,
   DoryDatabaseTables
 } from '../types';
+import { STORAGE_KEYS } from '../config';
 
 /**
  * The main Dory database class.
@@ -158,39 +159,79 @@ export class DatabaseManager {
   }
 }
 
+// Track initialization state
+let dbInitializationComplete = false;
+let dbInitializationPromise: Promise<void> | null = null; // Track initialization promise
+
 /**
- * Initialize the database system
- * @returns A promise that resolves when initialization is complete
+ * Initialize the database system for the current user.
+ * Ensures Dexie's open() is called and handles potential errors.
+ * @returns A promise that resolves when initialization is complete or rejects on error.
  */
-export async function initializeDatabase(): Promise<void> {
-  console.log('[DatabaseCore] Initializing database system...');
-  
-  try {
-    // Get user data from storage
-    const data = await chrome.storage.local.get(['user']);
-    const userId = data.user?.id;
-    
-    // If we have a user, set them as current
-    if (userId) {
+export function initializeDatabase(): Promise<void> {
+  // If initialization is already in progress, return the existing promise
+  if (dbInitializationPromise) {
+    return dbInitializationPromise;
+  }
+
+  // Start a new initialization process
+  dbInitializationPromise = (async () => {
+    console.log('[DatabaseCore] Initializing database system...');
+    dbInitializationComplete = false; // Reset flag
+
+    try {
+      // Get user data from storage (assuming authService already populated this)
+      const data = await chrome.storage.local.get([STORAGE_KEYS.AUTH_STATE]);
+      const userId = data[STORAGE_KEYS.AUTH_STATE]?.user?.id;
+
+      if (!userId) {
+        console.log('[DatabaseCore] No user ID found in storage. Cannot initialize database.');
+        dbInitializationComplete = false;
+        dbInitializationPromise = null; // Reset promise for next attempt
+        // No need to throw here, let the caller handle the unauthenticated state
+        return; 
+      }
+
       console.log(`[DatabaseCore] Setting current user: ${userId}`);
       DatabaseManager.setCurrentUser(userId);
-      
-      // Pre-initialize the database
-      DatabaseManager.getUserDatabase(userId);
-    } else {
-      console.log('[DatabaseCore] No user found, database will be initialized when user logs in');
+
+      // Get the database instance (creates if needed)
+      const db = DatabaseManager.getUserDatabase(userId);
+
+      // *** Explicitly open the database to ensure it's ready ***
+      // Dexie's methods often open implicitly, but explicit open catches immediate errors.
+      await db.open(); 
+      console.log(`[DatabaseCore] Database connection opened successfully for user ${userId}.`);
+
+      // Mark initialization as complete *only after* successful open
+      dbInitializationComplete = true;
+      console.log('[DatabaseCore] Database system initialization complete.');
+
+    } catch (error) {
+      console.error('[DatabaseCore] Failed to initialize database:', error);
+      dbInitializationComplete = false;
+      DatabaseManager.setCurrentUser(''); // Clear current user on failure
+      dbInitializationPromise = null; // Reset promise
+      throw error; // Re-throw the error to signal failure
     }
-    
-    console.log('[DatabaseCore] Database system initialized');
-  } catch (error) {
-    console.error('[DatabaseCore] Failed to initialize database:', error);
-    throw error;
-  }
+  })();
+
+  return dbInitializationPromise;
 }
 
-// Export default object for convenience
+/**
+ * Check if the database is initialized and ready.
+ * @returns True if database initialization is complete and successful.
+ */
+export function isDatabaseInitialized(): boolean {
+  // Also check if the current user ID is set, as DB is user-specific
+  return dbInitializationComplete && !!DatabaseManager.getCurrentUserId();
+}
+
+// Export default object (optional, based on preference)
 export default {
   DoryDatabase,
   DatabaseManager,
-  initializeDatabase
+  initializeDatabase,
+  isDatabaseInitialized
 };

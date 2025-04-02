@@ -67,7 +67,7 @@
     "commands"
   ],
   "oauth2": {
-    "client_id": "%GOOGLE_OAUTH_CLIENT_ID%",
+    "client_id": "%VITE_GOOGLE_OAUTH_CLIENT_ID%",
     "scopes": [
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile"

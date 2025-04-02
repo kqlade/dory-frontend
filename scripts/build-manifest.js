@@ -10,8 +10,8 @@ let manifestContent = fs.readFileSync(templatePath, 'utf8');
 
 // Replace environment variables
 manifestContent = manifestContent.replace(
-  '%GOOGLE_OAUTH_CLIENT_ID%',
-  process.env.GOOGLE_OAUTH_CLIENT_ID || ''
+  '%VITE_GOOGLE_OAUTH_CLIENT_ID%',
+  process.env.VITE_GOOGLE_OAUTH_CLIENT_ID || ''
 );
 
 // Write the manifest

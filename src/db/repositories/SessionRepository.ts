@@ -5,7 +5,7 @@
  * Handles creating, ending, and managing browser sessions.
  */
 
-import { DatabaseManager } from '../DatabaseCore';
+import { DatabaseManager, isDatabaseInitialized } from '../DatabaseCore'; // Import checker
 import { BrowsingSession } from '../../types';
 import { generateSessionId } from '../../utils/idGenerator';
 
@@ -18,6 +18,13 @@ export class SessionRepository {
   
   // Storage key for persisting session state
   private readonly SESSION_STORAGE_KEY = 'doryCurrentSession';
+  
+  private ensureDbReady(): void {
+      if (!isDatabaseInitialized()) {
+          console.error("[SessionRepository] Attempted operation before database was initialized.");
+          throw new Error("Database not initialized");
+      }
+  }
   
   /**
    * Get the current active session ID
@@ -33,6 +40,10 @@ export class SessionRepository {
    * @returns The ID of the new or resumed session
    */
   async startNewSession(idleThreshold = 30 * 60 * 1000): Promise<number> {
+    this.ensureDbReady(); // Check DB readiness first
+    const db = DatabaseManager.getCurrentDatabase(); // Should not be null if ensureDbReady passed
+    if (!db) throw new Error('No active database found despite initialization check.'); // Should not happen
+    
     // Try to reuse a recent session if available
     const recentSession = await this.getRecentSession(idleThreshold);
     if (recentSession) {
@@ -45,9 +56,6 @@ export class SessionRepository {
     if (this.currentSessionId) {
       await this.endSession(this.currentSessionId);
     }
-    
-    const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
     
     const now = Date.now();
     
@@ -78,20 +86,23 @@ export class SessionRepository {
    */
   async endSession(sessionId?: number): Promise<void> {
     const targetId = sessionId || this.currentSessionId;
-    if (!targetId) return; // No session to end
+    if (!targetId) return;
     
-    const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
+    // No need to check DB readiness if just clearing local state
+    if (this.currentSessionId === targetId) {
+      this.currentSessionId = null;
+      await chrome.storage.local.remove(this.SESSION_STORAGE_KEY);
+    }
     
-    const now = Date.now();
-    
+    // Check DB readiness before DB operation
     try {
-      // Get the session
+      this.ensureDbReady(); 
+      const db = DatabaseManager.getCurrentDatabase();
+      if (!db) return; // DB gone somehow?
+      
+      const now = Date.now();
       const session = await db.sessions.get(targetId);
-      if (!session) {
-        console.warn(`[SessionRepository] Session ${targetId} not found to end`);
-        return;
-      }
+      if (!session) return;
       
       // Calculate total session time
       const totalActiveTime = Math.max(
@@ -107,14 +118,14 @@ export class SessionRepository {
         isActive: false
       });
       
-      // Clear current session if this is the active one
-      if (this.currentSessionId === targetId) {
-        this.currentSessionId = null;
-        await chrome.storage.local.remove(this.SESSION_STORAGE_KEY);
-      }
     } catch (error) {
-      console.error(`[SessionRepository] Error ending session ${targetId}:`, error);
-      throw error;
+      // Don't throw if DB wasn't ready, just log
+      if (!(error instanceof Error && error.message === "Database not initialized")) {
+        console.error(`[SessionRepository] Error ending session ${targetId}:`, error);
+        // Optionally re-throw if it's a different error
+      } else {
+        console.warn(`[SessionRepository] Could not end session ${targetId} in DB: Database not ready.`);
+      }
     }
   }
   
@@ -125,25 +136,23 @@ export class SessionRepository {
    */
   async updateSessionActivityTime(sessionId?: number): Promise<boolean> {
     const targetId = sessionId || this.currentSessionId;
-    if (!targetId) return false; // No session to update
-    
-    const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
-    
-    const now = Date.now();
+    if (!targetId) return false;
     
     try {
-      // Update session activity time
-      await db.sessions.update(targetId, {
-        lastActivityAt: now
-      });
+      this.ensureDbReady(); // Check DB
+      const db = DatabaseManager.getCurrentDatabase();
+      if (!db) return false;
       
-      // Persist state to storage
-      await this.persistSessionState(targetId, now);
-      
+      const now = Date.now();
+      await db.sessions.update(targetId, { lastActivityAt: now });
+      await this.persistSessionState(targetId, now); // Persist even if DB update fails? Maybe not.
       return true;
     } catch (error) {
-      console.error(`[SessionRepository] Error updating session ${targetId}:`, error);
+      if (!(error instanceof Error && error.message === "Database not initialized")) {
+        console.error(`[SessionRepository] Error updating session ${targetId}:`, error);
+      } else {
+        console.warn(`[SessionRepository] Could not update session ${targetId} activity: Database not ready.`);
+      }
       return false;
     }
   }
@@ -157,10 +166,11 @@ export class SessionRepository {
   async checkSessionIdle(thresholdMs = 30 * 60 * 1000): Promise<boolean> {
     if (!this.currentSessionId) return false;
     
-    const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
-    
     try {
+      this.ensureDbReady();
+      const db = DatabaseManager.getCurrentDatabase();
+      if (!db) return false;
+      
       const session = await db.sessions.get(this.currentSessionId);
       if (!session || !session.isActive) return false;
       
@@ -175,7 +185,11 @@ export class SessionRepository {
       
       return false;
     } catch (error) {
-      console.error(`[SessionRepository] Error checking session idle:`, error);
+      if (!(error instanceof Error && error.message === "Database not initialized")) {
+        console.error(`[SessionRepository] Error checking session idle:`, error);
+      } else {
+        console.warn(`[SessionRepository] Could not check session idle: Database not ready.`);
+      }
       return false;
     }
   }
@@ -186,8 +200,9 @@ export class SessionRepository {
    * @returns The session or undefined if not found
    */
   async getSession(sessionId: number): Promise<BrowsingSession | undefined> {
+    this.ensureDbReady();
     const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
+    if (!db) throw new Error('No active database found despite initialization check.');
     
     return db.sessions.get(sessionId);
   }
@@ -197,8 +212,9 @@ export class SessionRepository {
    * @returns Array of active session records
    */
   async getActiveSessions(): Promise<BrowsingSession[]> {
+    this.ensureDbReady();
     const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
+    if (!db) throw new Error('No active database found despite initialization check.');
     
     return db.sessions
       .filter(session => session.isActive === true)
@@ -210,8 +226,9 @@ export class SessionRepository {
    * @returns Array of all session records
    */
   async getAllSessions(): Promise<BrowsingSession[]> {
+    this.ensureDbReady();
     const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
+    if (!db) throw new Error('No active database found despite initialization check.');
     
     return db.sessions.toArray();
   }
@@ -221,8 +238,9 @@ export class SessionRepository {
    * @returns Count of session records
    */
   async getCount(): Promise<number> {
+    this.ensureDbReady();
     const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
+    if (!db) throw new Error('No active database found despite initialization check.');
     
     return db.sessions.count();
   }
@@ -233,8 +251,9 @@ export class SessionRepository {
    * @returns Array of session records
    */
   async getSessionsAfterTime(timestamp: number): Promise<BrowsingSession[]> {
+    this.ensureDbReady();
     const db = DatabaseManager.getCurrentDatabase();
-    if (!db) throw new Error('No active database');
+    if (!db) throw new Error('No active database found despite initialization check.');
     
     return db.sessions
       .where('startTime')
@@ -276,13 +295,22 @@ export class SessionRepository {
         
         // If the last activity was within the idle threshold, session is still valid
         if (now - savedSession.lastActivityAt < idleThreshold) {
-          // Check if this session is still marked as active in the database
-          const db = DatabaseManager.getCurrentDatabase();
-          if (!db) throw new Error('No active database');
-          
-          const session = await db.sessions.get(savedSession.sessionId);
-          if (session && session.isActive) {
-            return savedSession.sessionId;
+          try {
+            // Check if this session is still marked as active in the database
+            this.ensureDbReady();
+            const db = DatabaseManager.getCurrentDatabase();
+            if (!db) return null;
+            
+            const session = await db.sessions.get(savedSession.sessionId);
+            if (session && session.isActive) {
+              return savedSession.sessionId;
+            }
+          } catch (dbError) {
+            if (dbError instanceof Error && dbError.message === "Database not initialized") {
+              console.warn('[SessionRepository] Could not check recent session: Database not ready.');
+            } else {
+              throw dbError;
+            }
           }
         }
       }

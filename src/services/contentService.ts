@@ -27,18 +27,22 @@ class ContentService {
 
       const endpoint = `${API_BASE_URL}${CONTENT_ENDPOINTS.CONTENT}`;
       
-      // Format the request payload
+      // Format the request payload to match the old eventService.ts structure exactly
       const payload = {
-        pageId: content.pageId,
-        visitId: content.visitId,
-        sessionId: content.sessionId,
+        contentId: `content_${content.pageId}_${content.visitId}_${Date.now()}`,
+        sessionId: String(content.sessionId),
         userId: authState.user?.id,
         timestamp: Date.now(),
-        content: {
+        data: {
+          pageId: content.pageId,
+          visitId: content.visitId,
+          userId: authState.user?.id,
           url: content.url,
-          title: content.title,
-          markdown: content.markdown,
-          metadata: content.metadata,
+          content: {
+            title: content.title,
+            markdown: content.markdown,
+            metadata: content.metadata || { language: 'en' }
+          }
         }
       };
 

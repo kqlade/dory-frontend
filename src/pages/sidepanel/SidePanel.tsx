@@ -15,6 +15,7 @@ export default function SidePanel() {
   useBackgroundPreferences();
 
   const handleSignIn = () => {
+    console.log('[SidePanel] Sign in button clicked');
     // Trigger login flow
     login(); 
   };

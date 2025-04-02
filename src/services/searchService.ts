@@ -81,21 +81,23 @@ class SearchService {
 
       const userId = authState.user.id;
       
-      const searchParams = new URLSearchParams({
+      // Create request body as JSON instead of URL parameters
+      const requestBody = {
         query,
         userId,
-        limit: String(options.limit || SEARCH_CONFIG.MAX_SEMANTIC_RESULTS),
-        useHybridSearch: String(options.useHybridSearch !== false),
-        useLLMExpansion: String(options.useLLMExpansion !== false),
-        useReranking: String(options.useReranking !== false)
-      });
+        limit: options.limit || SEARCH_CONFIG.MAX_SEMANTIC_RESULTS,
+        useHybridSearch: options.useHybridSearch !== false,
+        useLLMExpansion: options.useLLMExpansion !== false,
+        useReranking: options.useReranking !== false
+      };
 
-      const response = await fetch(`${API_BASE_URL}${SEARCH_ENDPOINTS.SEMANTIC}?${searchParams}`, {
-        method: 'GET',
+      const response = await fetch(`${API_BASE_URL}${SEARCH_ENDPOINTS.SEARCH}`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authState.accessToken}`
-        }
+        },
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
@@ -104,17 +106,20 @@ class SearchService {
 
       const semanticResults = await response.json() as SearchResponse;
       
-      // Transform results to ensure they match our SearchResult interface
-      return semanticResults.map(result => ({
-        id: result.id || `semantic-${result.pageId || result.url}`, // Ensure ID is never undefined
-        pageId: result.pageId,
-        title: result.title,
-        url: result.url,
-        score: result.score,
-        source: 'semantic',
-        explanation: result.explanation,
-        snippet: result.snippet
-      }));
+      // Transform results and filter by minimum score threshold
+      return semanticResults
+        .map(result => ({
+          id: result.id || `semantic-${result.pageId || result.url}`, // Ensure ID is never undefined
+          pageId: result.pageId,
+          title: result.title,
+          url: result.url,
+          score: result.score,
+          source: 'semantic',
+          explanation: result.explanation,
+          snippet: result.snippet
+        }))
+        // Filter out results with scores below the minimum threshold
+        .filter(result => result.score >= SEARCH_CONFIG.MIN_SEMANTIC_SCORE);
     } catch (error) {
       console.error('[SearchService] Error in semantic search:', error);
       return [];

@@ -24,3 +24,11 @@ export interface UserInfo extends User {
   locale?: string;
   verified_email?: boolean;
 }
+
+/**
+ * User preferences for the application
+ */
+export interface UserPreferences {
+  theme: 'light' | 'dark' | 'system';
+  // Add other preferences as needed
+}

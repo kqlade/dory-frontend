@@ -5,12 +5,7 @@
  */
 
 import { STORAGE_KEYS } from '../../config';
-
-// Type definition for user preferences
-export interface UserPreferences {
-  theme: 'light' | 'dark' | 'system';
-  // Add other preferences as needed
-}
+import { UserPreferences } from '../../types';
 
 // Default preferences when none are set
 const DEFAULT_PREFERENCES: UserPreferences = {

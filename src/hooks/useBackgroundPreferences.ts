@@ -1,60 +1,61 @@
 /**
  * @file useBackgroundPreferences.ts
- * 
- * React hook for accessing preference-related functionality from the background
+ *
+ * React hook for accessing preference-related functionality from the background.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getBackgroundAPI } from '../utils/comlinkSetup';
-import type { BackgroundAPI } from '../background/api';
-import type { UserPreferences } from '../db/repositories/PreferencesRepository';
+import type { BackgroundAPI, PreferencesServiceAPI } from '../types';
+import type { UserPreferences } from '../types/user';
 
-/**
- * Hook for accessing preference functionality from the background
- * @returns Theme state and methods for toggling/changing the theme
- */
-export function useBackgroundPreferences() {
+interface UsePreferencesResult {
+  theme: UserPreferences['theme'];
+  isDarkMode: boolean;
+  loading: boolean;
+  toggleTheme: () => Promise<UserPreferences['theme']>;
+  setTheme: (theme: UserPreferences['theme']) => Promise<boolean>;
+}
+
+export function useBackgroundPreferences(): UsePreferencesResult {
   const [theme, setTheme] = useState<UserPreferences['theme']>('system');
   const [loading, setLoading] = useState(true);
+  const preferencesRef = useRef<PreferencesServiceAPI | null>(null);
 
-  // Initialize theme state by fetching from background
+  // Initialize preferences service once
   useEffect(() => {
     let mounted = true;
-    
-    async function init() {
+
+    (async () => {
       try {
-        setLoading(true);
-        const api = getBackgroundAPI<BackgroundAPI>();
-        const preferencesService = await api.preferences;
-        const currentTheme = await preferencesService.getTheme();
-        
-        if (mounted) {
-          setTheme(currentTheme);
-          setLoading(false);
-        }
-      } catch (error) {
-        console.error('[useBackgroundPreferences] Failed to initialize:', error);
-        if (mounted) {
-          setLoading(false);
-        }
+        const api = await getBackgroundAPI<BackgroundAPI>();
+        // Don't await the service - keep it as a Comlink proxy
+        preferencesRef.current = api.preferences;
+
+        // Call the method on the proxy object
+        const currentTheme = await api.preferences.getTheme();
+        if (mounted) setTheme(currentTheme);
+      } catch (err) {
+        console.error('[useBackgroundPreferences] Initialization error:', err);
+      } finally {
+        if (mounted) setLoading(false);
       }
-    }
-    
-    init();
-    
+    })();
+
     return () => {
       mounted = false;
     };
   }, []);
 
-  /**
-   * Toggle between light and dark mode
-   */
-  const toggleTheme = useCallback(async () => {
+  const toggleTheme = useCallback(async (): Promise<UserPreferences['theme']> => {
+    const service = preferencesRef.current;
+    if (!service) {
+      console.warn('[useBackgroundPreferences] Preferences service not ready');
+      return theme;
+    }
+
     try {
-      const api = getBackgroundAPI<BackgroundAPI>();
-      const preferencesService = await api.preferences;
-      const newTheme = await preferencesService.toggleTheme();
+      const newTheme = await service.toggleTheme();
       setTheme(newTheme);
       return newTheme;
     } catch (error) {
@@ -63,14 +64,15 @@ export function useBackgroundPreferences() {
     }
   }, [theme]);
 
-  /**
-   * Set the theme explicitly
-   */
-  const setThemePreference = useCallback(async (newTheme: UserPreferences['theme']) => {
+  const setThemePreference = useCallback(async (newTheme: UserPreferences['theme']): Promise<boolean> => {
+    const service = preferencesRef.current;
+    if (!service) {
+      console.warn('[useBackgroundPreferences] Preferences service not ready');
+      return false;
+    }
+
     try {
-      const api = getBackgroundAPI<BackgroundAPI>();
-      const preferencesService = await api.preferences;
-      await preferencesService.setTheme(newTheme);
+      await service.setTheme(newTheme);
       setTheme(newTheme);
       return true;
     } catch (error) {
@@ -79,34 +81,23 @@ export function useBackgroundPreferences() {
     }
   }, []);
 
-  /**
-   * Calculate the effective theme, accounting for 'system' preference
-   */
-  const effectiveTheme = useCallback(() => {
-    if (theme === 'system') {
-      // Use system preference if set to 'system'
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return theme;
-  }, [theme]);
+  const effectiveTheme = theme === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : theme;
 
-  const isDarkMode = effectiveTheme() === 'dark';
+  const isDarkMode = effectiveTheme === 'dark';
 
-  // Apply the dark mode class to the body when theme changes
+  // Update DOM class based on theme
   useEffect(() => {
-    if (isDarkMode) {
-      document.body.classList.add('dark-mode');
-    } else {
-      document.body.classList.remove('dark-mode');
-    }
+    document.documentElement.classList.toggle('dark-mode', isDarkMode);
   }, [isDarkMode]);
 
   return {
     theme,
     isDarkMode,
+    loading,
     toggleTheme,
     setTheme: setThemePreference,
-    loading
   };
 }
 

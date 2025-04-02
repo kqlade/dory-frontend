@@ -7,6 +7,7 @@
 
 import { authService } from './authService';
 import { eventRepository, sessionRepository, EventType } from '../db/repositories';
+import { isDatabaseInitialized } from '../db/DatabaseCore'; // Import checker
 
 /**
  * Track a search result click event
@@ -26,6 +27,19 @@ export async function trackSearchClick(
   query: string
 ): Promise<number> {
   try {
+    // Verify user is authenticated first
+    const authState = await authService.getAuthState();
+    if (!authState.isAuthenticated) {
+      console.error('[EventService] User not authenticated for trackSearchClick');
+      throw new Error('Authentication required');
+    }
+    
+    // Check if database is properly initialized
+    if (!isDatabaseInitialized()) {
+      console.error('[EventService] Database not initialized for trackSearchClick');
+      throw new Error('Database not initialized');
+    }
+    
     // Get the current session ID
     const sessionId = sessionRepository.getCurrentSessionId();
     if (!sessionId) {
@@ -40,10 +54,9 @@ export async function trackSearchClick(
       throw new Error('Session details not found');
     }
 
-    // Get user ID if authenticated
-    const authState = await authService.getAuthState();
-    const userId = authState.isAuthenticated ? authState.user?.id : undefined;
-    const userEmail = authState.isAuthenticated ? authState.user?.email : undefined;
+    // Use authenticated user info
+    const userId = authState.user?.id;
+    const userEmail = authState.user?.email;
 
     // Log the event
     const eventId = await eventRepository.logEvent(
@@ -71,50 +84,57 @@ export async function trackSearchClick(
     return eventId;
   } catch (error) {
     console.error('[EventService] trackSearchClick error:', error);
+    // Propagate authentication and initialization errors
+    if (error instanceof Error && 
+        (error.message === 'Authentication required' || 
+         error.message === 'Database not initialized')) {
+      throw error;
+    }
+    // For other errors, rethrow
     throw error;
   }
 }
 
 /**
- * Track that a user performed a search
- * 
- * @param query The search query
- * @param resultCount Number of results returned
- * @param searchType Type of search (local, semantic, hybrid)
- * @returns Promise resolving to the event ID
+ * Track that a user performed a search.
+ * Assumes session and DB are already initialized.
  */
 export async function trackSearchPerformed(
   query: string,
   resultCount: number,
   searchType: 'local' | 'semantic' | 'hybrid' = 'local'
-): Promise<number> {
+): Promise<{ searchSessionId: string }> {
+  
+  // Generate a unique search session ID regardless of logging success
+  const searchSessionId = `search_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+
   try {
-    // Get the current session ID
+    // 1. Check prerequisites: Auth and DB Initialization
+    const authState = authService.getAuthState(); // Use sync getter after init
+    if (!authState.isAuthenticated) {
+      console.warn('[EventService] trackSearchPerformed: User not authenticated. Event dropped.');
+      return { searchSessionId }; // Return ID but don't log
+    }
+    if (!isDatabaseInitialized()) {
+      console.warn('[EventService] trackSearchPerformed: Database not initialized. Event dropped.');
+      return { searchSessionId }; // Return ID but don't log
+    }
+
+    // 2. Get current session (should exist if DB is initialized)
     const sessionId = sessionRepository.getCurrentSessionId();
     if (!sessionId) {
-      console.error('[EventService] No active session for trackSearchPerformed');
-      throw new Error('No active session');
-    }
-    
-    // Get the session details
-    const session = await sessionRepository.getSession(sessionId);
-    if (!session) {
-      console.error('[EventService] Could not retrieve session details');
-      throw new Error('Session details not found');
+      // This indicates a logic error elsewhere if DB is initialized but session isn't
+      console.error('[EventService] trackSearchPerformed: No active session found despite DB being initialized. Event dropped.');
+      return { searchSessionId }; // Return ID but don't log
     }
 
-    // Get user ID if authenticated
-    const authState = await authService.getAuthState();
-    const userId = authState.isAuthenticated ? authState.user?.id : undefined;
-    const userEmail = authState.isAuthenticated ? authState.user?.email : undefined;
+    // 3. Log the event
+    const userId = authState.user?.id;
+    const userEmail = authState.user?.email;
 
-    // Generate a unique search session ID
-    const searchSessionId = `search_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-
-    // Log the event
-    const eventId = await eventRepository.logEvent(
+    const eventId = await eventRepository.logEvent( // logEvent should have its own DB check
       EventType.SEARCH_PERFORMED,
-      String(sessionId),
+      String(sessionId), // Ensure it's a string if needed by logEvent
       {
         searchSessionId,
         query,
@@ -126,17 +146,14 @@ export async function trackSearchPerformed(
       userEmail
     );
 
-    console.log('[EventService] Search performed:', {
-      eventId,
-      query: query.substring(0, 15) + (query.length > 15 ? '...' : ''),
-      resultCount,
-      searchType
-    });
+    console.log('[EventService] Search performed logged:', { eventId, searchSessionId, query: query.substring(0, 15) + '...', resultCount, searchType });
+    return { searchSessionId };
 
-    return eventId;
   } catch (error) {
-    console.error('[EventService] trackSearchPerformed error:', error);
-    throw error;
+    // Catch errors from logEvent (e.g., Dexie errors)
+    console.error('[EventService] trackSearchPerformed error during logging:', error);
+    // Return the generated searchSessionId even if logging fails
+    return { searchSessionId };
   }
 }
 
@@ -145,15 +162,8 @@ export async function trackSearchPerformed(
  * This allows for easier mocking and dependency injection
  */
 class EventService {
-  /**
-   * Track a search result click
-   */
-  trackSearchClick = trackSearchClick;
-  
-  /**
-   * Track a search being performed
-   */
-  trackSearchPerformed = trackSearchPerformed;
+    trackSearchClick = trackSearchClick; // Needs similar readiness checks
+    trackSearchPerformed = trackSearchPerformed;
 }
 
 // Create and export a singleton instance

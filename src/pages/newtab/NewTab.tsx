@@ -105,7 +105,10 @@ const NewTab: React.FC = () => {
           <div className="google-button-container">
             <button 
               className="google-sign-in-button"
-              onClick={login}
+              onClick={() => {
+                console.log('[NewTab] Sign in button clicked');
+                login();
+              }}
             >
               Sign in with Google
             </button>

@@ -11,8 +11,27 @@ import * as Comlink from 'comlink';
 function wrapPort(port: chrome.runtime.Port): Comlink.Endpoint {
   return {
     postMessage: port.postMessage.bind(port),
-    addEventListener: port.onMessage.addListener.bind(port.onMessage),
-    removeEventListener: port.onMessage.removeListener.bind(port.onMessage)
+    addEventListener: (type, listener) => {
+      if (type === 'message') {
+        const handler = (msg: any) => {
+          const event = { data: msg } as MessageEvent;
+          if (typeof listener === 'function') {
+            listener(event);
+          } else if (listener && typeof listener === 'object' && 'handleEvent' in listener) {
+            listener.handleEvent(event);
+          }
+        };
+        // Save a reference to remove later
+        (listener as any)._handler = handler;
+        port.onMessage.addListener(handler);
+      }
+    },
+    removeEventListener: (type, listener) => {
+      if (type === 'message' && (listener as any)._handler) {
+        port.onMessage.removeListener((listener as any)._handler);
+      }
+    },
+    start: () => {}, // No-op for compatibility
   };
 }
 
@@ -36,10 +55,10 @@ export function exposeBackgroundAPI<T extends object>(api: T): void {
  * 
  * @returns A proxy object that represents the API exposed by the background
  */
-export function getBackgroundAPI<T>(): Comlink.Remote<T> {
+export function getBackgroundAPI<T>(): Promise<T> {
   // Connect to the background script
   const port = chrome.runtime.connect({ name: 'comlink-port' });
   
   // Create a Comlink proxy to the background API
-  return Comlink.wrap<T>(wrapPort(port));
+  return Promise.resolve(Comlink.wrap<T>(wrapPort(port)) as unknown as T);
 }

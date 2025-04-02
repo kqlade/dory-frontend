@@ -1,74 +1,137 @@
 /**
  * @file uiCommandService.ts
- * 
+ *
  * Service for handling UI commands between background and content scripts
- * using Comlink for type-safe RPC.
+ * via direct Chrome messaging.
  */
 
-import * as Comlink from 'comlink';
-import type { ContentCommandAPI } from '../types';
+import preferencesService from './preferencesService';
 
 /**
- * Service for handling UI commands between contexts
+ * A literal type for overlay actions.
+ */
+type OverlayAction = 'show' | 'hide' | 'toggle';
+
+/**
+ * Service for handling UI commands between contexts using direct Chrome messaging.
  */
 export class UICommandService {
-  // Store ContentCommandAPI proxies by tab ID
-  private tabCommandProxies: Record<number, Comlink.Remote<ContentCommandAPI>> = {};
-  
   /**
-   * Register a tab's command handler
-   * @param tabId The tab ID to register
-   * @param port The MessagePort to use for communication
-   * @returns Success status
+   * Registers a tab's command handler.
+   * (Stub method for API compatibility: does nothing for direct messaging.)
+   * @param tabId The tab ID to register.
+   * @returns Always returns true.
    */
-  registerCommandHandler(tabId: number, port: MessagePort): boolean {
-    try {
-      // Wrap the port with Comlink to create a proxy to the content script's API
-      this.tabCommandProxies[tabId] = Comlink.wrap<ContentCommandAPI>(port);
-      console.log(`[UICommandService] Registered command handler for tab ${tabId}`);
-      return true;
-    } catch (error) {
-      console.error(`[UICommandService] Failed to register command handler for tab ${tabId}:`, error);
-      return false;
-    }
+  registerCommandHandler(tabId: number): boolean {
+    console.log(`[UICommandService] Tab ${tabId} noted. No registration needed for direct messaging.`);
+    return true;
   }
-  
+
   /**
-   * Unregister a tab's command handler
-   * @param tabId The tab ID to unregister
-   * @returns Success status
+   * Unregisters a tab's command handler.
+   * (Stub method for API compatibility: does nothing for direct messaging.)
+   * @param tabId The tab ID to unregister.
+   * @returns Always returns true.
    */
   unregisterCommandHandler(tabId: number): boolean {
-    if (this.tabCommandProxies[tabId]) {
-      delete this.tabCommandProxies[tabId];
-      console.log(`[UICommandService] Unregistered command handler for tab ${tabId}`);
-      return true;
-    }
-    return false;
+    console.log(`[UICommandService] Tab ${tabId} unregistration noted. No action needed for direct messaging.`);
+    return true;
   }
-  
+
   /**
-   * Show or toggle search overlay in a tab
-   * @param tabId The tab ID to show the overlay in
-   * @param action The action to perform ('show', 'hide', or 'toggle')
-   * @returns Promise resolving to success status
+   * Shows or toggles the search overlay in a tab using a simple direct messaging approach.
+   * If the content script is not yet loaded in the tab, it attempts to inject it first.
+   * @param tabId The ID of the target tab.
+   * @param action The overlay action ('show', 'hide', or 'toggle'). Defaults to 'toggle'.
+   * @returns A promise resolving to true on success, or false on failure.
    */
-  async showSearchOverlay(tabId: number, action: 'show' | 'hide' | 'toggle' = 'toggle'): Promise<boolean> {
+  async showSearchOverlay(tabId: number, action: OverlayAction = 'toggle'): Promise<boolean> {
+    console.log(`[UICommandService] Attempting to show search overlay in tab ${tabId} with action: ${action}`);
+
     try {
-      const proxy = this.tabCommandProxies[tabId];
-      if (!proxy) {
-        console.warn(`[UICommandService] No command handler for tab ${tabId}`);
+      // Check if content script is already loaded
+      await this.pingTab(tabId);
+      console.log(`[UICommandService] Content script present in tab ${tabId}. Sending show overlay command...`);
+      return this.sendShowOverlayMessage(tabId, action);
+
+    } catch (noScriptError) {
+      // If content script wasn't found, inject it
+      console.log(`[UICommandService] No content script found in tab ${tabId}. Attempting injection...`);
+      const scriptPath = 'src/content/globalSearch.tsx'; // Adjust path to your actual build output
+
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: [scriptPath],
+        });
+        console.log(`[UICommandService] Script injected into tab ${tabId}. Will attempt to show overlay after short delay.`);
+
+        // Give the script a moment to load fully before sending the message
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return this.sendShowOverlayMessage(tabId, action);
+
+      } catch (injectionError) {
+        console.error(`[UICommandService] Failed to inject content script into tab ${tabId}:`, injectionError);
         return false;
       }
-      
-      return await proxy.showSearchOverlay(action);
-    } catch (error) {
-      console.error(`[UICommandService] Error showing search overlay in tab ${tabId}:`, error);
-      return false;
     }
+  }
+
+  /**
+   * Pings a tab to check if the content script is loaded.
+   * @param tabId The ID of the tab to ping.
+   * @returns A promise that resolves if the script responds, rejects otherwise.
+   */
+  private async pingTab(tabId: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tabId, { type: 'PING' }, (response) => {
+        if (chrome.runtime.lastError) {
+          return reject(chrome.runtime.lastError);
+        }
+        if (response?.pong) {
+          return resolve();
+        }
+        reject(new Error('Invalid ping response'));
+      });
+
+      // Prevent long hangs by timing out after 500ms
+      setTimeout(() => reject(new Error('Ping timed out')), 500);
+    });
+  }
+
+  /**
+   * Sends a message to show/hide/toggle the search overlay in a tab.
+   * Retrieves the current theme from preferencesService and includes it in the message.
+   * @param tabId The ID of the target tab.
+   * @param action The overlay action to perform.
+   * @returns A promise resolving to true if successful, or false on error.
+   */
+  private async sendShowOverlayMessage(tabId: number, action: OverlayAction): Promise<boolean> {
+    const theme = await preferencesService.getTheme();
+
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(
+        tabId,
+        {
+          type: 'SHOW_SEARCH_OVERLAY',
+          action,
+          theme,
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            console.error(`[UICommandService] Error sending overlay command to tab ${tabId}:`, chrome.runtime.lastError);
+            return resolve(false);
+          }
+          resolve(true);
+        },
+      );
+
+      // Fallback if there's no response within 1 second
+      setTimeout(() => resolve(false), 1000);
+    });
   }
 }
 
-// Create and export singleton instance
+// Export a singleton instance of the UICommandService
 export const uiCommandService = new UICommandService();
 export default uiCommandService;

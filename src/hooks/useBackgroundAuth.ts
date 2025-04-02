@@ -1,89 +1,89 @@
-/**
- * @file useBackgroundAPI.ts
- * 
- * React hook for accessing the background API from components
- */
-
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { getBackgroundAPI } from '../utils/comlinkSetup';
-import type { BackgroundAPI } from '../background/api';
+import type { BackgroundAPI, AuthServiceAPI } from '../types';
 import type { AuthState } from '../types';
 
-/**
- * Hook for accessing auth-related functionality from the background
- * @returns Auth state and methods for login/logout
- */
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
     isAuthenticated: false,
     user: null,
     accessToken: null,
-    refreshToken: null
+    refreshToken: null,
   });
-  const [loading, setLoading] = useState(true);
 
+  const [loading, setLoading] = useState(true);
+  const authRef = useRef<AuthServiceAPI | null>(null);
+  const mountedRef = useRef(true);
+
+  // Initialize auth service once
   useEffect(() => {
-    let isMounted = true;
-    
-    const init = async () => {
+    mountedRef.current = true;
+
+    (async () => {
       try {
-        // Get the background API and unwrap the auth property
-        const api = getBackgroundAPI<BackgroundAPI>();
-        const auth = await api.auth;
-        
-        // Get initial auth state
-        const initialState = await auth.getAuthState();
-        if (isMounted) {
+        const api = await getBackgroundAPI<BackgroundAPI>();
+        // Store the Comlink proxy directly - don't await it
+        authRef.current = api.auth;
+
+        // Call methods on the proxy object
+        const initialState = await api.auth.getAuthState();
+        if (mountedRef.current) {
           setState(initialState);
-          setLoading(false);
         }
       } catch (error) {
         console.error('[useAuth] Failed to initialize:', error);
-        if (isMounted) {
+      } finally {
+        if (mountedRef.current) {
           setLoading(false);
         }
       }
-    };
-    
-    init();
-    
+    })();
+
     return () => {
-      isMounted = false;
+      mountedRef.current = false;
     };
   }, []);
 
-  const login = async () => {
+  const login = useCallback(async (): Promise<boolean> => {
+    if (!authRef.current) {
+      console.warn('[useAuth] Auth service not ready');
+      return false;
+    }
+
     try {
-      const api = getBackgroundAPI<BackgroundAPI>();
-      const auth = await api.auth;
-      await auth.login();
-      const newState = await auth.getAuthState();
+      // Call methods directly on the proxy object
+      await authRef.current.login();
+      const newState = await authRef.current.getAuthState();
       setState(newState);
       return true;
     } catch (error) {
       console.error('[useAuth] Login failed:', error);
       return false;
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async (): Promise<boolean> => {
+    if (!authRef.current) {
+      console.warn('[useAuth] Auth service not ready');
+      return false;
+    }
+
     try {
-      const api = getBackgroundAPI<BackgroundAPI>();
-      const auth = await api.auth;
-      await auth.logout();
-      const newState = await auth.getAuthState();
+      // Call methods directly on the proxy object
+      await authRef.current.logout();
+      const newState = await authRef.current.getAuthState();
       setState(newState);
       return true;
     } catch (error) {
       console.error('[useAuth] Logout failed:', error);
       return false;
     }
-  };
+  }, []);
 
   return {
     ...state,
     loading,
     login,
-    logout
+    logout,
   };
 }

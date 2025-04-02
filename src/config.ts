@@ -8,7 +8,10 @@
 export const DEBUG = process.env.NODE_ENV !== 'production';
 
 // API Configuration
-export const API_BASE_URL = 'https://api.dory.app';
+export const API_BASE_URL = process.env.API_BASE_URL || 'https://dory-backend-e18a6624326d.herokuapp.com';
+
+// OAuth Configuration
+export const GOOGLE_CLIENT_ID = process.env.VITE_GOOGLE_OAUTH_CLIENT_ID || '';
 
 // Endpoint Groups
 export const AUTH_ENDPOINTS = {
@@ -35,13 +38,10 @@ export const CLUSTERING_ENDPOINTS = {
 };
 
 export const SEARCH_ENDPOINTS = {
-  SEMANTIC: '/api/search/semantic'
+  SEARCH: '/api/search'
 };
 
 // Search Configuration Constants are defined lower in the file
-
-// OAuth Configuration
-export const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
 
 // Storage Keys
 export const STORAGE_KEYS = {
@@ -164,7 +164,19 @@ export const QUEUE_CONFIG = {
   DOM_IDLE_TIMEOUT_MS: 7000,
 
   // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
-  DOM_IDLE_CHECK_DELAY_MS: 500
+  DOM_IDLE_CHECK_DELAY_MS: 500,
+  
+  // Content script ping configuration
+  PING: {
+    // Maximum number of ping attempts before giving up
+    MAX_ATTEMPTS: 5,
+    
+    // Initial delay between ping attempts (ms)
+    INITIAL_DELAY: 1000,
+    
+    // Timeout for each individual ping attempt (ms)
+    TIMEOUT_PER_ATTEMPT: 500
+  }
 } as const;
 
 // Search Configuration
@@ -183,6 +195,10 @@ export const SEARCH_CONFIG = {
   MAX_LOCAL_RESULTS: 10,
   
   // Maximum number of semantic results to show
-  MAX_SEMANTIC_RESULTS: 20
+  MAX_SEMANTIC_RESULTS: 20,
+  
+  // Minimum score threshold for semantic search results (0-1)
+  // Results with scores below this value will be filtered out
+  MIN_SEMANTIC_SCORE: 0.5
 } as const;
 

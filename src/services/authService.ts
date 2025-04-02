@@ -3,8 +3,9 @@
  * Background-only authentication service for the Dory extension.
  */
 
-import { API_BASE_URL, AUTH_ENDPOINTS, GOOGLE_CLIENT_ID, STORAGE_KEYS } from '../config';
+import { API_BASE_URL, AUTH_ENDPOINTS, STORAGE_KEYS } from '../config';
 import { AuthState, TokenResponse, User } from '../types';
+import { initializeExtension } from '../background/serviceWorker';
 
 export class AuthService {
   private authState: AuthState = {
@@ -35,22 +36,54 @@ export class AuthService {
    */
   public async login(): Promise<void> {
     try {
-      const redirectUrl = chrome.identity.getRedirectURL('oauth2');
-      if (!redirectUrl) throw new Error('OAuth Redirect URL not found.');
+      console.log('[AuthService] Starting OAuth flow...');
       
-      const scopes = ['email', 'profile', 'openid'];
+      // Get client ID directly from the manifest - proven working method
+      const manifest = chrome.runtime.getManifest();
+      const clientId = manifest.oauth2?.client_id;
+      const scopes = manifest.oauth2?.scopes || ['email', 'profile', 'openid'];
+      
+      if (!clientId) {
+        console.error('[AuthService] OAuth client ID not found in manifest');
+        throw new Error('OAuth client ID not found in manifest');
+      }
+      
+      console.log('[AuthService] Using client ID from manifest');
+      
+      // Use the Chrome-specific redirect URI format
+      const redirectUrl = `https://${chrome.runtime.id}.chromiumapp.org/`;
+      
       const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-      authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
+      authUrl.searchParams.set('client_id', clientId);
       authUrl.searchParams.set('redirect_uri', redirectUrl);
       authUrl.searchParams.set('response_type', 'id_token');
       authUrl.searchParams.set('scope', scopes.join(' '));
       authUrl.searchParams.set('nonce', Math.random().toString(36).slice(2));
       authUrl.searchParams.set('prompt', 'consent select_account');
+      
+      console.log('[AuthService] Auth URL prepared, launching flow...');
 
-      const responseUrl = await chrome.identity.launchWebAuthFlow({
-        url: authUrl.toString(),
-        interactive: true,
+      // Use Promise wrapper around callback pattern for better error handling
+      const responseUrl = await new Promise<string>((resolve, reject) => {
+        chrome.identity.launchWebAuthFlow(
+          { url: authUrl.toString(), interactive: true },
+          (responseUrl) => {
+            if (chrome.runtime.lastError) {
+              console.error('[AuthService] Chrome error:', chrome.runtime.lastError.message);
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (!responseUrl) {
+              console.error('[AuthService] No response URL');
+              reject(new Error('No response URL'));
+              return;
+            }
+            resolve(responseUrl);
+          }
+        );
       });
+      
+      console.log('[AuthService] Got response URL');
       if (!responseUrl) throw new Error('Authentication flow cancelled or failed.');
 
       const urlFragment = responseUrl.split('#')[1] || '';
@@ -108,7 +141,10 @@ export class AuthService {
     try {
       const user = await this.makeRequest<User>(AUTH_ENDPOINTS.ME, { method: 'GET' });
       if (user?.id) {
-        this.updateAuthState({ user });
+        this.updateAuthState({
+          user,
+          isAuthenticated: true  // Set isAuthenticated to true when token verification succeeds
+        });
         return true;
       }
       return false;
@@ -218,6 +254,10 @@ export class AuthService {
       refreshToken: tokenResponse.refresh_token || null,
     });
     await this.saveStateToStorage();
+    
+    // Initialize the extension after successful login
+    console.log('[AuthService] Login successful, initializing extension...');
+    await initializeExtension();
   }
 
   private async refreshToken(): Promise<boolean> {

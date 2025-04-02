@@ -1,9 +1,8 @@
 /**
  * @file contentExtractor.ts
- * Exposes an API to extract content from the current page, via Comlink.
+ * Simple content extractor that responds to direct message requests.
  */
 
-import { exposeBackgroundAPI } from '../utils/comlinkSetup';
 import { DefaultMarkdownGenerator } from '../html2text/markdownGenerator';
 import { PruningContentFilter } from '../html2text/content_filter_strategy';
 import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from '../config';
@@ -19,56 +18,60 @@ const {
 
 let extractionTimeoutId: number | null = null;
 
-const contentAPI = {
-  async extractContent(options: { retryCount?: number } = {}): Promise<ExtractedContent> {
-    const { retryCount = 0 } = options;
-    setupExtractionTimeout();
+/**
+ * Extracts content from the current page
+ */
+async function extractContent(options: { retryCount?: number } = {}): Promise<ExtractedContent> {
+  const { retryCount = 0 } = options;
+  setupExtractionTimeout();
 
-    try {
-      await waitForDomIdle();
-      const html = document.body?.innerHTML || '';
-      if (!html) throw new Error('Empty document');
+  try {
+    await waitForDomIdle();
+    const html = document.body?.innerHTML || '';
+    if (!html) throw new Error('Empty document');
 
-      const filter = new PruningContentFilter(
-        undefined,
-        5,             // Min blocks
-        'dynamic',     // Strategy
-        0.5,           // Threshold
-        'english'      // Language
-      );
+    const filter = new PruningContentFilter(
+      undefined,
+      5,             // Min blocks
+      'dynamic',     // Strategy
+      0.5,           // Threshold
+      'english'      // Language
+    );
 
-      const mdGen = new DefaultMarkdownGenerator(undefined, { body_width: 80 });
-      const result = mdGen.generateMarkdown(html, location.href, { body_width: 80 }, filter, true);
+    const mdGen = new DefaultMarkdownGenerator(undefined, { body_width: 80 });
+    const result = mdGen.generateMarkdown(html, location.href, { body_width: 80 }, filter, true);
 
-      const sourceMarkdown = USE_FIT_MARKDOWN
-        ? result.fitMarkdown
-        : result.markdownWithCitations || result.rawMarkdown;
+    const sourceMarkdown = USE_FIT_MARKDOWN
+      ? result.fitMarkdown
+      : result.markdownWithCitations || result.rawMarkdown;
 
-      if (!sourceMarkdown) throw new Error('Markdown generation failed');
+    if (!sourceMarkdown) throw new Error('Markdown generation failed');
 
-      clearExtractionTimeout();
+    clearExtractionTimeout();
 
-      return {
-        title: document.title || 'Untitled',
-        url: location.href,
-        markdown: sourceMarkdown,
-        timestamp: Date.now(),
-        metadata: { language: 'en' },
-      };
-    } catch (err) {
-      if (retryCount < MAX_RETRIES) {
-        await delay(RETRY_DELAY_MS);
-        return this.extractContent({ retryCount: retryCount + 1 });
-      }
-      clearExtractionTimeout();
-      throw err;
+    return {
+      title: document.title || 'Untitled',
+      url: location.href,
+      markdown: sourceMarkdown,
+      timestamp: Date.now(),
+      metadata: { language: 'en' },
+    };
+  } catch (err) {
+    if (retryCount < MAX_RETRIES) {
+      await delay(RETRY_DELAY_MS);
+      return extractContent({ retryCount: retryCount + 1 });
     }
-  },
+    clearExtractionTimeout();
+    throw err;
+  }
+}
 
-  isPageReady(): boolean {
-    return document.readyState === 'complete';
-  },
-};
+/**
+ * Checks if the page is ready for content extraction
+ */
+function isPageReady(): boolean {
+  return document.readyState === 'complete';
+}
 
 function setupExtractionTimeout() {
   clearExtractionTimeout();
@@ -128,9 +131,40 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Expose the contentAPI via Comlink using the utility from comlinkSetup
-
+// Set up message listeners for content extraction requests
 if (typeof chrome !== 'undefined' && chrome.runtime) {
-  exposeBackgroundAPI(contentAPI);
-  console.log('[ContentExtractor] Ready and exposing API via Comlink.');
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Handle the extract content request
+    if (message.type === 'EXTRACT_CONTENT') {
+      // Extract content and send back the result (waitForDomIdle is called inside extractContent)
+      extractContent()
+        .then(content => {
+          sendResponse({ success: true, content });
+        })
+        .catch(err => {
+          console.error('[ContentExtractor] Extraction error:', err);
+          sendResponse({ 
+            success: false, 
+            error: err instanceof Error ? err.message : 'Unknown extraction error' 
+          });
+        });
+      
+      // Return true to indicate we'll respond asynchronously
+      return true;
+    }
+    
+    // Handle ready check request
+    if (message.type === 'IS_PAGE_READY') {
+      sendResponse({ success: true, isReady: isPageReady() });
+      return false; // No async response needed
+    }
+    
+    // Simple ping-pong to check if content script is loaded
+    if (message.type === 'PING') {
+      sendResponse({ success: true, pong: true });
+      return false; // No async response needed
+    }
+  });
+
+  console.log('[ContentExtractor] Ready and listening for extraction requests');
 }

@@ -5,7 +5,8 @@
  * Uses PreferencesRepository for data access
  */
 
-import preferencesRepository, { UserPreferences } from '../db/repositories/PreferencesRepository';
+import preferencesRepository from '../db/repositories/PreferencesRepository';
+import { UserPreferences } from '../types';
 
 /**
  * Service for managing user preferences

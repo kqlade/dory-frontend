@@ -14,9 +14,8 @@ let lastActiveTime: number | null = document.hidden ? null : Date.now();
  */
 async function notifyActivity(isActive: boolean, duration: number): Promise<void> {
   try {
-    const api = getBackgroundAPI<BackgroundAPI>();
-    const activity = await api.activity;
-    await activity.reportActivity({
+    const api = await getBackgroundAPI<BackgroundAPI>();
+    await api.activity.reportActivity({
       isActive,
       pageUrl: window.location.href,
       duration,

@@ -27,8 +27,8 @@ import {
 // Services
 import { authService } from './authService';
 
-// Sync sources - keeping this as local since it's specific to this service's implementation
-const SYNC_SOURCE = {
+// Sync sources - exported for use in service worker and other components
+export const SYNC_SOURCE = {
   ALARM: 'alarm',
   SESSION_END: 'session_end',
   MANUAL: 'manual'

@@ -24,3 +24,6 @@ export * from './clustering';
 
 // Export UI command-related types
 export * from './ui';
+
+// Export hooks types
+export * from './centralTypes';
