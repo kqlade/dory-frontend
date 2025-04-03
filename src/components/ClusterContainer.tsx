@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, WheelEvent } from 'react';
 import ReactDOM from 'react-dom';
 import ClusterSquare from './ClusterSquare';
 import { ClusterSuggestion, ClusterPage } from '../types';
-import useBackgroundClustering from '../hooks/useBackgroundClustering';
+import { UI_CONFIG } from '../config';
 import './ClusterContainer.css';
 
 interface ClusterContainerProps {
@@ -10,8 +10,9 @@ interface ClusterContainerProps {
 }
 
 /**
- * Displays a grid of cluster squares for available clusters.
- * Clicking a cluster shows an expanded view with pages.
+ * Displays a grid of cluster squares. Clicking a cluster shows an expanded view with pages.
+ * Shows only the exact number of clusters available, up to a maximum of 6.
+ * Shows no boxes when there are no clusters.
  */
 const ClusterContainer: React.FC<ClusterContainerProps> = ({
   clusters = [],
@@ -19,19 +20,26 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   const [expandedCluster, setExpandedCluster] = useState<ClusterSuggestion | null>(null);
   const [startIndex, setStartIndex] = useState(0);
   const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
-  
+  const [isLoading, setIsLoading] = useState(true);
   const expandedViewRef = useRef<HTMLDivElement>(null);
 
-  // If no explicit clusters provided, use the hook data
-  const { clusters: hookClusters, loading: isLoading } = useBackgroundClustering();
-  
-  // Use either provided clusters or hook data
-  const effectiveClusters = clusters.length ? clusters : hookClusters;
-  
-  // Don't render anything if no clusters and not loading
-  if (!effectiveClusters.length && !isLoading) {
-    return null;
-  }
+  // Use clusters from props, limited to max 6
+  const displayClusters = clusters.slice(0, 6);
+
+  // Show loading animation for a short period when component mounts
+  useEffect(() => {
+    // Only show loading animation if we have clusters to display
+    if (displayClusters.length > 0) {
+      const timer = setTimeout(() => {
+        setIsLoading(false);
+      }, UI_CONFIG.CLUSTER_LOADING_DURATION_MS);
+      
+      return () => clearTimeout(timer);
+    } else {
+      // If no clusters, don't show loading
+      setIsLoading(false);
+    }
+  }, []);
 
   // Opens expanded view for a cluster
   const handleClusterClick = (cluster?: ClusterSuggestion) => {
@@ -53,6 +61,7 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   // Close the expanded view if user clicks outside it
   useEffect(() => {
     if (!expandedCluster) return;
+    
     const handleClickOutside = (e: MouseEvent) => {
       if (
         expandedViewRef.current &&
@@ -61,6 +70,7 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         handleCloseExpanded();
       }
     };
+    
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [expandedCluster]);
@@ -168,34 +178,19 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     return ReactDOM.createPortal(content, document.body);
   };
 
-  // When loading, render loading placeholders
-  if (isLoading) {
-    // Show loading squares for the number of actual clusters,
-    // or at least one if we don't know yet
-    const placeholderCount = effectiveClusters.length || 1;
-    
-    return (
-      <div className="cluster-container">
-        <div className="cluster-grid">
-          {Array.from({ length: placeholderCount }).map((_, index) => (
-            <ClusterSquare
-              key={`loading-${index}`}
-              loading={true}
-              onClick={() => {}}
-            />
-          ))}
-        </div>
-      </div>
-    );
+  // Don't render anything if there are no clusters
+  if (displayClusters.length === 0) {
+    return null;
   }
 
   return (
     <div className="cluster-container">
       <div className="cluster-grid">
-        {effectiveClusters.map((cluster, i) => (
+        {displayClusters.map((cluster, i) => (
           <ClusterSquare
             key={`cluster-${cluster.cluster_id || i}`}
             cluster={cluster}
+            loading={isLoading}
             onClick={handleClusterClick}
           />
         ))}

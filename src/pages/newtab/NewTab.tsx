@@ -141,7 +141,7 @@ const NewTab: React.FC = () => {
 
         {/* Helper text for keyboard shortcut - OS specific */}
         <div className="shortcut-helper-text">
-          Press {detectOS() === 'Mac OS' ? '⌘' : 'Ctrl'}+Shift+K to search from any page
+          Press {detectOS() === 'Mac OS' ? '⌘' : 'Ctrl'}+Shift+P to search from any page
         </div>
       </div>
 
