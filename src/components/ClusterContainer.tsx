@@ -7,30 +7,31 @@ import './ClusterContainer.css';
 
 interface ClusterContainerProps {
   clusters?: ClusterSuggestion[];
-  clusterCount?: number;
 }
 
 /**
- * Displays a grid of cluster squares. Clicking a cluster shows an expanded view with pages.
+ * Displays a grid of cluster squares for available clusters.
+ * Clicking a cluster shows an expanded view with pages.
  */
 const ClusterContainer: React.FC<ClusterContainerProps> = ({
   clusters = [],
-  clusterCount = 3,
 }) => {
   const [expandedCluster, setExpandedCluster] = useState<ClusterSuggestion | null>(null);
   const [startIndex, setStartIndex] = useState(0);
   const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
-
+  
   const expandedViewRef = useRef<HTMLDivElement>(null);
 
-  const { clusters: hookClusters, loading: loadingClusters } =
-    useBackgroundClustering();
-
-  // Decide which cluster data to use (explicit prop vs. hook)
+  // If no explicit clusters provided, use the hook data
+  const { clusters: hookClusters, loading: isLoading } = useBackgroundClustering();
+  
+  // Use either provided clusters or hook data
   const effectiveClusters = clusters.length ? clusters : hookClusters;
-
-  // Clustering is fully managed by the service worker
-  // UI components just display data from storage
+  
+  // Don't render anything if no clusters and not loading
+  if (!effectiveClusters.length && !isLoading) {
+    return null;
+  }
 
   // Opens expanded view for a cluster
   const handleClusterClick = (cluster?: ClusterSuggestion) => {
@@ -47,7 +48,6 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   // Opens pages in a new tab
   const handlePageClick = (page: ClusterPage) => {
     chrome.tabs.create({ url: page.url });
-    // Optionally close expanded view, depending on UX preference
   };
 
   // Close the expanded view if user clicks outside it
@@ -168,21 +168,37 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     return ReactDOM.createPortal(content, document.body);
   };
 
+  // When loading, render loading placeholders
+  if (isLoading) {
+    // Show loading squares for the number of actual clusters,
+    // or at least one if we don't know yet
+    const placeholderCount = effectiveClusters.length || 1;
+    
+    return (
+      <div className="cluster-container">
+        <div className="cluster-grid">
+          {Array.from({ length: placeholderCount }).map((_, index) => (
+            <ClusterSquare
+              key={`loading-${index}`}
+              loading={true}
+              onClick={() => {}}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="cluster-container">
       <div className="cluster-grid">
-        {Array.from({ length: clusterCount }).map((_, i) => {
-          // Use cluster data if available for this position
-          const clusterData = effectiveClusters.length > i ? effectiveClusters[i] : undefined;
-          return (
-            <ClusterSquare
-              key={`cluster-${i}`}
-              cluster={clusterData}
-              loading={loadingClusters}
-              onClick={handleClusterClick}
-            />
-          );
-        })}
+        {effectiveClusters.map((cluster, i) => (
+          <ClusterSquare
+            key={`cluster-${cluster.cluster_id || i}`}
+            cluster={cluster}
+            onClick={handleClusterClick}
+          />
+        ))}
       </div>
       {renderExpandedView()}
     </div>
