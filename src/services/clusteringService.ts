@@ -13,9 +13,11 @@ import {
   ClusteringJobResponse,
   ClusteringJobStatus,
   ClusterSuggestionOptions,
-  ClusteringResult
+  ClusteringResult,
+  ClusterStatus,
+  JobStatusResponse
 } from '../types';
-import { JobManager, JobStatusResponse } from '../utils/jobManager';
+import { JobManager } from '../utils/jobManager';
 
 /**
  * Service for retrieving and managing cluster suggestions.
@@ -33,14 +35,15 @@ class ClusteringService {
   /**
    * Fetch cluster suggestions using the asynchronous job pattern.
    * - Starts a clustering job.
-   * - Polls for completion.
-   * - Returns new clusters along with previously stored clusters.
+   * - Sets up polling in the service worker.
+   * - Returns immediately with previous clusters.
+   * - UI will update when job completes via storage listeners.
    *
-   * @param options Configuration options (e.g., count, onProgress).
+   * @param options Configuration options (e.g., count).
    * @returns A promise resolving to { current, previous } clusters.
    */
   async getClusterSuggestions(options: ClusterSuggestionOptions = {}): Promise<ClusteringResult> {
-    const { count = 3, onProgress } = options;
+    const { count = 3 } = options;
     let previous: ClusterSuggestion[] = [];
 
     try {
@@ -55,9 +58,6 @@ class ClusteringService {
         console.warn('[ClusteringService] Could not retrieve previous clusters:', err);
       }
 
-      // Initial progress
-      onProgress?.(0.1);
-
       // Ensure the user is authenticated
       const authState = await authService.getAuthState();
       if (!authState.user?.id) {
@@ -65,76 +65,179 @@ class ClusteringService {
         throw new Error('No authenticated user, cannot start clustering job');
       }
 
-      // Start a clustering job
-      console.log('[ClusteringService] Starting fresh clustering job');
-      const jobId = await this.startClusteringJob(count);
+      // Update UI status to loading
+      await this.updateClusterStatus('loading');
 
-      // Update progress to reflect that the job has started
-      onProgress?.(0.2);
-
-      // Wait for job completion with incremental progress reporting
-      const result = await this.jobManager.waitForCompletion(
-        jobId,
-        (id) => this.checkClusteringJobStatus(id),
-        {
-          onProgress: (p: number) => {
-            // Scale progress from 0.2 -> 0.9
-            onProgress?.(0.2 + p * 0.7);
-          },
-        }
+      // Start a clustering job with polling in the service worker context
+      console.log('[ClusteringService] Starting clustering job with service worker polling');
+      await this.jobManager.startJobWithPolling(
+        // Function to start the job
+        () => this.createClusteringJob(count),
+        // Function to check job status
+        (jobId) => this.checkClusteringJobStatus(jobId),
+        // Callback when job completes
+        (jobId, result) => this.handleJobCompletion(jobId, result, previous)
       );
 
-      // Final progress update
-      onProgress?.(1.0);
-
-      // Extract new suggestions
-      const current = result.suggestions || [];
-
-      // Store the new data along with the old
-      const clusterData = { current, previous, timestamp: Date.now() };
-      await chrome.storage.local.set({ [STORAGE_KEYS.CLUSTER_HISTORY_KEY]: clusterData });
-      console.log('[ClusteringService] Stored new clustering results');
-      return { current, previous };
+      // Return immediately with current state
+      // UI will update when the job completes via storage listeners
+      return { current: [], previous };
     } catch (error) {
-      console.error('[ClusteringService] Error getting clusters:', error);
-      // Return empty arrays - UI will show loading state
-      return { current: [], previous: [] };
+      console.error('[ClusteringService] Error starting clustering job:', error);
+      
+      // Update status to complete (even though it failed) to avoid stuck UI
+      await this.updateClusterStatus('complete');
+      
+      // Return empty arrays - UI will show empty state
+      return { current: [], previous };
     }
   }
 
   /**
-   * Starts a new clustering job.
+   * Force a refresh by explicitly triggering a new clustering job.
+   * This is effectively an alias of getClusterSuggestions with forceRefresh set.
    *
-   * @param count Number of clusters to request from the API (default: 3).
-   * @returns A promise resolving to the newly created job ID.
+   * @param options Options including count
+   * @returns A promise resolving to the refreshed clustering results.
    */
-  private async startClusteringJob(count = 3): Promise<string> {
-    return this.jobManager.startJob(async () => {
+  async refreshClusters(options: ClusterSuggestionOptions = {}): Promise<ClusteringResult> {
+    return this.getClusterSuggestions({ ...options, forceRefresh: true });
+  }
+
+  /**
+   * Trigger the clustering process for the current user, starting a new job.
+   * This is designed to be called by the service worker for scheduled refreshes.
+   *
+   * @returns A promise resolving to the job ID if successful
+   * @throws Error if clustering could not be started
+   */
+  async triggerClustering(): Promise<string> {
+    try {
       const authState = await authService.getAuthState();
       const userId = authState.user?.id;
 
       if (!userId) {
-        console.error('[ClusteringService] No authenticated user ID found');
+        console.warn('[ClusteringService] No authenticated user, cannot trigger clustering');
         throw new Error('No authenticated user, cannot start clustering job');
       }
 
-      const endpoint = `${CLUSTERING_ENDPOINTS.SUGGESTIONS}?user_id=${userId}&count=${count}`;
-      console.log('[ClusteringService] Starting clustering job for user:', userId);
+      // Update UI status to loading
+      await this.updateClusterStatus('loading');
 
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${authState.accessToken}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Error starting clustering job: ${response.statusText}`);
+      // Start a clustering job with polling in the service worker context
+      console.log('[ClusteringService] Starting service worker triggered clustering job');
+      const jobId = await this.jobManager.startJobWithPolling(
+        // Function to start the job
+        () => this.createClusteringJob(),
+        // Function to check job status
+        (id) => this.checkClusteringJobStatus(id),
+        // Callback when job completes
+        (jobId, result) => this.handleJobCompletion(jobId, result)
+      );
+      
+      console.log('[ClusteringService] Started job with ID:', jobId);
+      return jobId;
+    } catch (error) {
+      console.error('[ClusteringService] Error triggering clustering:', error);
+      // Reset status on error
+      await this.updateClusterStatus('complete');
+      throw error;
+    }
+  }
+
+  /**
+   * Handle job completion by updating storage with results.
+   */
+  private async handleJobCompletion(
+    jobId: string, 
+    result: ClusterResponse,
+    previousClusters: ClusterSuggestion[] = []
+  ): Promise<void> {
+    try {
+      console.log(`[ClusteringService] Handling completion for job ${jobId}`);
+
+      // Get the current cluster history if previousClusters is empty
+      if (!previousClusters.length) {
+        const storage = await chrome.storage.local.get(STORAGE_KEYS.CLUSTER_HISTORY_KEY);
+        const history = storage[STORAGE_KEYS.CLUSTER_HISTORY_KEY] || { current: [], previous: [] };
+        previousClusters = history.current || [];
       }
 
-      const data: ClusteringJobResponse = await response.json();
-      console.log('[ClusteringService] Started job with ID:', data.job_id);
-      return data.job_id;
+      // Extract new suggestions
+      const current = result.suggestions || [];
+
+      // Store the new data
+      await this.updateClusterHistory(current, previousClusters);
+      
+      // Update UI status to complete
+      await this.updateClusterStatus('complete');
+      
+      console.log(`[ClusteringService] Job ${jobId} results stored successfully`);
+    } catch (error) {
+      console.error(`[ClusteringService] Error handling job completion:`, error);
+      await this.updateClusterStatus('complete'); // Ensure UI isn't stuck
+    }
+  }
+
+  /**
+   * Update the cluster history in storage
+   * Only stores cluster data, not job state
+   */
+  private async updateClusterHistory(
+    current: ClusterSuggestion[], 
+    previous: ClusterSuggestion[]
+  ): Promise<void> {
+    const clusterData = { 
+      current, 
+      previous, 
+      timestamp: Date.now()
+    };
+    await chrome.storage.local.set({ [STORAGE_KEYS.CLUSTER_HISTORY_KEY]: clusterData });
+  }
+
+  /**
+   * Update the cluster UI status in storage
+   * This is separate from the actual cluster data
+   */
+  private async updateClusterStatus(state: 'idle' | 'loading' | 'complete'): Promise<void> {
+    const status: ClusterStatus = {
+      state,
+      timestamp: Date.now()
+    };
+    await chrome.storage.local.set({ [STORAGE_KEYS.CLUSTER_STATUS_KEY]: status });
+  }
+
+  /**
+   * Creates a clustering job by calling the API.
+   *
+   * @param count Number of clusters to request from the API (default: 3).
+   * @returns A promise resolving to the newly created job ID.
+   */
+  private async createClusteringJob(count = 3): Promise<string> {
+    const authState = await authService.getAuthState();
+    const userId = authState.user?.id;
+
+    if (!userId) {
+      console.error('[ClusteringService] No authenticated user ID found');
+      throw new Error('No authenticated user, cannot start clustering job');
+    }
+
+    const endpoint = `${CLUSTERING_ENDPOINTS.SUGGESTIONS}?user_id=${userId}&count=${count}`;
+    console.log('[ClusteringService] Starting clustering job for user:', userId);
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${authState.accessToken}`,
+      },
     });
+    if (!response.ok) {
+      throw new Error(`Error starting clustering job: ${response.statusText}`);
+    }
+
+    const data: ClusteringJobResponse = await response.json();
+    console.log('[ClusteringService] Started job with ID:', data.job_id);
+    return data.job_id;
   }
 
   /**
@@ -151,7 +254,7 @@ class ClusteringService {
         throw new Error('Authentication required');
       }
 
-      const endpoint = `${CLUSTERING_ENDPOINTS.JOB_STATUS}/${jobId}`;
+      const endpoint = `${CLUSTERING_ENDPOINTS.JOB_STATUS}?job_id=${jobId}`;
       console.log(`[ClusteringService] Checking status for job: ${jobId}`);
 
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -190,120 +293,34 @@ class ClusteringService {
   }
 
   /**
-   * Force a refresh by explicitly triggering a new clustering job.
-   * This is effectively an alias of getClusterSuggestions with forceRefresh set.
-   *
-   * @param options Options including count and progress callback
-   * @returns A promise resolving to the refreshed clustering results.
-   */
-  async refreshClusters(options: ClusterSuggestionOptions = {}): Promise<ClusteringResult> {
-    return this.getClusterSuggestions({ ...options, forceRefresh: true });
-  }
-
-  /**
    * Resume and manage any jobs that were active before the current session.
    */
-  private resumeActiveJobs(): void {
-    this.jobManager.resumeActiveJobs(
-      // Function to check job status
-      (jobId) => this.checkClusteringJobStatus(jobId),
+  private async resumeActiveJobs(): Promise<void> {
+    try {
+      // First set the status to loading while we check for active jobs
+      // If there are active jobs, this will remain loading until they complete
+      await this.updateClusterStatus('loading');
+      
+      // Resume all active jobs through the job manager
+      this.jobManager.resumeActiveJobs(
+        // Function to check job status
+        (jobId) => this.checkClusteringJobStatus(jobId),
 
-      // Callback when a job completes
-      async (jobId, result) => {
-        let previous: ClusterSuggestion[] = [];
-        
-        // Try to get previous clusters from storage
-        try {
-          const storage = await chrome.storage.local.get(STORAGE_KEYS.CLUSTER_HISTORY_KEY);
-          const history = storage[STORAGE_KEYS.CLUSTER_HISTORY_KEY];
-          if (history?.current?.length) {
-            previous = history.current;
-          }
-        } catch (err) {
-          console.warn('[ClusteringService] Could not retrieve previous clusters:', err);
+        // Callback when a job completes
+        async (jobId, result) => {
+          // Use the common job completion handler
+          await this.handleJobCompletion(jobId, result);
         }
-
-        // Store the new results for cross-tab synchronization (even if empty)
-        const clusterData = {
-          current: result.suggestions || [],
-          previous,
-          timestamp: Date.now(),
-        };
-        await chrome.storage.local.set({ [STORAGE_KEYS.CLUSTER_HISTORY_KEY]: clusterData });
-        console.log(`[ClusteringService] Resumed job ${jobId} completed; results stored.`);
+      );
+      
+      // If no jobs were resumed, set status to complete
+      if (this.jobManager.getActiveJobIds().length === 0) {
+        await this.updateClusterStatus('complete');
       }
-    );
-  }
-
-  /**
-   * (DEPRECATED) Fetch clusters via a synchronous endpoint.
-   * Only recommended for small datasets or testing. Use getClusterSuggestions (job-based API) in production.
-   *
-   * @param count Number of clusters to fetch (default: 3).
-   * @returns A promise resolving to an array of cluster suggestions.
-   */
-  async fetchClusterSuggestions(count = 3): Promise<ClusterSuggestion[]> {
-    try {
-      const authState = await authService.getAuthState();
-      const userId = authState.user?.id;
-
-      if (!userId) {
-        console.warn('[ClusteringService] No authenticated user, cannot fetch clusters');
-        return [];
-      }
-
-      const endpoint = `${CLUSTERING_ENDPOINTS.SUGGESTIONS_SYNC}?user_id=${userId}&count=${count}`;
-      console.warn('[ClusteringService] Using synchronous endpoint (not recommended for production):', endpoint);
-
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        headers: { Authorization: `Bearer ${authState.accessToken}` },
-      });
-      if (!response.ok) {
-        throw new Error(`Error fetching clusters: ${response.statusText}`);
-      }
-
-      const data: ClusterResponse = await response.json();
-      return data.suggestions;
-    } catch (error) {
-      console.error('[ClusteringService] Error fetching clusters synchronously:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Trigger the clustering process for the current user (using refresh endpoint).
-   *
-   * @returns A promise resolving to true if successful, false otherwise.
-   */
-  async triggerClustering(): Promise<boolean> {
-    try {
-      const authState = await authService.getAuthState();
-      const userId = authState.user?.id;
-
-      if (!userId) {
-        console.warn('[ClusteringService] No authenticated user, cannot trigger clustering');
-        return false;
-      }
-
-      const endpoint = `${CLUSTERING_ENDPOINTS.REFRESH}?user_id=${userId}`;
-      console.log('[ClusteringService] Triggering clustering refresh for user:', userId);
-
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authState.accessToken}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Error triggering clustering: ${response.statusText}`);
-      }
-
-      console.log('[ClusteringService] Clustering refresh triggered successfully');
-      return true;
-    } catch (error) {
-      console.error('[ClusteringService] Error triggering clustering refresh:', error);
-      return false;
+    } catch (err) {
+      console.warn('[ClusteringService] Error resuming active jobs:', err);
+      // Ensure we're not stuck in loading state
+      await this.updateClusterStatus('complete');
     }
   }
 }

@@ -2,35 +2,11 @@
  * @file jobManager.ts
  * 
  * Generic utility for managing asynchronous jobs with polling.
- * Provides a consistent pattern for starting jobs, polling for status,
- * and retrieving results when complete.
+ * Handles job tracking, status polling, and result management in the service worker context.
  */
 
-import { JOB_CONFIG } from '../config';
-
-export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
-
-export interface JobState<T> {
-  jobId: string;
-  status: JobStatus;
-  result?: T;
-  error?: string;
-  startTime: number;
-  lastPolled: number;
-  attempts: number;
-}
-
-export interface JobOptions {
-  pollingIntervalMs?: number;
-  maxAttempts?: number;
-  onProgress?: (progress: number) => void;
-}
-
-export interface JobStatusResponse<T> {
-  status: JobStatus;
-  result?: T;
-  error?: string;
-}
+import { JOB_CONFIG, STORAGE_KEYS } from '../config';
+import { JobStatus, JobState, JobOptions, JobStatusResponse } from '../types';
 
 /**
  * Generic job manager for handling asynchronous job processing with polling.
@@ -47,12 +23,51 @@ export class JobManager<T> {
   }
 
   /**
-   * Start a job and return its job ID.
+   * Start a job with polling in the service worker context.
+   * This is the preferred method to ensure polling persists in the background.
+   * 
+   * @param startJobFn Function that starts a job and returns a job ID
+   * @param checkFn Function to check job status
+   * @param completionCallback Callback to handle job completion
+   * @param options Options for job polling
+   * @returns Promise resolving to the job ID
+   */
+  async startJobWithPolling(
+    startJobFn: () => Promise<string>,
+    checkFn: (id: string) => Promise<JobStatusResponse<T>>,
+    completionCallback: (jobId: string, result: T) => void,
+    options: JobOptions = {}
+  ): Promise<string> {
+    try {
+      // Start the job
+      const jobId = await this.startJob(startJobFn);
+      
+      // Set up polling in service worker context
+      this.waitForCompletion(jobId, checkFn, options)
+        .then(result => {
+          console.log(`[JobManager] Job ${jobId} completed successfully`);
+          completionCallback(jobId, result);
+        })
+        .catch(error => {
+          console.error(`[JobManager] Job ${jobId} failed:`, error);
+        });
+      
+      // Return job ID immediately
+      return jobId;
+    } catch (error) {
+      console.error('[JobManager] Error starting job with polling:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Start a job and return its job ID without setting up polling.
+   * Internal use only - use startJobWithPolling instead for most cases.
    * 
    * @param startJob Function that starts a job and returns a job ID
    * @returns Promise resolving to the job ID
    */
-  async startJob(startJob: () => Promise<string>): Promise<string> {
+  private async startJob(startJob: () => Promise<string>): Promise<string> {
     try {
       const jobId = await startJob();
       
@@ -90,7 +105,15 @@ export class JobManager<T> {
         throw new Error(`Job ${jobId} not found`);
       }
       
-      const response = await checkFn(jobId);
+      let response: JobStatusResponse<T>;
+      try {
+        response = await checkFn(jobId);
+      } catch (checkError) {
+        // If checking job status fails, log error but return a PENDING status
+        // This prevents the polling from stopping due to temporary network issues
+        console.error(`[JobManager] Error checking job status: ${checkError}`);
+        return { status: 'PENDING' };
+      }
       
       // Update job state
       jobState.status = response.status;
@@ -106,8 +129,9 @@ export class JobManager<T> {
       this.saveActiveJobs();
       return response;
     } catch (error) {
-      console.error(`[JobManager] Error polling job ${jobId}:`, error);
-      throw error;
+      console.error(`[JobManager] Error in pollJobStatus for ${jobId}:`, error);
+      // Return a pending status instead of throwing to keep polling alive
+      return { status: 'PENDING' };
     }
   }
 
@@ -168,7 +192,11 @@ export class JobManager<T> {
           // Schedule next poll
           setTimeout(poll, this.pollingIntervalMs);
         } catch (error) {
-          reject(error);
+          // Log error but continue polling
+          console.error(`[JobManager] Error during polling for job ${jobId}:`, error);
+          
+          // Schedule next poll despite error (for resilience)
+          setTimeout(poll, this.pollingIntervalMs);
         }
       };
       
@@ -240,7 +268,7 @@ export class JobManager<T> {
    */
   private saveActiveJobs(): void {
     const serializedJobs = JSON.stringify(Array.from(this.activeJobs.entries()));
-    chrome.storage.local.set({ [JOB_CONFIG.STORAGE_KEY]: serializedJobs });
+    chrome.storage.local.set({ [STORAGE_KEYS.ACTIVE_JOBS_KEY]: serializedJobs });
   }
 
   /**
@@ -248,8 +276,8 @@ export class JobManager<T> {
    */
   private async loadActiveJobs(): Promise<void> {
     try {
-      const storage = await chrome.storage.local.get(JOB_CONFIG.STORAGE_KEY);
-      const serializedJobs = storage[JOB_CONFIG.STORAGE_KEY];
+      const storage = await chrome.storage.local.get(STORAGE_KEYS.ACTIVE_JOBS_KEY);
+      const serializedJobs = storage[STORAGE_KEYS.ACTIVE_JOBS_KEY];
       
       if (serializedJobs) {
         const jobEntries = JSON.parse(serializedJobs) as [string, JobState<T>][];

@@ -4,14 +4,16 @@ import { ClusterSuggestion } from '../types';
 
 interface ClusterSquareProps {
   cluster?: ClusterSuggestion;
+  loading?: boolean;
   onClick: (cluster?: ClusterSuggestion) => void;
 }
 
 /**
  * Displays a cluster's label or a loading indicator if cluster data is undefined.
  */
-const ClusterSquare: React.FC<ClusterSquareProps> = ({ cluster, onClick }) => {
-  const isLoading = !cluster;
+const ClusterSquare: React.FC<ClusterSquareProps> = ({ cluster, loading = false, onClick }) => {
+  // Consider both explicit loading prop and absence of data
+  const isLoading = loading || !cluster;
 
   const handleClick = () => {
     if (!isLoading) {

@@ -22,6 +22,9 @@ export * from './search';
 // Export clustering-related types
 export * from './clustering';
 
+// Export job manager-related types
+export * from './jobManager';
+
 // Export UI command-related types
 export * from './ui';
 

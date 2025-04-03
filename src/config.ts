@@ -53,6 +53,7 @@ export const STORAGE_KEYS = {
   CIRCUIT_BREAKER_KEY: 'coldStorageSyncCircuitBreaker',
   TELEMETRY_KEY: 'coldStorageSyncTelemetry',
   CLUSTER_HISTORY_KEY: 'clusterHistory',
+  CLUSTER_STATUS_KEY: 'clusterStatus',
   ACTIVE_JOBS_KEY: 'activeJobs',
   PREFERRED_THEME_KEY: 'preferredTheme'
 };
@@ -70,19 +71,19 @@ export const COLD_STORAGE_CONFIG = {
 // Job Configuration
 export const JOB_CONFIG = {
   // Polling interval for job status (in milliseconds)
-  POLLING_INTERVAL_MS: 3000,
+  POLLING_INTERVAL_MS: 10000,
   
   // Maximum number of polling attempts before giving up
-  MAX_POLLING_ATTEMPTS: 20,
-  
-  // Storage key for tracking jobs
-  STORAGE_KEY: 'activeJobs'
+  MAX_POLLING_ATTEMPTS: 30
 };
 
 // Clustering configuration
 export const CLUSTERING_CONFIG = {
   // Regular refresh interval for clusters (in minutes)
-  REFRESH_INTERVAL_MINUTES: 5
+  REFRESH_INTERVAL_MINUTES: 5,
+  
+  // Initial delay before first clustering job starts (in milliseconds)
+  INITIAL_DELAY_MS: 15000 // 15 seconds
 };
 
 // URL Filtering Configuration

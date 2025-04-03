@@ -20,27 +20,17 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   const [expandedCluster, setExpandedCluster] = useState<ClusterSuggestion | null>(null);
   const [startIndex, setStartIndex] = useState(0);
   const [selectedPageIndex, setSelectedPageIndex] = useState(-1);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const expandedViewRef = useRef<HTMLDivElement>(null);
 
-  const { clusters: hookClusters, loading: loadingClusters, refreshClusters } =
+  const { clusters: hookClusters, loading: loadingClusters } =
     useBackgroundClustering();
 
   // Decide which cluster data to use (explicit prop vs. hook)
   const effectiveClusters = clusters.length ? clusters : hookClusters;
 
-  // Fetch clusters on mount (or when clusterCount changes)
-  useEffect(() => {
-    if (clusterCount) refreshClusters({ count: clusterCount });
-  }, [clusterCount, refreshClusters]);
-
-  // Manually refresh clusters
-  const manuallyRefreshClusters = async () => {
-    setIsRefreshing(true);
-    await refreshClusters({ count: clusterCount });
-    setTimeout(() => setIsRefreshing(false), 3000);
-  };
+  // Clustering is fully managed by the service worker
+  // UI components just display data from storage
 
   // Opens expanded view for a cluster
   const handleClusterClick = (cluster?: ClusterSuggestion) => {
@@ -182,12 +172,13 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
     <div className="cluster-container">
       <div className="cluster-grid">
         {Array.from({ length: clusterCount }).map((_, i) => {
-          // Only show actual cluster data if we have it and aren't refreshing
-          const clusterData = !isRefreshing && effectiveClusters.length > i ? effectiveClusters[i] : undefined;
+          // Use cluster data if available for this position
+          const clusterData = effectiveClusters.length > i ? effectiveClusters[i] : undefined;
           return (
             <ClusterSquare
               key={`cluster-${i}`}
               cluster={clusterData}
+              loading={loadingClusters}
               onClick={handleClusterClick}
             />
           );

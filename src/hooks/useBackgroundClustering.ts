@@ -5,191 +5,93 @@
  * Automatically refreshes clusters at configurable intervals and keeps all tabs in sync.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { getBackgroundAPI } from '../utils/comlinkSetup';
-import { STORAGE_KEYS, CLUSTERING_CONFIG } from '../config';
+import { useState, useRef, useEffect } from 'react';
+import { STORAGE_KEYS } from '../config';
 import { useAuth } from './useBackgroundAuth';
-import type { BackgroundAPI, ClusteringServiceAPI } from '../types';
 import type { 
-  ClusterSuggestion, 
-  ClusteringResult, 
-  ClusterSuggestionOptions, 
-  ClusterHistory 
-} from '../types';
+  ClusterSuggestion,
+  ClusterHistory,
+  ClusterStatus
+} from '../types/clustering';
 
-// Status types for job processing state
-type ClusteringStatus = 'idle' | 'loading' | 'complete' | 'error';
-
-interface UseClusteringResult {
+type UseClusteringResult = {
   clusters: ClusterSuggestion[];
   previousClusters: ClusterSuggestion[];
-  status: ClusteringStatus;
-  progress: number;
   loading: boolean;
   error: Error | null;
+  status: 'idle' | 'loading' | 'complete';
   lastUpdated: Date | null;
-  refreshClusters: (options?: ClusterSuggestionOptions) => Promise<ClusteringResult>;
-  triggerClustering: () => Promise<void>;
-}
+};
 
 /**
- * Hook for interacting with the clustering functionality in the background API.
- * Automatically fetches fresh clusters:
- * 1. On initial mount (once authenticated)
- * 2. Every X minutes (configurable in CLUSTERING_CONFIG.REFRESH_INTERVAL_MINUTES)
- * 3. When explicitly requested via refreshClusters()
- * 4. Synchronizes with other tabs/windows through chrome.storage.
+ * Hook for interacting with the clustering functionality managed by the service worker.
+ * This hook's responsibilities:
+ * 1. Provide UI components with cluster data from storage
+ * 2. Listen for storage changes (when service worker updates clustering data)
+ * 3. Expose a simple API for UI components to see clustering status
  */
 const useBackgroundClustering = (): UseClusteringResult => {
   // -- Authentication state
-  const { isAuthenticated, loading: authLoading } = useAuth();
-  
-  // -- Data state
+  const { isAuthenticated } = useAuth();
+
+  // -- Cluster data
   const [clusters, setClusters] = useState<ClusterSuggestion[]>([]);
   const [previousClusters, setPreviousClusters] = useState<ClusterSuggestion[]>([]);
 
-  // -- Process state
-  const [status, setStatus] = useState<ClusteringStatus>('loading'); 
-  const [progress, setProgress] = useState(0);
+  // -- Status information
+  const [status, setStatus] = useState<'idle' | 'loading' | 'complete'>('loading');
   const [error, setError] = useState<Error | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  // -- Service & interval references
-  const clusteringServiceRef = useRef<ClusteringServiceAPI | null>(null);
-  const loadingRef = useRef<boolean>(false);
-  const refreshIntervalRef = useRef<number | null>(null);
+  // -- Service reference (in case we need it for future functionality)
+  const apiInitializedRef = useRef<boolean>(false);
 
   /**
-   * Fetch fresh clusters directly from the API.
-   * Always starts a new job, ignoring any cached data.
-   */
-  const refreshClusters = useCallback(
-    async (options?: ClusterSuggestionOptions) => {
-      if (!isAuthenticated) {
-        console.log('[useBackgroundClustering] Not authenticated, skipping fetch.');
-        return { current: [], previous: [] };
-      }
-
-      const service = clusteringServiceRef.current;
-      if (!service) {
-        console.warn('[useBackgroundClustering] Clustering service not initialized yet.');
-        return { current: [], previous: [] };
-      }
-
-      if (loadingRef.current) {
-        console.warn('[useBackgroundClustering] Cluster fetch already in progress.');
-        return { current: clusters, previous: previousClusters };
-      }
-
-      try {
-        loadingRef.current = true;
-        setStatus('loading');
-        setProgress(0);
-        setError(null);
-
-        // Call the service with progress tracking
-        const result = await service.getClusterSuggestions({
-          ...options,
-          onProgress: (p: number) => setProgress(p),
-        });
-
-        // Update state with whatever result we got (even if empty)
-        setClusters(result.current);
-        setPreviousClusters(result.previous);
-
-        // Only mark as complete if we have actual clusters
-        if (result.current && result.current.length > 0) {
-          setStatus('complete');
-        } else {
-          console.log('[useBackgroundClustering] No clusters returned, keeping loading state');
-          setStatus('loading');
-        }
-
-        setProgress(1.0);
-        setLastUpdated(new Date());
-        return result;
-      } catch (err) {
-        console.error('[useBackgroundClustering] Error fetching clusters:', err);
-        const fetchedError = err instanceof Error ? err : new Error('Unknown clustering error');
-        setError(fetchedError);
-        // Keep loading state even on error
-        setStatus('loading');
-        return { current: clusters, previous: previousClusters };
-      } finally {
-        loadingRef.current = false;
-      }
-    },
-    [isAuthenticated, clusters, previousClusters]
-  );
-
-  /**
-   * Trigger the clustering process in the background without waiting for completion.
-   */
-  const triggerClustering = useCallback(async () => {
-    const service = clusteringServiceRef.current;
-    if (!service) throw new Error('Clustering service not initialized');
-
-    try {
-      await service.triggerClustering();
-    } catch (err) {
-      console.error('[useBackgroundClustering] Error triggering clustering:', err);
-      throw err;
-    }
-  }, []);
-
-  /**
-   * Initialize the proxy and set up auto-refresh on mount (when authenticated).
+   * Initialize and read initial state from storage - once when authenticated
    */
   useEffect(() => {
-    let isMounted = true;
-
-    if (authLoading || !isAuthenticated) {
-      console.log('[useBackgroundClustering] Waiting for authentication...');
-      return;
-    }
-
-    const setup = async () => {
+    if (!isAuthenticated || apiInitializedRef.current) return;
+    
+    const initialize = async () => {
       try {
-        // Get the background API via Comlink
-        const api = await getBackgroundAPI<BackgroundAPI>();
-        if (!isMounted) return;
+        // Mark as initialized to prevent duplicate calls
+        apiInitializedRef.current = true;
+        
+        // Read initial cluster data from storage
+        const storageData = await chrome.storage.local.get([
+          STORAGE_KEYS.CLUSTER_HISTORY_KEY,
+          STORAGE_KEYS.CLUSTER_STATUS_KEY
+        ]);
+        
+        const history = storageData[STORAGE_KEYS.CLUSTER_HISTORY_KEY] as ClusterHistory;
+        const statusData = storageData[STORAGE_KEYS.CLUSTER_STATUS_KEY] as ClusterStatus;
 
-        // Assign the clustering service
-        clusteringServiceRef.current = api.clusters;
-        console.log('[useBackgroundClustering] Background API initialized, fetching clusters...');
-
-        // Fetch immediately once authenticated
-        await refreshClusters();
-
-        // Set up regular refresh interval
-        const intervalMs = CLUSTERING_CONFIG.REFRESH_INTERVAL_MINUTES * 60 * 1000;
-        refreshIntervalRef.current = window.setInterval(() => {
-          if (isMounted) {
-            console.log('[useBackgroundClustering] Auto-refreshing clusters...');
-            refreshClusters();
-          }
-        }, intervalMs);
+        // Set clusters if we have them
+        if (history) {
+          setClusters(history.current || []);
+          setPreviousClusters(history.previous || []);
+          setLastUpdated(history.timestamp ? new Date(history.timestamp) : null);
+        }
+        
+        // Set status if we have it
+        if (statusData) {
+          setStatus(statusData.state || 'idle');
+        } else {
+          // Default to 'complete' if no status (better for UI)
+          setStatus('complete');
+        }
       } catch (err) {
         console.error('[useBackgroundClustering] Initialization error:', err);
         setError(err instanceof Error ? err : new Error('Initialization error'));
-        setStatus('loading'); // Keep UI in loading state
+        setStatus('complete'); // Default to complete on error
       }
     };
 
-    setup();
-
-    // Cleanup on unmount
-    return () => {
-      isMounted = false;
-      if (refreshIntervalRef.current) {
-        window.clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-    };
-  }, [isAuthenticated, authLoading, refreshClusters]);
+    initialize();
+  }, [isAuthenticated]);
 
   /**
-   * Listen for storage changes to synchronize cluster data across tabs.
+   * Listen for storage changes from the service worker
    */
   useEffect(() => {
     const handleStorageChange = (
@@ -198,21 +100,20 @@ const useBackgroundClustering = (): UseClusteringResult => {
     ) => {
       if (areaName !== 'local') return;
 
-      // Check if cluster history was updated
-      if (changes[STORAGE_KEYS.CLUSTER_HISTORY_KEY]) {
-        const newValue = changes[STORAGE_KEYS.CLUSTER_HISTORY_KEY].newValue as ClusterHistory;
-        if (newValue && !loadingRef.current) { // Don't update if we're already loading
-          console.log('[useBackgroundClustering] Detected cluster update in another tab');
-
-          // Always update with whatever clusters we received
-          setClusters(newValue.current || []);
-          setPreviousClusters(newValue.previous || []);
-          setProgress(1.0);
-          setLastUpdated(new Date(newValue.timestamp));
-
-          // Only set complete status if we have actual clusters
-          setStatus(newValue.current?.length > 0 ? 'complete' : 'loading');
-        }
+      // Handle cluster data updates
+      const clusterChange = changes[STORAGE_KEYS.CLUSTER_HISTORY_KEY];
+      if (clusterChange?.newValue) {
+        const history = clusterChange.newValue as ClusterHistory;
+        setClusters(history.current || []);
+        setPreviousClusters(history.previous || []);
+        setLastUpdated(history.timestamp ? new Date(history.timestamp) : null);
+      }
+      
+      // Handle status updates (separate from data)
+      const statusChange = changes[STORAGE_KEYS.CLUSTER_STATUS_KEY];
+      if (statusChange?.newValue) {
+        const statusData = statusChange.newValue as ClusterStatus;
+        setStatus(statusData.state || 'idle');
       }
     };
 
@@ -223,13 +124,10 @@ const useBackgroundClustering = (): UseClusteringResult => {
   return {
     clusters,
     previousClusters,
-    status,
-    progress,
     loading: status === 'loading',
-    error,
-    lastUpdated,
-    refreshClusters,
-    triggerClustering,
+    error, 
+    status,
+    lastUpdated
   };
 };
 

@@ -49,10 +49,20 @@ export interface ClusteringJobStatus {
 
 /**
  * Interface for storing cluster history with timestamps
+ * No longer includes job tracking - only data
  */
 export interface ClusterHistory {
   current: ClusterSuggestion[];
   previous: ClusterSuggestion[];
+  timestamp: number;
+}
+
+/**
+ * Separate interface for cluster UI status
+ * This is separate from the actual cluster data
+ */
+export interface ClusterStatus {
+  state: 'idle' | 'loading' | 'complete';
   timestamp: number;
 }
 

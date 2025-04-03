@@ -11,12 +11,14 @@ import { exposeBackgroundAPI } from '../utils/comlinkSetup';
 import { isWebPage, shouldRecordHistoryEntry } from '../utils/urlUtils';
 import { DatabaseManager, initializeDatabase, isDatabaseInitialized } from '../db/DatabaseCore'; 
 import { createColdStorageSyncer, ColdStorageSync, SYNC_SOURCE } from '../services/coldStorageService';
+import { CLUSTERING_CONFIG, STORAGE_KEYS } from '../config';
 // No longer need Comlink for content extraction
 
 // -------------------- Constants & State --------------------
 const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 min (from the first version)
 const IDLE_CHECK_INTERVAL = 60 * 1000;         // 1 min interval between each check
 const COLD_STORAGE_ALARM_NAME = 'doryColdStorageSync';
+const CLUSTERING_ALARM_NAME = 'doryClusteringRefresh';
 
 /**
  * Single flag for overall readiness (formerly `isFullyInitialized`).
@@ -513,7 +515,7 @@ function setupSessionInactivityCheck() {
  * Replaces `checkIdleState` from the new version with the original name `checkSessionInactivity`.
  */
 async function checkSessionInactivity() {
-  if (!isSessionActive) return; // Don’t check if not active
+  if (!isSessionActive) return; // Don't check if not active
 
   try {
     const state = await chrome.idle.queryState(SESSION_IDLE_THRESHOLD / 1000);
@@ -542,8 +544,17 @@ function cleanupServices() {
 }
 
 function setupScheduledTasks() {
-  ColdStorageSync.initializeScheduling(); // Let the service set up the alarm
-  console.log('[Background] Scheduled tasks (Cold Storage Sync) set up.');
+  // Setup cold storage sync alarm
+  ColdStorageSync.initializeScheduling();
+  
+  // Setup clustering refresh alarm
+  chrome.alarms.clear(CLUSTERING_ALARM_NAME);
+  chrome.alarms.create(CLUSTERING_ALARM_NAME, {
+    periodInMinutes: CLUSTERING_CONFIG.REFRESH_INTERVAL_MINUTES,
+    when: Date.now() + CLUSTERING_CONFIG.INITIAL_DELAY_MS
+  });
+  
+  console.log('[Background] Scheduled tasks (Cold Storage Sync, Clustering Refresh) set up.');
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -556,6 +567,22 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     console.log('[Background] Initiating cold storage sync task.');
     const syncer = createColdStorageSyncer(SYNC_SOURCE.ALARM);
     await syncer.performSync();
+  }
+  else if (alarm.name === CLUSTERING_ALARM_NAME) {
+    if (!isSessionActive) {
+      console.log('[Background] Skipping clustering refresh: Session not active.');
+      return;
+    }
+    
+    console.log('[Background] Initiating scheduled clustering refresh');
+    
+    try {
+      // ClusteringService now handles polling in the service worker context
+      const jobId = await backgroundApi.clusters.triggerClustering();
+      console.log(`[Background] Started clustering job: ${jobId}`);
+    } catch (error) {
+      console.error('[Background] Error starting clustering job:', error);
+    }
   }
 });
 
