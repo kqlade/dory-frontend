@@ -1,6 +1,6 @@
 .cluster-container {
   width: 100%;
-  margin-top: 15px; /* Reduced space between search bar and clusters (halved from 20px) */
+  margin-top: 30px; /* Reduced space between search bar and clusters (halved from 20px) */
 }
 
 /* Grid layout for the three squares */
@@ -15,7 +15,7 @@
 /* Standalone popup with no overlay */
 .expanded-cluster-view {
   position: fixed;
-  top: calc(52vh + 15px); /* Match the top position of actual task cards (clusters-wrapper + margin-top) */
+  top: calc(52vh + 30px); /* Match the top position of actual task cards (clusters-wrapper + margin-top) */
   left: 50%;
   transform: translateX(-50%); /* Only center horizontally */
   background-color: var(--bg-color, #ffffff); /* Match new tab page background */

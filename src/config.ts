@@ -205,8 +205,8 @@ export const QUEUE_CONFIG = {
 // Search Configuration
 export const SEARCH_CONFIG = {
   // Debounce delay for search inputs (in milliseconds)
-  DEBOUNCE_MS: 150,
-  SEARCH_DEBOUNCE_MS: 300, // For the refactored components
+
+  SEARCH_DEBOUNCE_MS: 150, // For the refactored components
   
   // Minimum length for a query to trigger search
   MIN_QUERY_LENGTH: 2,
@@ -218,7 +218,7 @@ export const SEARCH_CONFIG = {
   MAX_LOCAL_RESULTS: 10,
   
   // Maximum number of semantic results to show
-  MAX_SEMANTIC_RESULTS: 20,
+  MAX_SEMANTIC_RESULTS: 10,
   
   // Minimum score threshold for semantic search results (0-1)
   // Results with scores below this value will be filtered out

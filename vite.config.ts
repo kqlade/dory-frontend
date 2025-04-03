@@ -20,7 +20,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
-    minify: false,
+    minify: true,
     rollupOptions: {
       output: {
         // Standard naming patterns

@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, WheelEvent as ReactWheelEvent
 import { useBackgroundSearch } from '../hooks/useBackgroundSearch';
 import { SearchResult } from '../types';
 import Favicon from '../utils/faviconUtils';
+import { SEARCH_CONFIG } from '../config';
 import './NewTabSearchBar.css';
 
 /** Small Dory logo component */
@@ -35,6 +36,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Focus the search bar globally if '/' pressed
   useEffect(() => {
@@ -54,6 +56,15 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     setLastKeystrokeTime(Date.now());
     if (displayMode === 'semantic') setDisplayMode('local');
   }, [inputValue]);
+
+  // Clean up any timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Decide which results to display and whether they're loading
   const currentResults = displayMode === 'semantic' ? semanticResults : localResults;
@@ -75,27 +86,41 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     onSearchStateChange?.(isSearchActive);
   }, [isSearchActive, onSearchStateChange]);
 
-  // Handler for text changes -> local search
+  // Debounced search function
+  const performDebouncedLocalSearch = (value: string) => {
+    // Clear any existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (value.trim().length >= 2) {
+      setIsSearching(true);
+      
+      // Set a new timeout
+      searchTimeoutRef.current = setTimeout(() => {
+        searchLocal(value)
+          .then(results => {
+            setLocalResults(results);
+            setIsSearching(false);
+          })
+          .catch(err => {
+            console.error('[NewTabSearchBar] Local search error:', err);
+            setLocalResults([]);
+            setIsSearching(false);
+          });
+        searchTimeoutRef.current = null;
+      }, SEARCH_CONFIG.SEARCH_DEBOUNCE_MS);
+    } else {
+      setLocalResults([]);
+    }
+  };
+
+  // Handler for text changes -> debounced local search
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setInputValue(value);
     setDisplayMode('local');
-
-    if (value.trim().length >= 2) {
-      setIsSearching(true);
-      searchLocal(value)
-        .then(results => {
-          setLocalResults(results);
-          setIsSearching(false);
-        })
-        .catch(err => {
-          console.error('[NewTabSearchBar] Local search error:', err);
-          setLocalResults([]);
-          setIsSearching(false);
-        });
-    } else {
-      setLocalResults([]);
-    }
+    performDebouncedLocalSearch(value);
   };
 
   // Semantic search
