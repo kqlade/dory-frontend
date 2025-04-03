@@ -127,7 +127,7 @@ export const URL_FILTER_CONFIG = {
   AUTH_TITLE_KEYWORDS: [
     // Login/Signup
     'log in', 'login', 'sign in', 'signin', 'sign up', 'signup',
-    'authenticate', 'authentication', 'account access', 'access account',
+    'authenticate', 'authentication', 'account access', 'access account', 'auth',
     // Logout
     'log out', 'logout', 'sign out', 'signout',
     // Password Reset
