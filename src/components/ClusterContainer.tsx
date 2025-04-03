@@ -24,7 +24,7 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
 
   const expandedViewRef = useRef<HTMLDivElement>(null);
 
-  const { clusters: hookClusters, loading: loadingClusters, getClusters } =
+  const { clusters: hookClusters, loading: loadingClusters, refreshClusters } =
     useBackgroundClustering();
 
   // Decide which cluster data to use (explicit prop vs. hook)
@@ -32,13 +32,13 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
 
   // Fetch clusters on mount (or when clusterCount changes)
   useEffect(() => {
-    if (clusterCount) getClusters({ count: clusterCount });
-  }, [clusterCount, getClusters]);
+    if (clusterCount) refreshClusters({ count: clusterCount });
+  }, [clusterCount, refreshClusters]);
 
   // Manually refresh clusters
-  const refreshClusters = async () => {
+  const manuallyRefreshClusters = async () => {
     setIsRefreshing(true);
-    await getClusters({ forceRefresh: true, count: clusterCount });
+    await refreshClusters({ count: clusterCount });
     setTimeout(() => setIsRefreshing(false), 3000);
   };
 
@@ -181,17 +181,17 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   return (
     <div className="cluster-container">
       <div className="cluster-grid">
-        {clusters.length > 0 &&
-          Array.from({ length: Math.min(clusterCount, clusters.length) }).map((_, i) => {
-            const clusterData = isRefreshing ? undefined : effectiveClusters[i];
-            return (
-              <ClusterSquare
-                key={`cluster-${i}`}
-                cluster={clusterData}
-                onClick={handleClusterClick}
-              />
-            );
-          })}
+        {Array.from({ length: clusterCount }).map((_, i) => {
+          // Only show actual cluster data if we have it and aren't refreshing
+          const clusterData = !isRefreshing && effectiveClusters.length > i ? effectiveClusters[i] : undefined;
+          return (
+            <ClusterSquare
+              key={`cluster-${i}`}
+              cluster={clusterData}
+              onClick={handleClusterClick}
+            />
+          );
+        })}
       </div>
       {renderExpandedView()}
     </div>

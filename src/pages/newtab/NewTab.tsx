@@ -145,8 +145,8 @@ const NewTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Cluster container - only shown if search is not active AND we have clusters */}
-      {!isSearchActive && displayClusters.length > 0 && (
+      {/* Cluster container - shown if search is not active */}
+      {!isSearchActive && (
         <div className="clusters-wrapper">
           <ClusterContainer clusters={displayClusters} />
         </div>

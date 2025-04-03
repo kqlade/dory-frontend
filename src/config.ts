@@ -34,7 +34,10 @@ export const CONTENT_ENDPOINTS = {
 };
 
 export const CLUSTERING_ENDPOINTS = {
-  SUGGESTIONS: '/api/clustering/suggestions'
+  SUGGESTIONS: '/api/clustering/suggestions',
+  SUGGESTIONS_SYNC: '/api/clustering/suggestions_sync',
+  JOB_STATUS: '/api/clustering/job_status',
+  REFRESH: '/api/clustering/refresh'
 };
 
 export const SEARCH_ENDPOINTS = {
@@ -50,6 +53,7 @@ export const STORAGE_KEYS = {
   CIRCUIT_BREAKER_KEY: 'coldStorageSyncCircuitBreaker',
   TELEMETRY_KEY: 'coldStorageSyncTelemetry',
   CLUSTER_HISTORY_KEY: 'clusterHistory',
+  ACTIVE_JOBS_KEY: 'activeJobs',
   PREFERRED_THEME_KEY: 'preferredTheme'
 };
 
@@ -61,6 +65,24 @@ export const COLD_STORAGE_CONFIG = {
   BATCH_SIZE: 500,
   MAX_CONSECUTIVE_FAILURES: 3,
   CIRCUIT_RESET_TIME_MS: 30 * 60 * 1000, // 30 minutes
+};
+
+// Job Configuration
+export const JOB_CONFIG = {
+  // Polling interval for job status (in milliseconds)
+  POLLING_INTERVAL_MS: 3000,
+  
+  // Maximum number of polling attempts before giving up
+  MAX_POLLING_ATTEMPTS: 20,
+  
+  // Storage key for tracking jobs
+  STORAGE_KEY: 'activeJobs'
+};
+
+// Clustering configuration
+export const CLUSTERING_CONFIG = {
+  // Regular refresh interval for clusters (in minutes)
+  REFRESH_INTERVAL_MINUTES: 5
 };
 
 // URL Filtering Configuration

@@ -7,8 +7,18 @@
  */
 
 import type { SearchOptions } from '../services/searchService'; 
-import type { UserPreferences } from '../db/repositories/PreferencesRepository'; 
-import type { ContentData, ClusterSuggestion, AuthState, SearchResult, BrowsingSession, ExtractedContent, VisitRecord } from './index';
+import type { UserPreferences } from '../types/user'; // Fixed import for UserPreferences
+import type { 
+  ContentData, 
+  ClusterSuggestion, 
+  ClusterSuggestionOptions,
+  ClusteringResult,
+  AuthState, 
+  SearchResult, 
+  BrowsingSession, 
+  ExtractedContent, 
+  VisitRecord 
+} from './index';
 
 // System Service API for initialization and status checks
 export interface SystemServiceAPI {
@@ -24,7 +34,8 @@ export interface AuthServiceAPI {
 
 // Clustering Service API
 export interface ClusteringServiceAPI {
-  getClusterSuggestions(options?: { forceRefresh?: boolean; count?: number }): Promise<{ current: ClusterSuggestion[]; previous: ClusterSuggestion[] }>; 
+  getClusterSuggestions(options?: ClusterSuggestionOptions): Promise<ClusteringResult>; 
+  refreshClusters(options?: Omit<ClusterSuggestionOptions, 'forceRefresh'>): Promise<ClusteringResult>; 
   triggerClustering(): Promise<void>; 
 }
 

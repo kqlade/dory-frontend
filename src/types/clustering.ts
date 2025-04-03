@@ -1,7 +1,8 @@
 /**
  * @file clustering.ts
  * 
- * Type definitions for clustering functionality
+ * Type definitions for clustering functionality including cluster data structures
+ * and job management interfaces for the asynchronous job pattern.
  */
 
 /**
@@ -28,4 +29,46 @@ export interface ClusterSuggestion {
  */
 export interface ClusterResponse {
   suggestions: ClusterSuggestion[];
+}
+
+/**
+ * Interface for the clustering job response when starting a new job
+ */
+export interface ClusteringJobResponse {
+  job_id: string;
+}
+
+/**
+ * Interface for the job status response
+ */
+export interface ClusteringJobStatus {
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  result?: ClusterResponse;
+  error?: string;
+}
+
+/**
+ * Interface for storing cluster history with timestamps
+ */
+export interface ClusterHistory {
+  current: ClusterSuggestion[];
+  previous: ClusterSuggestion[];
+  timestamp: number;
+}
+
+/**
+ * Options for cluster suggestion fetching
+ */
+export interface ClusterSuggestionOptions {
+  forceRefresh?: boolean;
+  count?: number;
+  onProgress?: (progress: number) => void;
+}
+
+/**
+ * Result returned from clustering operations
+ */
+export interface ClusteringResult {
+  current: ClusterSuggestion[];
+  previous: ClusterSuggestion[];
 }
