@@ -9,20 +9,20 @@ interface ClusterSquareProps {
 }
 
 /**
- * Displays a cluster's label or a loading indicator if cluster data is undefined.
+ * Displays a cluster's label or a loading indicator when loading is true.
  */
 const ClusterSquare: React.FC<ClusterSquareProps> = ({ cluster, loading = false, onClick }) => {
-  // Consider both explicit loading prop and absence of data
-  const isLoading = loading || !cluster;
+  // Only consider explicit loading prop
+  const isLoading = loading;
 
   const handleClick = () => {
-    if (!isLoading) {
+    if (!isLoading && cluster) {
       onClick(cluster);
     }
   };
 
   const handleKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
-    if (!isLoading && (e.key === 'Enter' || e.key === ' ')) {
+    if (!isLoading && cluster && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       handleClick();
     }

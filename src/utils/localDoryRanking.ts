@@ -2,12 +2,11 @@
  * localDoryRanking.ts
  *
  * Demonstrates an advanced local ranking system with a two-tier approach:
- *  1) Strong text matching (BM25 + specialized tokenization + substring/prefix boosts)
+ *  1) Fuzzy text matching with Fuse.js (replaced BM25 + specialized tokenization)
  *  2) Contextual intelligence (recency, Markov transitions, time-of-day, etc.) as tie-breakers.
  */
 
 import { DEBUG, RANKING_CONFIG } from '../config';
-import jw from 'jaro-winkler';    // Optional for fuzzy fallback
 import * as mathjs from 'mathjs'; // For numeric/entropy ops as needed
 import { PageRecord, VisitRecord, EdgeRecord, BrowsingSession } from '../types';
 import { 
@@ -17,6 +16,7 @@ import {
   sessionRepository,
   metadataRepository 
 } from '../db/repositories';
+import { HybridSearchProvider } from './hybridSearchProvider';
 
 // -------------------------------------------------------------------------
 // 1) Helper Functions
@@ -303,7 +303,6 @@ interface FeatureVector {
   timeOfDay: number;
   session: number;
   regularity: number;
-  fuzzyScore: number; // Added: Jaro-Winkler score vs title
 }
 
 function computeContextualScore(features: FeatureVector, weights: FeatureVector): number {
@@ -331,12 +330,9 @@ class OnlineLinearModel {
       timeOfDay: this.initRandom(),
       session:   this.initRandom(),
       regularity:this.initRandom(),
-      fuzzyScore:this.initRandom(), // Added fuzzyScore initialization
     };
     if (initial) {
-      // Ensure fuzzyScore is also assigned if provided in initial
-      const completeInitial = { fuzzyScore: 0, ...initial };
-      Object.assign(this.weights, completeInitial);
+      Object.assign(this.weights, initial);
     }
     if (typeof bias === 'number') {
       this.bias = bias;
@@ -348,8 +344,7 @@ class OnlineLinearModel {
   }
 
   /**
-   * Combined scoring: Learns weights for all features including textMatch and fuzzyScore.
-   * Removed the fixed multiplier for textMatch.
+   * Combined scoring with textMatch as the primary signal
    */
   public predict(f: FeatureVector): number {
     const score =
@@ -359,8 +354,7 @@ class OnlineLinearModel {
       this.weights.navigation  * f.navigation  +
       this.weights.timeOfDay   * f.timeOfDay   +
       this.weights.session     * f.session     +
-      this.weights.regularity  * f.regularity  +
-      this.weights.fuzzyScore  * f.fuzzyScore; // Added fuzzyScore term
+      this.weights.regularity  * f.regularity;
 
     return score + this.bias;
   }
@@ -379,7 +373,6 @@ class OnlineLinearModel {
     this.weights.timeOfDay   += this.learningRate * (error * f.timeOfDay   - reg * this.weights.timeOfDay);
     this.weights.session     += this.learningRate * (error * f.session     - reg * this.weights.session);
     this.weights.regularity  += this.learningRate * (error * f.regularity  - reg * this.weights.regularity);
-    this.weights.fuzzyScore  += this.learningRate * (error * f.fuzzyScore  - reg * this.weights.fuzzyScore); // Added fuzzyScore update
 
     this.constrainWeights();
   }
@@ -394,7 +387,6 @@ class OnlineLinearModel {
     this.weights.timeOfDay   = clamp(this.weights.timeOfDay,   minW, maxW);
     this.weights.session     = clamp(this.weights.session,     minW, maxW);
     this.weights.regularity  = clamp(this.weights.regularity,  minW, maxW);
-    this.weights.fuzzyScore  = clamp(this.weights.fuzzyScore,  minW, maxW); // Added fuzzyScore constraint
     this.bias = Math.max(-3.0, Math.min(3.0, this.bias));
   }
 }
@@ -408,7 +400,7 @@ export class AdvancedLocalRanker {
   private edges: EdgeRecord[] = [];
   private sessions: BrowsingSession[] = [];
 
-  private bm25: BM25Engine | null = null;
+  private searchProvider: HybridSearchProvider | null = null;
   private markovTable: MarkovTable = {};
   private timeOfDayHist: TimeOfDayHistogram = {};
 
@@ -425,7 +417,9 @@ export class AdvancedLocalRanker {
     await this.loadDataFromDB();
     await this.loadModelWeights();
 
-    this.bm25 = new BM25Engine(this.pages);
+    this.searchProvider = new HybridSearchProvider(this.pages, {
+      fuzzyMatchThreshold: 70 // 70% similarity is a good default
+    });
     this.markovTable = buildMarkovChain(this.edges);
     this.timeOfDayHist = buildTimeOfDayHistogram(this.visits);
 
@@ -439,30 +433,15 @@ export class AdvancedLocalRanker {
     currentPageId?: string,
     now = Date.now()
   ): Promise<Array<{ pageId: string; title: string; url: string; score: number }>> {
-    if (!this.bm25) return [];
+    if (!this.searchProvider || !query.trim()) return [];
     const nowSec = toSeconds(now);
-    const qLower = query.toLowerCase(); // Lowercase query once
 
-    // 1) BM25 text match
-    let results = this.bm25.computeScores(query);
+    const searchResults = this.searchProvider.search(query);
+    
+    if (searchResults.length === 0) {
+      return [];
+    }
 
-    // 2) Substring/prefix bonus
-    results = results.map(r => {
-      const page = this.pages.find(p => p.pageId === r.pageId);
-      if (!page) return r;
-      // Substring bonus is kept for now as it rewards exact matches/prefixes specifically
-      const subBonus = computeSubstringBonus(query, page);
-      return { pageId: r.pageId, score: r.score + subBonus };
-    });
-
-    // Filter out results with very low initial text match (might need tuning)
-    results = results.filter(r => r.score >= 0.1); // Lowered threshold slightly
-
-    results.sort((a, b) => b.score - a.score);
-
-    // 3) REMOVED Fuzzy fallback logic - integrated into features now
-
-    // 4) Determine session features
     let sessionId: number | undefined;
     let sessionFeatures: SessionFeatures | null = null;
     if (currentPageId) {
@@ -475,16 +454,13 @@ export class AdvancedLocalRanker {
       }
     }
 
-    // 5) Compute final two-tier scores
-    const finalScores = results.map(r => {
-      const page = this.pages.find(px => px.pageId === r.pageId);
-      if (!page) {
-        // Return a default object for type safety, score 0 ensures it ranks low
-        return { pageId: r.pageId, title: '', url: '', score: -Infinity };
-      }
-      const textMatchScore = r.score; // From BM25 + Substring Bonus
+    const finalScores = searchResults.map(result => {
+      const page = result.page;
+      
+      const textMatchScore = result.matchType === 'exact' 
+        ? result.score * 1.2  // Boost exact matches
+        : result.score;
 
-      // Calculate features
       const recencyVal = multiScaleRecencyScore(page, this.visits, nowSec);
       const freqVal = Math.log1p(page.visitCount) * (0.5 + page.personalScore);
       const navVal = currentPageId ? computeMarkovTransitionProb(this.markovTable, currentPageId, page.pageId) : 0;
@@ -492,7 +468,6 @@ export class AdvancedLocalRanker {
       const todVal = computeTimeOfDayProb(this.timeOfDayHist, page.pageId, hourNow);
       const sessVal = sessionFeatures ? computeSessionContextWeight(page, sessionFeatures) : 0;
       const regVal = this.computeRegularity(page.pageId);
-      const fuzzyVal = jw(qLower, page.title.toLowerCase()); // Calculate Jaro-Winkler score
 
       const features: FeatureVector = {
         textMatch: textMatchScore,
@@ -501,26 +476,23 @@ export class AdvancedLocalRanker {
         navigation: navVal,
         timeOfDay: todVal,
         session: sessVal,
-        regularity: regVal,
-        fuzzyScore: fuzzyVal // Added fuzzyScore to features
+        regularity: regVal
       };
       this.lastDisplayedFeatures[page.pageId] = features;
 
       const score = this.model.predict(features);
       return { pageId: page.pageId, title: page.title, url: page.url, score };
-    }).filter(r => r.score > -Infinity); // Filter out any -Infinity scores from missing pages
+    });
+    
     finalScores.sort((a, b) => b.score - a.score);
 
-    // 6) Optional relevance filter
     const filtered = this.applyRelevanceFilter(finalScores, query);
 
-    // 7) Deduplicate results by title and URL, keeping highest score
     const deduplicatedResults: Array<{ pageId: string; title: string; url: string; score: number }> = [];
     const seenTitles = new Set<string>();
     const seenUrls = new Set<string>();
 
     for (const result of filtered) {
-      // Skip if we've already included a result with this title OR this URL
       if (!seenTitles.has(result.title) && !seenUrls.has(result.url)) {
         deduplicatedResults.push({
           pageId: result.pageId,
@@ -542,19 +514,16 @@ export class AdvancedLocalRanker {
     const page = this.pages.find(p => p.pageId === pageId);
     if (!page) return;
 
-    // Increase personalScore for clicked item
     const oldScore = page.personalScore;
     const boostFactor = rank >= 3 ? 0.15 : 0.1;
     const newScore = oldScore + boostFactor * (1 - oldScore);
     page.personalScore = clamp(newScore);
     this.updatePageInDB(page);
 
-    // Train model from user feedback
     this.updateModelFromClick(pageId, displayedIds);
   }
 
   public recordImpressions(pageIds: string[]) {
-    // Slight negative reinforcement for unclicked items
     for (const pid of pageIds) {
       const page = this.pages.find(p => p.pageId === pid);
       if (!page) continue;
@@ -570,7 +539,12 @@ export class AdvancedLocalRanker {
     await this.loadModelWeights();
     if (!this.pages.length) return;
 
-    this.bm25 = new BM25Engine(this.pages);
+    if (this.searchProvider) {
+      this.searchProvider.updatePages(this.pages);
+    } else {
+      this.searchProvider = new HybridSearchProvider(this.pages);
+    }
+    
     this.markovTable = buildMarkovChain(this.edges);
     this.timeOfDayHist = buildTimeOfDayHistogram(this.visits);
 
@@ -581,9 +555,6 @@ export class AdvancedLocalRanker {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Private / Helper Methods
-  // -----------------------------------------------------------------------
   private async loadDataFromDB(): Promise<void> {
     try {
       const [pages, visits, edges, sessions] = await Promise.all([
@@ -640,10 +611,6 @@ export class AdvancedLocalRanker {
     }
   }
 
-  /**
-   * Compute how regularly the user visits this page, factoring interval
-   * consistency (CV) and entropy. 
-   */
   private computeRegularity(pageId: string): number {
     const pageVisits = this.visits.filter(v => v.pageId === pageId);
     if (pageVisits.length < 2) return 0.5;
@@ -692,9 +659,6 @@ export class AdvancedLocalRanker {
     });
   }
 
-  /**
-   * Model updates: clicked item => positive label, others => negative label.
-   */
   private updateModelFromClick(clickedPageId: string, displayedIds: string[]) {
     let updated = false;
     const clickedFeatures = this.lastDisplayedFeatures[clickedPageId];

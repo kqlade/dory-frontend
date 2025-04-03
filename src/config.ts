@@ -44,7 +44,11 @@ export const SEARCH_ENDPOINTS = {
   SEARCH: '/api/search'
 };
 
-// Search Configuration Constants are defined lower in the file
+// UI Configuration
+export const UI_CONFIG = {
+  // Duration to show loading animation for clusters (in milliseconds)
+  CLUSTER_LOADING_DURATION_MS: 2000
+};
 
 // Storage Keys
 export const STORAGE_KEYS = {
