@@ -8,21 +8,28 @@
 import { DatabaseManager } from '../DatabaseCore';
 import { PageRecord } from '../../types';
 import { generatePageId } from '../../utils/idGenerator';
+import { normalizeUrlForId, extractDomains } from '../../utils/urlUtils';
 
 /**
  * Repository for managing page records in the database.
  */
 export class PageRepository {
   /**
-   * Get a page record by its URL
+   * Get a page record by its URL. 
+   * Normalizes the input URL first (or uses raw URL on normalization error)
+   * and queries against the potentially normalized stored URL.
    * @param url The URL to look up
    * @returns The page record if found, undefined otherwise
    */
   async getByUrl(url: string): Promise<PageRecord | undefined> {
     const db = DatabaseManager.getCurrentDatabase();
     if (!db) throw new Error('No active database');
+
+    // Get the normalized or fallback raw URL string
+    const identifier = normalizeUrlForId(url);
     
-    return db.pages.where('url').equals(url).first();
+    // Query using the identifier (which could be normalized or raw)
+    return db.pages.where('url').equals(identifier).first();
   }
   
   /**
@@ -58,7 +65,7 @@ export class PageRepository {
     if (!db) throw new Error('No active database');
     
     try {
-      // Check if we already have a page with this URL
+      // Check if a record exists using the normalized or raw URL
       const existingPage = await this.getByUrl(url);
       
       if (existingPage) {
@@ -73,19 +80,36 @@ export class PageRepository {
         return existingPage.pageId;
       }
       
-      // Create a new page record
-      const pageId = generatePageId(url);
-      
+      // Get the identifier (normalized or raw URL) for ID generation and storage
+      const identifier = normalizeUrlForId(url);
+
+      // Generate the page ID from the identifier
+      const pageId = await generatePageId(identifier);
+      if (!pageId) {
+        throw new Error(`Failed to generate Page ID for URL: ${url}`);
+      }
+
+      // Extract domains using the utility function
+      const { rootDomain, fullDomain } = extractDomains(url);
+      // fullDomain is the normalized hostname (e.g., app.example.co.uk, example.com)
+      // rootDomain is the canonical registered domain (e.g., example.co.uk, example.com)
+
+      // (Optional logging based on previous logic can remain or be removed)
+      if (rootDomain === fullDomain && !url.includes('localhost') && !/^[\d.]+$/.test(rootDomain)) {
+         // Basic check: If root and full are same, and it's not localhost or an IP, tldts might not have found a specific suffix.
+         // This uses the debug log from extractDomains itself. No extra logging needed here unless desired.
+      }
+
       await db.pages.add({
         pageId,
-        url,
-        title: title || url,
+        url: identifier, // Store the identifier (normalized or raw URL)
+        title: title || url, 
         firstVisit: now,
         lastVisit: now,
         updatedAt: now,
         visitCount: 1,
         totalActiveTime: 0,
-        domain: new URL(url).hostname,
+        domain: fullDomain, // <-- Store the full normalized HOSTNAME here
         personalScore: 0.5,
         syncStatus: 'pending'
       });

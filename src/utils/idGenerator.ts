@@ -5,45 +5,43 @@
  * Each entity has its own specific ID format and generation requirements.
  */
 
-import normalizeUrl from 'normalize-url';
+import { parse as parseTld } from 'tldts'; // Keep tldts if needed elsewhere, or remove if not.
+
+// Helper function to convert ArrayBuffer to hex string
+function bufferToHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 // -------------------- Page ID Generator --------------------
 
 /**
- * Generates a deterministic page ID from a URL.
- * Will always return the same ID for the same URL, even after normalization.
+ * Generates a deterministic page ID (SHA-256 hash) from a pre-normalized URL identifier
+ * or the original URL if normalization failed.
+ * The input should be the output of normalizeUrlForId.
  * 
- * @param url The URL to generate a page ID for
- * @returns A consistent page ID for the given URL
+ * @param identifier The canonical string representation or original URL.
+ * @returns A Promise resolving to a consistent page ID string (e.g., "page_sha256hex"), or null on hashing error.
  */
-export function generatePageId(url: string): string {
+export async function generatePageId(identifier: string): Promise<string | null> {
   try {
-    // Normalize the URL to create a consistent string
-    const normalizedUrl = normalizeUrl(url, {
-      defaultProtocol: 'https',
-      normalizeProtocol: true,
-      forceHttps: true,
-      stripWWW: true,
-      removeQueryParameters: [/^utm_\w+/i, 'ref', 'fbclid', 'gclid'],
-      removeTrailingSlash: true,
-      sortQueryParameters: true
-    });
-    
-    // Simple string hash function (djb2)
-    let hash = 5381;
-    for (let i = 0; i < normalizedUrl.length; i++) {
-      hash = ((hash << 5) + hash) + normalizedUrl.charCodeAt(i);
-    }
-    
-    // Convert to hex and take first 16 chars
-    const hashHex = (hash >>> 0).toString(16).padStart(8, '0');
+    // 1. Encode the identifier string to UTF-8 bytes
+    const encoder = new TextEncoder();
+    const data = encoder.encode(identifier);
+
+    // 2. Calculate SHA-256 hash
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+
+    // 3. Convert hash to hex string
+    const hashHex = bufferToHex(hashBuffer);
+
+    // 4. Return prefixed ID
     return `page_${hashHex}`;
+
   } catch (error) {
-    console.error('[IdGenerator] Error generating page ID for URL:', url, error);
-    
-    // Create a safe fallback that's still deterministic
-    const safeUrl = encodeURIComponent(url);
-    return `page_fallback_${safeUrl.substring(0, 20)}`;
+    console.error(`[IdGenerator] Error generating page ID hash for identifier "${identifier}":`, error);
+    return null; // Return null only on hashing error
   }
 }
 
@@ -125,33 +123,40 @@ export enum IdType {
 
 /**
  * Generic ID generator that can create IDs for any entity type.
+ * Now handles async page ID generation.
  * 
  * @param type The type of entity to generate an ID for
- * @param params Additional parameters needed for certain ID types (e.g., URL for pages)
- * @returns An ID of the appropriate type for the specified entity
+ * @param params Additional parameters needed for certain ID types (e.g., normalizedIdentifier for pages)
+ * @returns A Promise resolving to an ID (string | number) or the ID directly for sync types.
  */
-export function generateId(type: IdType, params?: any): string | number {
+export async function generateId(type: IdType, params?: any): Promise<string | number | null> {
   switch (type) {
     case IdType.PAGE:
-      if (!params?.url) {
-        throw new Error('[IdGenerator] URL is required for generating page IDs');
+      if (!params?.normalizedIdentifier) {
+        throw new Error('[IdGenerator] normalizedIdentifier is required for generating page IDs');
       }
-      return generatePageId(params.url);
+      // generatePageId is now async
+      return generatePageId(params.normalizedIdentifier);
       
     case IdType.SESSION:
-      return generateSessionId();
+      // generateSessionId is sync
+      return Promise.resolve(generateSessionId()); 
       
     case IdType.EDGE:
-      return generateEdgeId();
+      // generateEdgeId is sync
+      return Promise.resolve(generateEdgeId()); 
       
     case IdType.VISIT:
-      return generateVisitId();
+      // generateVisitId is sync
+      return Promise.resolve(generateVisitId()); 
       
     case IdType.EVENT:
-      return generateEventId();
+      // generateEventId is sync
+      return Promise.resolve(generateEventId()); 
       
     default:
-      throw new Error(`[IdGenerator] Unknown ID type: ${type}`);
+      // Use Promise.reject for consistency in async function
+      return Promise.reject(new Error(`[IdGenerator] Unknown ID type: ${type}`));
   }
 }
 

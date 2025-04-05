@@ -75,6 +75,7 @@
   },
   "host_permissions": [
     "http://localhost:3000/*",
+    "https://web-production-447f.up.railway.app/*",
     "<all_urls>"
   ],
   "web_accessible_resources": [

@@ -55,6 +55,7 @@ class ContentService {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authState.accessToken}`
         },
+        credentials: 'include',
         body: JSON.stringify(payload)
       });
 

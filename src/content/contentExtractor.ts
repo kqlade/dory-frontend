@@ -7,6 +7,7 @@ import { DefaultMarkdownGenerator } from '../html2text/markdownGenerator';
 import { PruningContentFilter } from '../html2text/content_filter_strategy';
 import { USE_FIT_MARKDOWN, QUEUE_CONFIG } from '../config';
 import { ExtractedContent } from '../types';
+import { normalizeUrlForId, extractDomains } from '../utils/urlUtils';
 
 const {
   DOM_IDLE_TIMEOUT_MS = 10000,
@@ -49,12 +50,25 @@ async function extractContent(options: { retryCount?: number } = {}): Promise<Ex
 
     clearExtractionTimeout();
 
+    // Get the raw URL
+    const rawUrl = location.href;
+    
+    // Normalize the URL for consistent storage
+    const normalizedUrl = normalizeUrlForId(rawUrl);
+    
+    // Extract domains information
+    const { fullDomain, rootDomain } = extractDomains(rawUrl);
+
     return {
       title: document.title || 'Untitled',
-      url: location.href,
+      url: normalizedUrl, // Only use the normalized URL
       markdown: sourceMarkdown,
       timestamp: Date.now(),
-      metadata: { language: 'en' },
+      metadata: { 
+        language: 'en',
+        domain: fullDomain, // Normalized hostname
+        rootDomain: rootDomain // Canonical registrable domain
+      },
     };
   } catch (err) {
     if (retryCount < MAX_RETRIES) {

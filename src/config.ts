@@ -8,7 +8,7 @@
 export const DEBUG = process.env.NODE_ENV !== 'production';
 
 // API Configuration
-export const API_BASE_URL = process.env.API_BASE_URL || 'https://dory-backend-e18a6624326d.herokuapp.com';
+export const API_BASE_URL = 'https://web-production-447f.up.railway.app';
 
 // OAuth Configuration
 export const GOOGLE_CLIENT_ID = process.env.VITE_GOOGLE_OAUTH_CLIENT_ID || '';
@@ -84,7 +84,7 @@ export const JOB_CONFIG = {
 // Clustering configuration
 export const CLUSTERING_CONFIG = {
   // Regular refresh interval for clusters (in minutes)
-  REFRESH_INTERVAL_MINUTES: 15,
+  REFRESH_INTERVAL_MINUTES: 60,
   
   // Initial delay before first clustering job starts (in milliseconds)
   INITIAL_DELAY_MS: 15000 // 15 seconds
@@ -127,17 +127,24 @@ export const URL_FILTER_CONFIG = {
     '/password/reset', '/forgot-password', '/reset-password', '/account/reset'
   ],
   
-  // Authentication title keywords to filter
+  // Authentication title keywords to filter (now as Regex strings)
+  // Use \b for word boundaries to avoid matching substrings within words.
+  // Case-insensitivity will be handled by the RegExp constructor flag.
   AUTH_TITLE_KEYWORDS: [
     // Login/Signup
-    'log in', 'login', 'sign in', 'signin', 'sign up', 'signup',
-    'authenticate', 'authentication', 'account access', 'access account', 'auth',
+    '\b(log ?in|signin|sign ?in)\b', // log in, login, signin, sign in
+    '\b(sign ?up|signup|register)\b', // sign up, signup, register
+    '\b(authenticate|authentication)\b',
+    '\baccount access\b', '\baccess account\b',
+    '\bauth\b', // standalone auth
     // Logout
-    'log out', 'logout', 'sign out', 'signout',
+    '\b(log ?out|logout|sign ?out|signout)\b', // log out, logout, sign out, signout
     // Password Reset
-    'reset password', 'forgot password',
-    // Error Pages
-    '404', 'not found', 'error', 'server error', 'oops', 'problem loading page'
+    '\breset password\b', '\bforgot password\b',
+    // Error Pages (allowing optional codes/text after)
+    '\b(404|not found)\b',
+    '\b(error|server error)\b',
+    '\b(oops|problem loading page)\b'
   ]
 };
 

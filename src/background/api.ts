@@ -268,9 +268,10 @@ export const backgroundApi = {
           return false;
         }
 
+        // Create content data using normalized URL from extraction
         const contentData: ContentData = {
           ...contextData,
-          url: content.url,
+          url: content.url, // Normalized URL (hostname+path)
           title: content.title,
           markdown: content.markdown,
           metadata: content.metadata,

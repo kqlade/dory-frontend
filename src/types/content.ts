@@ -9,7 +9,7 @@
  */
 export interface ExtractedContent {
   title: string;
-  url: string;
+  url: string;  // Normalized URL (hostname+path without protocol/query/fragments)
   markdown: string;
   timestamp: number;
   metadata?: Record<string, any>;
@@ -22,7 +22,7 @@ export interface ContentData {
   pageId: string;
   visitId: string;
   sessionId: string | null;
-  url: string;
+  url: string;  // Normalized URL (hostname+path without protocol/query/fragments)
   title: string;
   markdown: string;
   metadata?: Record<string, any>;

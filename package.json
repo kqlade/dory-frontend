@@ -56,6 +56,7 @@
     "snowball-stemmer.jsx": "^0.2.3",
     "styled-components": "^6.1.15",
     "text-segmentation": "^1.0.3",
+    "tldts": "^6.1.85",
     "turndown": "^7.2.0",
     "use-debounce": "^10.0.4",
     "usehooks-ts": "^3.1.1",

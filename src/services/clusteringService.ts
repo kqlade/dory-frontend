@@ -230,6 +230,7 @@ class ClusteringService {
       headers: {
         Authorization: `Bearer ${authState.accessToken}`,
       },
+      credentials: 'include',
     });
     if (!response.ok) {
       throw new Error(`Error starting clustering job: ${response.statusText}`);
@@ -261,6 +262,7 @@ class ClusteringService {
         headers: {
           Authorization: `Bearer ${authState.accessToken}`,
         },
+        credentials: 'include',
       });
       if (!response.ok) {
         const errorText = await response.text();
