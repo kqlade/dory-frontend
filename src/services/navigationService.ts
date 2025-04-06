@@ -84,16 +84,10 @@ export async function endVisit(visitId: string, timestamp: number): Promise<void
       return;
     }
     
-    // Calculate time spent
-    const timeSpent = timestamp - visit.startTime;
-    
-    // End the visit
+    // End the visit (no longer adding time - active time is tracked separately)
     await visitRepository.endVisit(visitId, timestamp);
     
-    // Update page total time
-    await pageRepository.updateActiveTime(visit.pageId, timeSpent / 1000); // Convert ms to seconds
-    
-    console.log(`[NavigationService] Ended visit ${visitId} after ${timeSpent}ms`);
+    console.log(`[NavigationService] Ended visit ${visitId}`);
   } catch (error) {
     console.error(`[NavigationService] Error ending visit ${visitId}:`, error);
     throw error;

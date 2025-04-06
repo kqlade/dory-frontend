@@ -82,18 +82,10 @@ export class VisitRepository {
         return;
       }
       
-      // Calculate total active time if not already set
-      let totalActiveTime = visit.totalActiveTime || 0;
-      if (!visit.endTime && visit.startTime) {
-        // Add time from start to end if not already tracked
-        const additionalTime = Math.max(0, Math.floor((endTime - visit.startTime) / 1000));
-        totalActiveTime += additionalTime;
-      }
-      
-      // Update the visit record
+      // Only set the end time, preserve the existing totalActiveTime
+      // which is accumulated through visibility events
       await db.visits.update(visitId, {
-        endTime,
-        totalActiveTime
+        endTime
       });
     } catch (error) {
       console.error(`[VisitRepository] Error ending visit ${visitId}:`, error);

@@ -172,12 +172,6 @@ if (typeof chrome !== 'undefined' && chrome.runtime) {
       sendResponse({ success: true, isReady: isPageReady() });
       return false; // No async response needed
     }
-    
-    // Simple ping-pong to check if content script is loaded
-    if (message.type === 'PING') {
-      sendResponse({ success: true, pong: true });
-      return false; // No async response needed
-    }
   });
 
   console.log('[ContentExtractor] Ready and listening for extraction requests');

@@ -11,7 +11,7 @@ import { exposeBackgroundAPI } from '../utils/comlinkSetup';
 import { isWebPage, shouldRecordHistoryEntry } from '../utils/urlUtils';
 import { DatabaseManager, initializeDatabase, isDatabaseInitialized } from '../db/DatabaseCore'; 
 import { createColdStorageSyncer, ColdStorageSync, SYNC_SOURCE } from '../services/coldStorageService';
-import { CLUSTERING_CONFIG, STORAGE_KEYS } from '../config';
+import { CLUSTERING_CONFIG, STORAGE_KEYS, QUEUE_CONFIG } from '../config';
 // No longer need Comlink for content extraction
 
 // -------------------- Constants & State --------------------
@@ -19,6 +19,9 @@ const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 min (from the first version
 const IDLE_CHECK_INTERVAL = 60 * 1000;         // 1 min interval between each check
 const COLD_STORAGE_ALARM_NAME = 'doryColdStorageSync';
 const CLUSTERING_ALARM_NAME = 'doryClusteringRefresh';
+
+// Content extraction debounce delay - wait for page to stabilize
+const EXTRACTION_DEBOUNCE_DELAY = QUEUE_CONFIG.EXTRACTION_DEBOUNCE_DELAY;
 
 /**
  * Single flag for overall readiness (formerly `isFullyInitialized`).
@@ -41,6 +44,9 @@ const tabToCurrentUrl: Record<number, string | undefined> = {};
 const tabToPageId: Record<number, string> = {}; 
 const tabToVisitId: Record<number, string> = {}; 
 const extractionRequestedForVisitId: Record<number, string> = {};
+
+// Track pending extraction timeouts
+const extractionTimeouts: Record<number, NodeJS.Timeout> = {};
 
 // No longer tracking content extractors by tab ID - using direct messaging now
 
@@ -87,7 +93,6 @@ export async function initializeExtension() {
       // 5. Set up background tasks (idle checks, scheduled tasks, script injection, etc.)
       setupSessionInactivityCheck();
       setupScheduledTasks();
-      await injectGlobalSearchIntoExistingTabs(); 
 
       console.log('[Background] initializeExtension: Initialization complete and successful!');
     } else {
@@ -334,21 +339,36 @@ async function processNavigationEvent(details: {
 
       // Request extraction if not already requested
       if (extractionRequestedForVisitId[tabId] !== newVisitId) {
-        console.log(`[Background] Requesting content extraction for visit ${newVisitId}`);
-        try {
-          const extractionSuccess = await backgroundApi.content.extractAndSendContent(tabId, {
-            pageId: newPageId,
-            visitId: newVisitId,
-            sessionId
-          });
-          if (extractionSuccess) {
-            extractionRequestedForVisitId[tabId] = newVisitId;
-          } else {
-            console.warn(`[Background] Content extraction request failed for visit ${newVisitId}`);
-          }
-        } catch (exErr) {
-          console.error(`[Background] Content extraction error:`, exErr);
+        // Clear any existing extraction timeout for this tab
+        if (extractionTimeouts[tabId]) {
+          clearTimeout(extractionTimeouts[tabId]);
+          delete extractionTimeouts[tabId];
         }
+
+        console.log(`[Background] Scheduling content extraction for visit ${newVisitId} with ${EXTRACTION_DEBOUNCE_DELAY}ms delay`);
+        
+        // Schedule extraction with debounce delay to let the page load and stabilize
+        extractionTimeouts[tabId] = setTimeout(async () => {
+          try {
+            console.log(`[Background] Executing delayed content extraction for visit ${newVisitId}`);
+            const extractionSuccess = await backgroundApi.content.extractAndSendContent(tabId, {
+              pageId: newPageId,
+              visitId: newVisitId,
+              sessionId
+            });
+            
+            if (extractionSuccess) {
+              extractionRequestedForVisitId[tabId] = newVisitId;
+              console.log(`[Background] Successful content extraction for visit ${newVisitId}`);
+            } else {
+              console.warn(`[Background] Content extraction request failed for visit ${newVisitId}`);
+            }
+          } catch (exErr) {
+            console.error(`[Background] Content extraction error:`, exErr);
+          } finally {
+            delete extractionTimeouts[tabId];
+          }
+        }, EXTRACTION_DEBOUNCE_DELAY);
       }
     } 
     else {
@@ -425,6 +445,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // No longer need to unregister content extractor with direct messaging
   backgroundApi.commands.unregisterCommandHandler?.(tabId); // If the new code had this method
 
+  // Clear any pending extraction timeouts for this tab
+  if (extractionTimeouts[tabId]) {
+    clearTimeout(extractionTimeouts[tabId]);
+    delete extractionTimeouts[tabId];
+  }
+
   delete tabToCurrentUrl[tabId];
   delete tabToPageId[tabId];
   delete tabToVisitId[tabId];
@@ -461,30 +487,6 @@ async function injectGlobalSearch(tabId: number): Promise<boolean> {
       console.error(`[Background] Failed to inject global search into tab ${tabId}:`, error);
     }
     return false;
-  }
-}
-
-async function injectGlobalSearchIntoExistingTabs(): Promise<void> {
-  if (!isSessionActive) {
-    console.warn('[Background] Skipping injection into existing tabs: Session not active.');
-    return;
-  }
-  try {
-    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-    console.log(`[Background] Attempting to inject global search into ${tabs.length} existing web tabs`);
-
-    let injectedCount = 0;
-    const injectionPromises = tabs.map(async (tab) => {
-      if (tab.id && tab.url) {
-        const success = await injectGlobalSearch(tab.id);
-        if (success) injectedCount++;
-      }
-    });
-
-    await Promise.allSettled(injectionPromises);
-    console.log(`[Background] Finished injections. Successfully injected into ${injectedCount}/${tabs.length} tabs`);
-  } catch (error) {
-    console.error('[Background] Error querying tabs for injection:', error);
   }
 }
 

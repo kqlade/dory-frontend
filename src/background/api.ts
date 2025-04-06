@@ -15,6 +15,7 @@ import uiCommandService from '../services/uiCommandService';
 import { isDatabaseInitialized } from '../db/DatabaseCore';
 import { isWebPage } from '../utils/urlUtils';
 import { QUEUE_CONFIG } from '../config';
+import { pageRepository } from '../db/repositories/PageRepository';
 
 import type { ContentData, ExtractedContent } from '../types';
 import type { SearchOptions } from '../services/searchService';
@@ -209,17 +210,8 @@ export const backgroundApi = {
           return null;
         }
 
-        // Ping the content script to confirm it's available
-        const pingSuccess = await this.pingContentScript(tabId, { maxAttempts: QUEUE_CONFIG.PING.MAX_ATTEMPTS });
-        if (!pingSuccess) {
-          console.log(
-            `[BackgroundAPI] Content script not available in tab ${tabId}. 
-             This might be due to page restrictions or the page is still loading.`
-          );
-          return null;
-        }
-
-        // Ask the content script to extract content
+        // Send extraction request directly without pinging first
+        console.log(`[BackgroundAPI] Sending extraction request to tab ${tabId}`);
         const response = await new Promise<any>((resolve) => {
           chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' }, (result) => {
             if (chrome.runtime.lastError) {
@@ -299,64 +291,33 @@ export const backgroundApi = {
     },
 
     /**
-     * Pings the content script to check if it's available and responsive, with retries.
-     * @param {number} tabId The tab ID to ping.
-     * @param {object} [options] Retry configuration (maxAttempts, initialDelay, timeoutPerAttempt).
-     * @returns {Promise<boolean>} True if the content script is available.
+     * Injects the content extractor script into a tab.
+     * @param tabId The ID of the tab to inject the script into
+     * @returns A promise resolving to true if injection was successful
      */
-    async pingContentScript(
-      tabId: number,
-      options: {
-        maxAttempts?: number;
-        initialDelay?: number;
-        timeoutPerAttempt?: number;
-      } = {}
-    ): Promise<boolean> {
-      const {
-        maxAttempts = QUEUE_CONFIG.PING.MAX_ATTEMPTS,
-        initialDelay = QUEUE_CONFIG.PING.INITIAL_DELAY,
-        timeoutPerAttempt = QUEUE_CONFIG.PING.TIMEOUT_PER_ATTEMPT,
-      } = options;
+    async injectContentExtractor(tabId: number): Promise<boolean> {
+      const scriptPath = 'src/content/contentExtractor.ts';
 
-      const singlePingAttempt = async (): Promise<boolean> => {
-        try {
-          const response = await Promise.race([
-            new Promise<any>((resolve) => {
-              chrome.tabs.sendMessage(tabId, { type: 'PING' }, (result) => {
-                if (chrome.runtime.lastError) {
-                  resolve({ success: false });
-                  return;
-                }
-                resolve(result);
-              });
-            }),
-            new Promise<{ success: false }>((resolve) =>
-              setTimeout(() => resolve({ success: false }), timeoutPerAttempt)
-            ),
-          ]);
-          return response?.success && response?.pong === true;
-        } catch (err) {
-          return false;
+      try {
+        console.log(`[BackgroundAPI] Injecting content extractor script (${scriptPath}) into tab ${tabId}`);
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: [scriptPath]
+        });
+        console.log(`[BackgroundAPI] Successfully injected content extractor into tab ${tabId}`);
+        return true;
+      } catch (error: any) {
+        if (error.message?.includes('Cannot access') || error.message?.includes('extension context')) {
+          console.warn(`[BackgroundAPI] Cannot inject script into tab ${tabId}: ${error.message}`);
+        } else if (error.message?.includes('No tab with id')) {
+          console.warn(`[BackgroundAPI] Tab ${tabId} not found (closed?).`);
+        } else if (error.message?.includes('Could not load file')) {
+          console.error(`[BackgroundAPI] Check your build output path for ${scriptPath}. Error: ${error.message}`);
+        } else {
+          console.error(`[BackgroundAPI] Failed to inject content extractor into tab ${tabId}:`, error);
         }
-      };
-
-      const delay = (ms: number): Promise<void> =>
-        new Promise((resolve) => setTimeout(resolve, ms));
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        console.log(`[BackgroundAPI] Ping attempt ${attempt}/${maxAttempts} for tab ${tabId}`);
-        const backoffDelay = initialDelay * Math.pow(2, attempt - 1);
-        await delay(backoffDelay);
-        const success = await singlePingAttempt();
-        if (success) {
-          console.log(
-            `[BackgroundAPI] Successfully connected to content script in tab ${tabId} after ${attempt} attempts`
-          );
-          return true;
-        }
+        return false;
       }
-      console.log(`[BackgroundAPI] Failed to connect to content script in tab ${tabId} after ${maxAttempts} attempts`);
-      return false;
     },
   },
 
@@ -365,13 +326,39 @@ export const backgroundApi = {
    */
   activity: {
     /**
-     * Reports activity from content scripts.
+     * Reports activity from content scripts and updates active time.
      * @param {object} data Activity data (isActive, pageUrl, duration).
-     * @returns {Promise<boolean>} Always resolves to true for demonstration/logging.
+     * @returns {Promise<boolean>} True if activity was processed.
      */
-    reportActivity: (data: { isActive: boolean; pageUrl: string; duration: number }): Promise<boolean> => {
-      console.log('[BackgroundAPI] Activity reported:', data);
-      return Promise.resolve(true);
+    reportActivity: async (data: { isActive: boolean; pageUrl: string; duration: number }, sender?: chrome.runtime.MessageSender): Promise<boolean> => {
+      // Only process when tab becomes inactive with positive duration
+      if (!data.isActive && data.duration > 0 && data.pageUrl) {
+        try {
+          // First check if database is initialized before attempting operations
+          if (!isDatabaseInitialized()) {
+            console.warn("[BackgroundAPI] Skipping activity update: Database not initialized yet");
+            return false;
+          }
+          
+          // Find the page by URL
+          const page = await pageRepository.getByUrl(data.pageUrl);
+          if (page) {
+            // Update the page's active time based on visibility
+            await pageRepository.updateActiveTime(page.pageId, data.duration);
+            
+            // Update session activity time
+            await navigationService.updateSessionActivityTime(data.duration);
+            
+            console.log(`[BackgroundAPI] Updated active time: +${data.duration}s for ${data.pageUrl}`);
+            return true;
+          } else {
+            console.log(`[BackgroundAPI] Page not found for URL: ${data.pageUrl}`);
+          }
+        } catch (error) {
+          console.error('[BackgroundAPI] Error updating active time:', error);
+        }
+      }
+      return true;
     },
   },
 

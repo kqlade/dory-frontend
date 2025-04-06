@@ -200,17 +200,8 @@ export const QUEUE_CONFIG = {
   // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
   DOM_IDLE_CHECK_DELAY_MS: 500,
   
-  // Content script ping configuration
-  PING: {
-    // Maximum number of ping attempts before giving up
-    MAX_ATTEMPTS: 5,
-    
-    // Initial delay between ping attempts (ms)
-    INITIAL_DELAY: 1000,
-    
-    // Timeout for each individual ping attempt (ms)
-    TIMEOUT_PER_ATTEMPT: 500
-  }
+  // Delay after navigation before attempting content extraction (in milliseconds)
+  EXTRACTION_DEBOUNCE_DELAY: 3000
 } as const;
 
 // Search Configuration
