@@ -18,6 +18,7 @@ import {
   JobStatusResponse
 } from '../types';
 import { JobManager } from '../utils/jobManager';
+import { adaptWorkspaceToClusterResponse } from '../utils/workspaceAdapter';
 
 /**
  * Service for retrieving and managing cluster suggestions.
@@ -154,7 +155,8 @@ class ClusteringService {
     previousClusters: ClusterSuggestion[] = []
   ): Promise<void> {
     try {
-      console.log(`[ClusteringService] Handling completion for job ${jobId}`);
+      console.log(`[ClusteringService] Handling completion for job ${jobId} with result:`, 
+        JSON.stringify(result).substring(0, 300) + '...');
 
       // Get the current cluster history if previousClusters is empty
       if (!previousClusters.length) {
@@ -165,6 +167,7 @@ class ClusteringService {
 
       // Extract new suggestions
       const current = result.suggestions || [];
+      console.log(`[ClusteringService] Extracted ${current.length} suggestions from result`);
 
       // Store the new data
       await this.updateClusterHistory(current, previousClusters);
@@ -192,6 +195,8 @@ class ClusteringService {
       previous, 
       timestamp: Date.now()
     };
+    console.log('[ClusteringService] Storing clusters in chrome storage:', 
+      JSON.stringify(clusterData).substring(0, 300) + '...');
     await chrome.storage.local.set({ [STORAGE_KEYS.CLUSTER_HISTORY_KEY]: clusterData });
   }
 
@@ -271,8 +276,20 @@ class ClusteringService {
       }
 
       const jobStatus: ClusteringJobStatus = await response.json();
+      
       if (jobStatus.status === 'COMPLETED') {
         console.log(`[ClusteringService] Job ${jobId} completed successfully`);
+        
+        // Apply the adapter to transform the new workspace format to the expected format
+        if (jobStatus.result) {
+          // Transform the entire job status response, which will extract data
+          // from either result.workspace or result directly as appropriate
+          const adapted = adaptWorkspaceToClusterResponse(jobStatus);
+          jobStatus.result = adapted;
+        } else {
+          jobStatus.result = { suggestions: [] };
+        }
+        
         return {
           status: jobStatus.status,
           result: jobStatus.result || { suggestions: [] },
@@ -285,7 +302,7 @@ class ClusteringService {
         };
       } else {
         // Job is still pending or running
-        console.log(`[ClusteringService] Job ${jobId} status: ${jobStatus.status}`);
+        console.log(`[ClusteringService] Job ${jobId} status: ${jobStatus.status}, progress: ${jobStatus.progress || 0}%`);
         return { status: jobStatus.status };
       }
     } catch (error) {

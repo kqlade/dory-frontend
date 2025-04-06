@@ -43,6 +43,9 @@ export interface ClusteringJobResponse {
  */
 export interface ClusteringJobStatus {
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  progress?: number;
+  created_at?: string;
+  updated_at?: string;
   result?: ClusterResponse;
   error?: string;
 }
