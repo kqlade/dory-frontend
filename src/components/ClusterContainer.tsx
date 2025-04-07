@@ -78,15 +78,19 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   // Scroll the expanded cluster pages (3 at a time)
   const handleScroll = (e: WheelEvent<HTMLUListElement>) => {
     if (!expandedCluster) return;
+    
+    // Always prevent default to avoid native scrolling interference
+    e.preventDefault();
+    
     const pages = expandedCluster.top_pages || [];
-    const maxIndex = Math.max(0, pages.length - 3);
-
-    if (e.deltaY > 0 && startIndex < maxIndex) {
-      e.preventDefault();
-      setStartIndex(prev => Math.min(prev + 1, maxIndex));
+    const maxStartIndex = Math.max(0, pages.length - 3);
+    
+    if (e.deltaY > 0 && startIndex < maxStartIndex) {
+      // Scroll down - increment with boundary check
+      setStartIndex(s => Math.min(s + 1, maxStartIndex));
     } else if (e.deltaY < 0 && startIndex > 0) {
-      e.preventDefault();
-      setStartIndex(prev => Math.max(prev - 1, 0));
+      // Scroll up - decrement with boundary check
+      setStartIndex(s => Math.max(s - 1, 0));
     }
   };
 
@@ -94,7 +98,7 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   useEffect(() => {
     if (!expandedCluster) return;
     const pages = expandedCluster.top_pages || [];
-    const maxIndex = Math.max(0, pages.length - 3);
+    const maxStartIndex = Math.max(0, pages.length - 3);
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!expandedViewRef.current) return;
@@ -105,8 +109,9 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
             const newIndex =
               selectedPageIndex < pages.length - 1 ? selectedPageIndex + 1 : 0;
             setSelectedPageIndex(newIndex);
+            // Keep selection visible by adjusting startIndex if needed
             if (newIndex >= startIndex + 3) {
-              setStartIndex(Math.min(newIndex - 2, maxIndex));
+              setStartIndex(Math.min(newIndex - 2, maxStartIndex));
             } else if (newIndex < startIndex) {
               setStartIndex(newIndex);
             }
@@ -119,8 +124,12 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
             const newIndex =
               selectedPageIndex > 0 ? selectedPageIndex - 1 : pages.length - 1;
             setSelectedPageIndex(newIndex);
-            if (newIndex < startIndex) setStartIndex(newIndex);
-            else if (newIndex >= startIndex + 3) setStartIndex(newIndex - 2);
+            // Keep selection visible by adjusting startIndex if needed
+            if (newIndex < startIndex) {
+              setStartIndex(newIndex);
+            } else if (newIndex >= startIndex + 3) {
+              setStartIndex(Math.min(newIndex - 2, maxStartIndex));
+            }
           }
           break;
         }
@@ -143,7 +152,15 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   const renderExpandedView = () => {
     if (!expandedCluster) return null;
     const pages = expandedCluster.top_pages || [];
-    const visible = pages.slice(startIndex, startIndex + 3);
+    
+    // Calculate max index once per render, exactly as in search
+    const maxStartIndex = Math.max(0, pages.length - 3);
+    
+    // Ensure startIndex never exceeds maxStartIndex
+    const safeStartIndex = Math.min(startIndex, maxStartIndex);
+    
+    // Get exactly 3 visible items
+    const visibleItems = pages.slice(safeStartIndex, safeStartIndex + 3);
 
     const content = (
       <div className="expanded-cluster-view" ref={expandedViewRef}>
@@ -153,8 +170,8 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
         <div className="expanded-cluster-content">
           {pages.length ? (
             <ul className="results-list" onWheel={handleScroll}>
-              {visible.map((p, idx) => {
-                const actualIndex = startIndex + idx;
+              {visibleItems.map((p, idx) => {
+                const actualIndex = safeStartIndex + idx;
                 return (
                   <li
                     key={p.page_id}
