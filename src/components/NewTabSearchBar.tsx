@@ -150,7 +150,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const navigateToResult = (result: SearchResult) => {
     const idx = currentResults.findIndex(r => r.id === result.id);
     trackResultClick(result.id || result.pageId || '', idx, result.url, inputValue);
-    window.open(result.url, '_blank');
+    
+    // Use chrome.tabs.create instead of window.open for consistent URL handling
+    chrome.tabs.create({ url: result.url });
   };
 
   // Handle user hitting Enter, Escape, or arrow keys in the input
