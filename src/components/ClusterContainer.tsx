@@ -26,20 +26,21 @@ const ClusterContainer: React.FC<ClusterContainerProps> = ({
   // Use clusters from props, limited to max 6
   const displayClusters = clusters.slice(0, 6);
 
-  // Show loading animation for a short period when component mounts
+  // Show loading animation only if we don't have clusters immediately available
   useEffect(() => {
-    // Only show loading animation if we have clusters to display
-    if (displayClusters.length > 0) {
+    // If clusters are already available, skip loading animation entirely
+    if (clusters && clusters.length > 0) {
+      // Already have data, no need for loading animation
+      setIsLoading(false);
+    } else {
+      // No clusters yet, set a timer for loading animation
       const timer = setTimeout(() => {
         setIsLoading(false);
       }, UI_CONFIG.CLUSTER_LOADING_DURATION_MS);
       
       return () => clearTimeout(timer);
-    } else {
-      // If no clusters, don't show loading
-      setIsLoading(false);
     }
-  }, []);
+  }, [clusters]);
 
   // Opens expanded view for a cluster
   const handleClusterClick = (cluster?: ClusterSuggestion) => {
