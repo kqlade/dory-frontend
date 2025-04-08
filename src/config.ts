@@ -11,7 +11,7 @@ export const DEBUG = process.env.NODE_ENV !== 'production';
 export const API_BASE_URL = 'https://web-production-447f.up.railway.app';
 
 // OAuth Configuration
-export const GOOGLE_CLIENT_ID = process.env.VITE_GOOGLE_OAUTH_CLIENT_ID || '';
+export const GOOGLE_CLIENT_ID = '893405528801-789i9jpdlvpg86j8tkthdv47m3joro6b.apps.googleusercontent.com';
 
 // Endpoint Groups
 export const AUTH_ENDPOINTS = {
