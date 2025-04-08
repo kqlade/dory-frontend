@@ -26,7 +26,8 @@ export const COLD_STORAGE_ENDPOINTS = {
   PAGES: '/api/cold-storage/pages',
   VISITS: '/api/cold-storage/visits',
   SESSIONS: '/api/cold-storage/sessions',
-  SEARCH_CLICKS: '/api/cold-storage/search-clicks'
+  SEARCH_CLICKS: '/api/cold-storage/search-clicks',
+  SEARCH_QUERIES: '/api/cold-storage/search-queries'
 };
 
 export const CONTENT_ENDPOINTS = {

@@ -196,6 +196,15 @@ export class ColdStorageSync {
       );
       await this.syncEvents(EventType.SEARCH_RESULT_CLICKED, clickEvents, userId);
     }
+    
+    // Sync search query events
+    {
+      const searchEvents = await eventRepository.getEventsByTypeAfterTime(
+        EventType.SEARCH_PERFORMED, 
+        lastSyncTime
+      );
+      await this.syncEvents(EventType.SEARCH_PERFORMED, searchEvents, userId);
+    }
 
     // Add more collections as needed...
   }
@@ -364,6 +373,8 @@ export class ColdStorageSync {
       const batch = enriched.slice(i, i + COLD_STORAGE_CONFIG.BATCH_SIZE);
       if (eventType === EventType.SEARCH_RESULT_CLICKED) {
         await this.sendSearchClickBatch(batch);
+      } else if (eventType === EventType.SEARCH_PERFORMED) {
+        await this.sendSearchPerformedBatch(batch);
       } else {
         console.warn(`[ColdStorageSync] No direct sync logic for ${eventType}, skipping`);
       }
@@ -402,6 +413,38 @@ export class ColdStorageSync {
     }
     const data = await response.json();
     console.log(`[ColdStorageSync] Synced search clicks => server ack:`, data);
+  }
+  
+  /**
+   * Method for syncing search query events
+   */
+  private async sendSearchPerformedBatch(events: any[]): Promise<void> {
+    const endpoint = COLD_STORAGE_ENDPOINTS.SEARCH_QUERIES;
+    const transformed = events.map(e => ({
+      searchId: `search_${e.data?.searchSessionId || e.timestamp}`,
+      userId: e.userId,
+      query: e.data?.query,
+      resultCount: e.data?.resultCount,
+      searchType: e.data?.searchType,
+      timestamp: e.timestamp
+    }));
+
+    if (DEBUG) {
+      console.log('[ColdStorageSync] Posting search queries =>', transformed);
+    }
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(transformed)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} from server: ${response.statusText}`);
+    }
+    const data = await response.json();
+    console.log(`[ColdStorageSync] Synced search queries => server ack:`, data);
   }
 
   /**
