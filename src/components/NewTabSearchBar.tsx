@@ -151,8 +151,18 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     const idx = currentResults.findIndex(r => r.id === result.id);
     trackResultClick(result.id || result.pageId || '', idx, result.url, inputValue);
     
-    // Use chrome.tabs.create instead of window.open for consistent URL handling
-    chrome.tabs.create({ url: result.url });
+    // Ensure URL has proper protocol
+    let url = result.url;
+    
+    // Add protocol if missing
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    
+    console.log('[SearchBar] Navigating to:', url, 'Original URL:', result.url);
+    
+    // Use chrome.tabs.create with the properly formatted URL
+    chrome.tabs.create({ url });
   };
 
   // Handle user hitting Enter, Escape, or arrow keys in the input
@@ -224,6 +234,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={onInputKeyDown}
+          autoFocus
         />
         {(isSearching || isSemanticSearching) && (
           <div className="spinner-wrapper">

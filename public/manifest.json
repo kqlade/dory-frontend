@@ -62,8 +62,6 @@
     "webNavigation",
     "idle",
     "identity",
-    "cookies",
-    "notifications",
     "sidePanel",
     "commands"
   ],

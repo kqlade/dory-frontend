@@ -84,7 +84,7 @@ export const JOB_CONFIG = {
 // Clustering configuration
 export const CLUSTERING_CONFIG = {
   // Regular refresh interval for clusters (in minutes)
-  REFRESH_INTERVAL_MINUTES: 60,
+  REFRESH_INTERVAL_MINUTES: 15,
   
   // Initial delay before first clustering job starts (in milliseconds)
   INITIAL_DELAY_MS: 15000 // 15 seconds
