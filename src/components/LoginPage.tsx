@@ -20,6 +20,8 @@ const LoginPage: React.FC = () => {
           <button
             className="google-sign-in-button"
             onClick={() => {
+              const clickId = Math.random();
+              console.log(`[LoginPage] onClick triggered. ID: ${clickId}`);
               console.log('[LoginPage] Sign in button clicked');
               login();
             }}

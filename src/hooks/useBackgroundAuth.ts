@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { getBackgroundAPI } from '../utils/comlinkSetup';
-import type { BackgroundAPI, AuthServiceAPI } from '../types';
+import type { BackgroundAPI } from '../types';
 import type { AuthState } from '../types';
 import { STORAGE_KEYS } from '../config';
 
@@ -13,56 +13,60 @@ export function useAuth() {
   });
 
   const [loading, setLoading] = useState(true);
-  const authRef = useRef<AuthServiceAPI | null>(null);
   const mountedRef = useRef(true);
-  const listenerRef = useRef<(() => void) | null>(null);
+  // Store the promise for the API proxy
+  const apiRef = useRef<Promise<BackgroundAPI> | null>(null);
 
   // Function to refresh auth state from background
   const refreshAuthState = useCallback(async () => {
-    if (!authRef.current || !mountedRef.current) return;
+    if (!mountedRef.current || !apiRef.current) {
+      console.warn('[useAuth] Refresh requested before API is ready or component unmounted.');
+      return; // Skip refresh if API promise isn't set or component unmounted
+    }
     try {
-      const newState = await authRef.current.getAuthState();
+      console.debug('[useAuth] Attempting to refresh auth state...');
+      // Await the stored promise and then call the method
+      const api = await apiRef.current;
+      const newState = await api.auth.getAuthState();
       if (mountedRef.current) {
+        console.debug('[useAuth] Auth state refreshed:', newState);
         setState(newState);
       }
     } catch (error) {
       console.error('[useAuth] Failed to refresh auth state:', error);
+      // If refresh fails (e.g., disconnected port), maybe clear the apiRef?
+      // apiRef.current = null; // Or re-attempt connection?
     }
-  }, []);
+  }, []); // No dependencies needed as it uses the ref
 
-  // Initialize auth service once
+  // Initialize API connection and auth state once on mount
   useEffect(() => {
     mountedRef.current = true;
+    let isStillMounted = true;
+
+    console.debug('[useAuth] Initializing hook, getting API proxy...');
+    // Store the promise immediately. It might fail, but the ref holds the attempt.
+    apiRef.current = getBackgroundAPI<BackgroundAPI>();
 
     (async () => {
       try {
-        const api = await getBackgroundAPI<BackgroundAPI>();
-        // Store the Comlink proxy directly - don't await it
-        authRef.current = api.auth;
-
-        // Call methods on the proxy object
+        // Add null check before awaiting
+        if (!apiRef.current) {
+          throw new Error("API reference promise was unexpectedly null during initialization.");
+        }
+        // Await the stored promise (now guaranteed non-null here)
+        const api = await apiRef.current;
+        console.debug('[useAuth] API proxy obtained. Getting initial state...');
         const initialState = await api.auth.getAuthState();
-        if (mountedRef.current) {
+        if (isStillMounted) {
+          console.debug('[useAuth] Initial auth state received:', initialState);
           setState(initialState);
         }
-
-        // Set up state change listener
-        if (authRef.current && mountedRef.current) {
-          // Register for direct auth state changes from the background service
-          const unsubscribe = await authRef.current.onStateChange((newState: AuthState) => {
-            if (mountedRef.current) {
-              console.log('[useAuth] Auth state updated from background', newState);
-              setState(newState);
-            }
-          });
-          
-          // Store the unsubscribe function
-          listenerRef.current = unsubscribe;
-        }
       } catch (error) {
-        console.error('[useAuth] Failed to initialize:', error);
+        console.error('[useAuth] Failed to initialize API or get initial state:', error);
+        apiRef.current = null; // Clear the ref if initialization failed
       } finally {
-        if (mountedRef.current) {
+        if (isStillMounted) {
           setLoading(false);
         }
       }
@@ -70,81 +74,88 @@ export function useAuth() {
 
     return () => {
       mountedRef.current = false;
-      // Clean up the state change listener
-      if (listenerRef.current) {
-        listenerRef.current();
-        listenerRef.current = null;
-      }
+      isStillMounted = false;
+      // Optional: Signal Comlink to release the proxy/port?
+      // Comlink doesn't have an explicit 'disconnect', relying on garbage collection.
     };
-  }, []);
+  }, []); // Empty dependency array for mount/unmount effect
 
-  // Listen for chrome.storage changes
+  // Listen for chrome.storage changes to trigger refresh
   useEffect(() => {
     const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
       if (areaName === 'local' && changes[STORAGE_KEYS.AUTH_STATE]) {
+        console.debug('[useAuth] Auth state change detected in storage, refreshing...');
         refreshAuthState();
       }
     };
-
     chrome.storage.onChanged.addListener(handleStorageChange);
-    
     return () => {
       chrome.storage.onChanged.removeListener(handleStorageChange);
     };
   }, [refreshAuthState]);
 
-  // Check auth state when tab becomes visible
+  // Check auth state when tab becomes visible or gains focus
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const handleFocusOrVisibility = () => {
       if (document.visibilityState === 'visible') {
+        console.debug('[useAuth] Tab became visible/focused, refreshing auth state...');
         refreshAuthState();
       }
     };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // Also refresh when the window gets focus
-    window.addEventListener('focus', refreshAuthState);
-    
+    document.addEventListener('visibilitychange', handleFocusOrVisibility);
+    window.addEventListener('focus', handleFocusOrVisibility);
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', refreshAuthState);
+      document.removeEventListener('visibilitychange', handleFocusOrVisibility);
+      window.removeEventListener('focus', handleFocusOrVisibility);
     };
   }, [refreshAuthState]);
 
   const login = useCallback(async (): Promise<boolean> => {
-    if (!authRef.current) {
-      console.warn('[useAuth] Auth service not ready');
-      return false;
+    if (!apiRef.current) {
+       console.error('[useAuth] Login attempted before API was initialized.');
+       return false;
     }
-
+    setLoading(true);
     try {
-      // Call methods directly on the proxy object
-      await authRef.current.login();
-      // State will be updated via the listener
+      console.debug('[useAuth] Attempting login...');
+      // Await the stored promise
+      const api = await apiRef.current;
+      await api.auth.login();
+      console.debug('[useAuth] Login call successful, awaiting state update via refresh.');
+      await refreshAuthState(); // Refresh state after successful call
       return true;
     } catch (error) {
       console.error('[useAuth] Login failed:', error);
+      setLoading(false);
+      // If login failed due to connection, maybe clear apiRef?
+      // apiRef.current = null;
       return false;
+    } finally {
+       // setLoading should be handled by refreshAuthState or error case
     }
-  }, []);
+  }, [refreshAuthState]); // Depends on refreshAuthState
 
   const logout = useCallback(async (): Promise<boolean> => {
-    if (!authRef.current) {
-      console.warn('[useAuth] Auth service not ready');
-      return false;
+    if (!apiRef.current) {
+       console.error('[useAuth] Logout attempted before API was initialized.');
+       return false;
     }
-
+    setLoading(true);
     try {
-      // Call methods directly on the proxy object
-      await authRef.current.logout();
-      // State will be updated via the listener
+      console.debug('[useAuth] Attempting logout...');
+      // Await the stored promise
+      const api = await apiRef.current;
+      await api.auth.logout();
+      console.debug('[useAuth] Logout call successful, awaiting state update via refresh.');
+      await refreshAuthState(); // Refresh state after successful call
       return true;
     } catch (error) {
       console.error('[useAuth] Logout failed:', error);
       return false;
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [refreshAuthState]); // Depends on refreshAuthState
 
   return {
     ...state,

@@ -26,14 +26,6 @@ function AppInitializer() {
     return <LoadingSpinner />;
   }
 
-  // If not authenticated and trying to access the root (new tab default)
-  // show the LoginPage. We check window.location.hash for simplicity in extension context.
-  // Ensure hash check correctly accounts for potential trailing slash or empty hash
-  const currentHash = window.location.hash;
-  if (!isAuthenticated && (currentHash === '#/' || currentHash === '#' || currentHash === '')) {
-    return <LoginPage />;
-  }
-
   // If authenticated, render the main application routes
   // If not authenticated and trying to access other routes, handle appropriately
   return (

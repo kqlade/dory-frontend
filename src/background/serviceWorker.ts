@@ -30,6 +30,12 @@ let isSessionActive = false;
  */
 let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Flag to track if the background API has been exposed.
+ * This prevents duplicate listeners when initializeExtension is called multiple times.
+ */
+let isBackgroundApiExposed = false;
+
 // -------------------- Tab Tracking --------------------
 /**
  * Track data about each open tab with separate maps for different properties.
@@ -58,6 +64,17 @@ export async function initializeExtension() {
     const authState = authService.getAuthState(); // Synchronous getter after init
     console.log(`[Background] initializeExtension: Auth service initialized. Authenticated: ${authState.isAuthenticated}`);
     updateIcon(authState.isAuthenticated);
+
+    // Expose the API *after* authService is initialized, but *before* checking auth state,
+    // so the frontend can connect even if not authenticated (e.g., to call login).
+    // Only expose the API once to prevent duplicate listeners
+    if (!isBackgroundApiExposed) {
+      exposeBackgroundAPI(backgroundApi);
+      isBackgroundApiExposed = true;
+      console.log('[Background] initializeExtension: Background API exposed via Comlink.');
+    } else {
+      console.log('[Background] initializeExtension: Background API already exposed, skipping.');
+    }
 
     // 2. If authenticated, proceed with DB + session. Otherwise, wait for login.
     if (authState.isAuthenticated && authState.user?.id) {
@@ -101,9 +118,6 @@ export async function initializeExtension() {
 
 // Start initialization on service worker startup
 initializeExtension();
-
-// Expose the background API (as in the original)
-exposeBackgroundAPI(backgroundApi);
 
 // Set up message listener for basic tab ID requests
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

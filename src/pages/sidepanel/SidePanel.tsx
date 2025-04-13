@@ -15,6 +15,8 @@ export default function SidePanel() {
   useBackgroundPreferences();
 
   const handleSignIn = () => {
+    const clickId = Math.random();
+    console.log(`[SidePanel] handleSignIn triggered. ID: ${clickId}`);
     console.log('[SidePanel] Sign in button clicked');
     // Trigger login flow
     login(); 
