@@ -24,6 +24,7 @@ export interface AuthServiceAPI {
   login(): Promise<void>; 
   logout(): Promise<void>;
   getAuthState(): Promise<AuthState>; 
+  onStateChange(listener: (newState: AuthState) => void): Promise<() => void>;
 }
 
 // Search Service API

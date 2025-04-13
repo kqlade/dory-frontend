@@ -2,18 +2,17 @@
  * @file globalSearch.tsx
  * Content script that, when triggered, shows a floating search overlay with React.
  * Uses direct Chrome messaging for communication with the background service worker.
+ * Uses Shadow DOM for style and DOM isolation.
  */
 
 import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import SearchOverlay from '../pages/spotlight/SearchOverlay';
-import '../pages/spotlight/spotlight.css';
 
 console.log('[DORY] globalSearch.tsx loaded and initializing...');
 
-let overlayContainer: HTMLDivElement | null = null;
-let styleSheet: HTMLStyleElement | null = null;
-let rootElement: HTMLElement | null = null;
+let hostElement: HTMLDivElement | null = null;
+let shadowRoot: ShadowRoot | null = null;
 let reactRoot: Root | null = null;
 let previouslyFocusedElement: Element | null = null;
 
@@ -105,10 +104,10 @@ function handleToggleOverlay(
 ): void {
   console.log(`[DORY] Overlay command received: ${action} (theme: ${theme})`);
 
-  if (action === 'hide' || (action === 'toggle' && overlayContainer)) {
+  if (action === 'hide' || (action === 'toggle' && hostElement)) {
     console.log('[DORY] Hiding overlay');
     hideSearchOverlay();
-  } else if (action === 'show' || (action === 'toggle' && !overlayContainer)) {
+  } else if (action === 'show' || (action === 'toggle' && !hostElement)) {
     console.log('[DORY] Showing overlay');
     showSearchOverlay(theme).catch((err) => {
       console.error('[DORY] Error showing search overlay:', err);
@@ -117,7 +116,7 @@ function handleToggleOverlay(
 }
 
 /**
- * Show the React-based search overlay.
+ * Show the React-based search overlay in a Shadow DOM.
  * @param theme The theme to use ('light', 'dark', or 'system'), default is 'system'.
  */
 async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'): Promise<void> {
@@ -126,9 +125,10 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
   // Store the currently focused element to restore focus when we close
   previouslyFocusedElement = document.activeElement;
 
-  // Create main overlay container
-  overlayContainer = document.createElement('div');
-  overlayContainer.id = 'dory-search-overlay';
+  // Create host element for the Shadow DOM
+  hostElement = document.createElement('div');
+  hostElement.id = 'dory-shadow-host';
+  document.body.appendChild(hostElement);
 
   // Determine dark mode preference based on provided theme
   let prefersDarkMode = false;
@@ -144,16 +144,26 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
     prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 
-  // Apply theme-specific class
-  if (prefersDarkMode) {
-    overlayContainer.classList.add('dory-dark-theme');
-  } else {
-    overlayContainer.classList.add('dory-light-theme');
+  // Create Shadow DOM
+  shadowRoot = hostElement.attachShadow({ mode: 'closed' });
+
+  // Fetch the content of NewTabSearchBar.css
+  let searchBarCss = '';
+  try {
+    const response = await fetch(chrome.runtime.getURL('assets/NewTabSearchBar.css'));
+    if (response.ok) {
+      searchBarCss = await response.text();
+      console.log('[DORY] Successfully fetched NewTabSearchBar.css content');
+    } else {
+      console.error('[DORY] Failed to fetch NewTabSearchBar.css:', response.statusText);
+    }
+  } catch (error) {
+    console.error('[DORY] Error fetching NewTabSearchBar.css:', error);
   }
 
-  // Create and append style element
-  styleSheet = document.createElement('style');
-  styleSheet.textContent = `
+  // Add combined CSS to a single style element in the Shadow DOM
+  const styleElement = document.createElement('style');
+  styleElement.textContent = `
     /* Load Cabinet Grotesk font */
     @font-face {
       font-family: 'Cabinet Grotesk';
@@ -174,249 +184,9 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
       font-style: normal;
     }
 
-    /* Overlay positioning */
-    #dory-search-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 999999;
-      display: flex;
-      justify-content: flex-end;
-      align-items: flex-start;
-      padding-top: 15vh;
-      padding-right: 15vw;
-      background-color: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(5px);
-      font-family: 'Cabinet Grotesk', sans-serif;
-      transition: opacity 0.2s ease-in-out;
-      opacity: 0;
-    }
-    #dory-search-overlay.visible {
-      opacity: 1;
-    }
-    #dory-search-container {
-      width: 600px;
-      max-width: 90%;
-    }
-    .spotlight-search {
-      width: 100%;
-      height: 100%;
-    }
-
-    /* ==========================================
-       NewTabSearchBar.css (adapted for overlay)
-       ========================================== */
-    .search-container {
-      width: 100%;
-      background-color: transparent;
-      border-radius: 12px;
-      padding: 16px 20px;
-      border: 1px solid var(--border-color);
-      transition: all 0.3s ease;
-      position: relative;
-      box-sizing: border-box;
-      text-align: left;
-    }
-    .search-container:hover {
-      border-color: var(--border-hover-color);
-      box-shadow: 0 0 20px var(--shadow-color);
-    }
-    .search-container:focus-within {
-      border-color: var(--border-focus-color);
-      box-shadow: 0 0 25px var(--shadow-focus-color);
-    }
-    .search-bar-inner-container {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      width: 100%;
-      position: relative;
-      margin-bottom: 8px;
-      box-sizing: border-box;
-    }
-    .results-header-divider {
-      border-bottom: 1px solid var(--border-color);
-      margin: 0 0 4px 0;
-    }
-    .icon-wrapper {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-color);
-      cursor: default;
-      padding: 8px;
-      border-radius: 50%;
-      transition: all 0.2s ease;
-    }
-    .icon-wrapper.clickable {
-      cursor: pointer;
-    }
-    .icon-wrapper.clickable:hover {
-      opacity: 0.8;
-      transform: scale(1.1);
-    }
-    .search-input {
-      background: transparent;
-      border: none;
-      color: var(--text-color);
-      font-size: 18px;
-      font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 28px;
-      width: 100%;
-      padding: 0;
-      margin: 0;
-      outline: none;
-    }
-    .search-input::placeholder {
-      color: var(--text-color);
-      opacity: 0.7;
-    }
-    .spinner-wrapper {
-      margin-right: 8px;
-      display: flex;
-      align-items: flex-end;
-    }
-    @keyframes spin {
-      0%   { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    .spinner {
-      box-sizing: border-box;
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      border: 2px solid transparent;
-      border-top-color: var(--text-color);
-      border-left-color: var(--text-color);
-      border-right-color: var(--text-color);
-      animation: spin 0.8s linear infinite;
-    }
-    .search-mode-indicator {
-      margin-top: 8px;
-      text-align: center;
-      color: var(--text-secondary);
-      font-size: 12px;
-      font-style: italic;
-      opacity: 0.7;
-      transition: opacity 0.3s ease;
-    }
-    .search-mode-indicator.hidden {
-      display: none;
-      opacity: 0;
-    }
-    .results-list {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      max-height: calc(3 * 72px);
-      overflow: hidden;
-    }
-    .results-header {
-      padding: 2px 12px 4px 12px;
-      font-size: 14px;
-      font-style: italic;
-      color: var(--text-secondary);
-      margin-bottom: 0px;
-      text-align: center;
-    }
-    .result-item {
-      padding: 12px;
-      cursor: pointer;
-      transition: background-color 0.2s ease;
-      border: none;
-      border-left: 3px solid transparent;
-      border-radius: 12px;
-    }
-    .result-item:hover {
-      background-color: var(--item-hover-bg);
-    }
-    .result-item.selected {
-      background-color: var(--item-hover-bg);
-      border-left: 3px solid var(--border-focus-color);
-      padding-left: 9px;
-    }
-    .result-title {
-      font-size: 16px;
-      font-weight: 500;
-      color: var(--text-primary);
-      margin-bottom: 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .result-url {
-      font-size: 12px;
-      color: var(--text-secondary);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .result-explanation {
-      font-size: 12px;
-      color: var(--text-secondary);
-      margin-top: 4px;
-      line-height: 1.4;
-      opacity: 0.9;
-      font-style: italic;
-    }
-    .explanation-label {
-      font-weight: 600;
-      font-style: normal;
-    }
-    .status-message {
-      text-align: center;
-      padding: 10px 12px;
-      color: var(--text-secondary);
-      min-height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: opacity 0.2s ease;
-      border-radius: 8px;
-      margin: 4px 0;
-    }
-    .status-message.searching {
-      font-size: 14px;
-      font-style: italic;
-    }
-    .status-message.no-results {
-      font-size: 14px;
-      font-style: italic;
-      color: var(--text-secondary);
-    }
-
-    /* Light theme overrides */
-    .dory-light-theme .search-container {
-      background-color: #ffffff !important;
-      color: #000000 !important;
-      border: 1px solid rgba(0, 0, 0, 0.3) !important;
-      --border-color: rgba(0, 0, 0, 0.2);
-      --border-hover-color: rgba(0, 0, 0, 0.2);
-      --border-focus-color: rgba(0, 0, 0, 0.8);
-      --shadow-color: rgba(0, 0, 0, 0.1);
-      --shadow-focus-color: rgba(0, 0, 0, 0.2);
-      --text-color: #000000;
-      --text-primary: #000000;
-      --text-secondary: #555555;
-      --item-hover-bg: rgba(0, 0, 0, 0.05);
-    }
-    .dory-light-theme .search-input {
-      color: #000000 !important;
-    }
-    .dory-light-theme .search-input::placeholder {
-      color: rgba(0, 0, 0, 0.7) !important;
-    }
-    .dory-light-theme .results-list {
-      background-color: #ffffff !important;
-    }
-
-    /* Dark theme overrides */
-    .dory-dark-theme .search-container {
-      background-color: #000000 !important;
-      color: #ffffff !important;
-      border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    /* Set theme-specific variables */
+    :host {
+      ${prefersDarkMode ? `
       --border-color: rgba(255, 255, 255, 0.2);
       --border-hover-color: rgba(255, 255, 255, 0.2);
       --border-focus-color: rgba(255, 255, 255, 0.8);
@@ -426,38 +196,138 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
       --text-primary: #ffffff;
       --text-secondary: #bbbbbb;
       --item-hover-bg: rgba(255, 255, 255, 0.05);
+      ` : `
+      --border-color: rgba(0, 0, 0, 0.2);
+      --border-hover-color: rgba(0, 0, 0, 0.2);
+      --border-focus-color: rgba(0, 0, 0, 0.8);
+      --shadow-color: rgba(0, 0, 0, 0.1);
+      --shadow-focus-color: rgba(0, 0, 0, 0.2);
+      --text-color: #000000;
+      --text-primary: #000000;
+      --text-secondary: #555555;
+      --item-hover-bg: rgba(0, 0, 0, 0.05);
+      `}
     }
-    .dory-dark-theme .search-input {
-      color: #ffffff !important;
+
+    /* Overlay positioning - these are specific to the Shadow DOM and not in the component CSS */
+    #dory-search-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 999999;
+      background-color: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(5px);
+      font-family: 'Cabinet Grotesk', sans-serif;
+      transition: opacity 0.2s ease-in-out;
+      opacity: 0;
+      pointer-events: none;
     }
-    .dory-dark-theme .search-input::placeholder {
-      color: rgba(255, 255, 255, 0.7) !important;
+
+    #dory-search-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
     }
-    .dory-dark-theme .results-list {
+
+    #dory-search-container {
+      position: absolute;
+      top: 15vh;
+      right: 15vw;
+      width: 600px;
+      max-width: 90%;
+      pointer-events: auto;
+    }
+
+    /* Shadow DOM overrides derived directly from NewTabSearchBar.css */
+    .results-list {
+      max-height: 116px !important;  /* Explicit value from calc(2 * 58px) */
+      overflow: hidden !important;   /* Match overflow behavior */
+    }
+
+    .result-item {
+      padding: 8px 10px !important; /* Match padding */
+      height: 58px !important;       /* Enforce the implied height per item */
+      box-sizing: border-box !important; /* Ensure padding is included in height */
+      border-left: 3px solid transparent; /* Base border WITHOUT !important */
+    }
+
+    /* Add explicit selected state styling */
+    .result-item.selected {
+      background-color: var(--item-hover-bg) !important;
+      border-left: 3px solid var(--border-focus-color) !important;
+      padding-left: 7px !important; /* Reduced to compensate for visible border */
+    }
+
+    .result-title {
+      font-size: 14px !important;    /* Match font size */
+      margin-bottom: 2px !important; /* Restore original spacing */
+      line-height: 1.2 !important;   /* Restore original line height */
+      /* Rely on injected CSS for text overflow etc. */
+    }
+
+    .result-url {
+      font-size: 11px !important;    /* Match font size */
+      padding-left: 24px !important; /* Match indentation */
+      display: block !important;     /* Ensure it takes vertical space */
+      line-height: 1.2 !important;   /* Restore original line height */
+      /* Rely on injected CSS for text overflow etc. */
+    }
+
+    /* Theme-specific search container overrides */
+    .search-container {
+      ${prefersDarkMode ? `
       background-color: #000000 !important;
-    }
-    .dory-light-theme .spotlight-search[data-active="true"] .search-container {
-      box-shadow: 0 0 35px rgba(0, 0, 0, 0.3) !important;
-    }
-    .dory-dark-theme .spotlight-search[data-active="true"] .search-container {
+      color: #ffffff !important;
+      border: 1px solid rgba(255, 255, 255, 0.3) !important;
       box-shadow: 0 0 35px rgba(255, 255, 255, 0.2) !important;
+      ` : `
+      background-color: #ffffff !important;
+      color: #000000 !important;
+      border: 1px solid rgba(0, 0, 0, 0.3) !important;
+      box-shadow: 0 0 35px rgba(0, 0, 0, 0.3) !important;
+      `}
     }
+
+    .search-input {
+      ${prefersDarkMode ? `
+      color: #ffffff !important;
+      ` : `
+      color: #000000 !important;
+      `}
+    }
+
+    .search-input::placeholder {
+      ${prefersDarkMode ? `
+      color: rgba(255, 255, 255, 0.7) !important;
+      ` : `
+      color: rgba(0, 0, 0, 0.7) !important;
+      `}
+    }
+
+    /* Inject NewTabSearchBar.css content */
+    ${searchBarCss}
   `;
-  document.head.appendChild(styleSheet);
+  shadowRoot.appendChild(styleElement);
+
+  // Create main overlay container in the Shadow DOM
+  const overlayContainer = document.createElement('div');
+  overlayContainer.id = 'dory-search-overlay';
+  shadowRoot.appendChild(overlayContainer);
 
   // Create container for the React app
-  rootElement = document.createElement('div');
+  const rootElement = document.createElement('div');
   rootElement.id = 'dory-search-container';
   overlayContainer.appendChild(rootElement);
-
-  document.body.appendChild(overlayContainer);
 
   // Render React component
   renderReactApp(rootElement);
 
   // Animate in
   setTimeout(() => {
-    overlayContainer?.classList.add('visible');
+    if (overlayContainer) {
+      overlayContainer.classList.add('visible');
+    }
   }, 10);
 }
 
@@ -465,11 +335,6 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
  * Remove any existing overlay and unmount the React app if necessary.
  */
 function removeExistingOverlay(): void {
-  const existing = document.getElementById('dory-search-overlay');
-  if (existing && existing.parentNode) {
-    existing.parentNode.removeChild(existing);
-  }
-
   if (reactRoot) {
     try {
       reactRoot.unmount();
@@ -478,23 +343,28 @@ function removeExistingOverlay(): void {
     }
     reactRoot = null;
   }
+
+  if (hostElement) {
+    hostElement.remove();
+    hostElement = null;
+    shadowRoot = null;
+  }
 }
 
 /**
  * Hide the search overlay and restore previously focused element.
  */
 function hideSearchOverlay(): void {
-  if (!overlayContainer) return;
+  if (!shadowRoot || !hostElement) return;
 
-  overlayContainer.classList.remove('visible');
+  const overlayContainer = shadowRoot.getElementById('dory-search-overlay');
+  if (overlayContainer) {
+    overlayContainer.classList.remove('visible');
+  }
 
   // Wait for the fade-out transition
   setTimeout(() => {
-    overlayContainer?.remove();
-    overlayContainer = null;
-
-    styleSheet?.remove();
-    styleSheet = null;
+    removeExistingOverlay();
 
     if (previouslyFocusedElement && 'focus' in previouslyFocusedElement) {
       (previouslyFocusedElement as HTMLElement).focus();
@@ -533,7 +403,7 @@ initBackgroundAPI();
 // Listen for keyboard shortcuts directly in the content script
 document.addEventListener('keydown', (e) => {
   // Close on Escape key
-  if (e.key === 'Escape' && overlayContainer) {
+  if (e.key === 'Escape' && hostElement) {
     hideSearchOverlay();
   }
 });

@@ -36,9 +36,8 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
     };
   }, [onClose]);
 
+  // Render NewTabSearchBar directly, pass down the state setter
   return (
-    <div className="spotlight-search" data-active={isSearchActive}>
-      <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
-    </div>
+    <NewTabSearchBar onSearchStateChange={setIsSearchActive} />
   );
 } 

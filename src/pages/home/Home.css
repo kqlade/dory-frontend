@@ -32,10 +32,31 @@
   color: var(--text-secondary);
   font-family: 'Cabinet Grotesk', sans-serif;
   margin: 0;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 /* Main content area */
 .page-content {
   width: 100%;
+}
+
+/* Search bar wrapper - positioned from the top of viewport */
+.home-search-wrapper {
+  position: absolute;
+  top: 49vh; /* Positioned from top, equivalent to previous 33vh from bottom */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 50%; /* Width as percentage of viewport */
+  max-width: 800px; /* Maximum width to prevent excessive stretching on large screens */
+  z-index: 10; /* Ensure it appears above other content */
+}
+
+/* Helper text for keyboard shortcut */
+.shortcut-helper-text {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+  opacity: 0.8;
+  font-style: italic;
 }

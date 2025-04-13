@@ -36,7 +36,15 @@ export default defineConfig({
         entryFileNames: '[name].js',
         // Ensure consistent chunk naming if needed
         // chunkFileNames: 'assets/[name]-[hash].js',
-        // assetFileNames: 'assets/[name]-[hash].[ext]',
+        assetFileNames: (assetInfo) => {
+          // Check if the asset is NewTabSearchBar.css
+          if (assetInfo.name === 'NewTabSearchBar.css') {
+            // Output it to assets folder with a fixed name
+            return `assets/NewTabSearchBar.css`;
+          }
+          // Use default naming (with hash) for other assets
+          return `assets/[name]-[hash].[ext]`;
+        },
       }
     }
   },

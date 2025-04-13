@@ -62,6 +62,7 @@
   display: flex;
   justify-content: flex-end;
   z-index: 10;
+  padding-right: 20px;
 }
 
 /* Google services */
@@ -69,7 +70,6 @@
   display: flex;
   gap: 24px;
   align-items: center;
-  margin-right: 16px;
 }
 
 .service-icon {
@@ -85,7 +85,7 @@
 }
 
 .service-icon:hover {
-  background-color: rgba(var(--text-color-rgb), 0.1);
+  background-color: var(--hover-color);
 }
 
 .service-icon span {
@@ -99,14 +99,23 @@
   padding: 2.5vh 0 0 0;
   transition: var(--content-transition);
   overflow-y: auto;
+  display: flex;
+  justify-content: center;
 }
 
 /* Content container */
 .content-container {
   max-width: var(--content-max-width);
-  width: 100%;
-  margin: 0 auto;
+  width: var(--content-max-width);
   height: 100%;
+  /* Position it relative to viewport, not grid cell */
+  position: relative;
+  left: calc(var(--sidebar-width) / -2);
+  transition: left var(--content-transition);
+}
+
+.app-container.sidebar-collapsed .content-container {
+  left: calc(var(--sidebar-collapsed-width) / -2);
 }
 
 /* Tablet breakpoint */

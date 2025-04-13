@@ -28,7 +28,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const [localResults, setLocalResults] = useState<SearchResult[]>([]);
   
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [startIndex, setStartIndex] = useState(0); // For showing 3 results at a time
+  const [startIndex, setStartIndex] = useState(0); // For showing 2 results at a time
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -62,8 +62,8 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   }, []);
 
   // Visible items for the results list
-  const visibleResults = localResults.slice(startIndex, startIndex + 3);
-  const maxStartIndex = Math.max(0, localResults.length - 3);
+  const visibleResults = localResults.slice(startIndex, startIndex + 2);
+  const maxStartIndex = Math.max(0, localResults.length - 2);
 
   // Reset selection when the result set changes
   useEffect(() => {
@@ -147,8 +147,8 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       e.preventDefault();
       const newIdx = selectedIndex < length - 1 ? selectedIndex + 1 : 0;
       setSelectedIndex(newIdx);
-      if (newIdx >= startIndex + 3) {
-        setStartIndex(Math.min(newIdx - 2, maxStartIndex));
+      if (newIdx >= startIndex + 2) {
+        setStartIndex(Math.min(newIdx - 1, maxStartIndex));
       } else if (newIdx < startIndex) {
         setStartIndex(0);
       }
