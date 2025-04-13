@@ -15,7 +15,25 @@ import AppHome from './src/pages/home/Home';
 // Import utility and auth components
 import { useAuth } from './src/hooks/useBackgroundAuth'; 
 import LoginPage from './src/components/LoginPage'; 
-import LoadingSpinner from './src/components/LoadingSpinner'; 
+import LoadingSpinner from './src/components/LoadingSpinner';
+
+// If this is a new tab page and not our redirected normal tab, create a new tab and close this one
+// This helps us steal focus from the omnibox when the tab opens
+if (
+  window.location.href.includes('chrome://newtab') || 
+  (window.location.protocol === 'chrome-extension:' && window.location.pathname === '/index.html')
+) {
+  const urlParams = new URLSearchParams(window.location.search);
+  // Only redirect if this isn't already our redirected tab
+  if (urlParams.get('redirected') !== 'true') {
+    // Get the extension's URL with a query parameter to prevent infinite redirects
+    const normalTabUrl = chrome.runtime.getURL('index.html?redirected=true');
+    // Create a new "normal" tab with our extension's content
+    chrome.tabs.create({ url: normalTabUrl });
+    // Close this tab (the original new tab page)
+    window.close();
+  }
+}
 
 // Define an AppInitializer component to handle auth checks
 function AppInitializer() {
