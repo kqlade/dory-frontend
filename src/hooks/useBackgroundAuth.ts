@@ -123,6 +123,7 @@ export function useAuth() {
       await api.auth.login();
       console.debug('[useAuth] Login call successful, awaiting state update via refresh.');
       await refreshAuthState(); // Refresh state after successful call
+      setLoading(false); // Explicitly set loading to false after successful refresh
       return true;
     } catch (error) {
       console.error('[useAuth] Login failed:', error);
@@ -131,7 +132,7 @@ export function useAuth() {
       // apiRef.current = null;
       return false;
     } finally {
-       // setLoading should be handled by refreshAuthState or error case
+       // setLoading handled explicitly in both success and error cases
     }
   }, [refreshAuthState]); // Depends on refreshAuthState
 
