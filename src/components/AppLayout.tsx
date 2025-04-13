@@ -44,7 +44,7 @@ const AppLayout = () => {
       { label: 'Home', icon: <Home size={18} />, href: '/app/home' },
       { label: 'Getting Started', icon: <BookOpen size={18} />, href: '/app/getting-started' },
       { 
-        label: 'Projects',
+        label: 'Collections',
         icon: <FolderOpen size={18} />,
         children: [
           { label: 'Project Alpha', href: '/app/alpha' },
