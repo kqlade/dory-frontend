@@ -320,6 +320,14 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
   rootElement.id = 'dory-search-container';
   overlayContainer.appendChild(rootElement);
 
+  // Add click event on overlay background to dismiss (like Escape key)
+  overlayContainer.addEventListener('click', (e) => {
+    // Only close if clicking the background, not the search container
+    if (e.target === overlayContainer) {
+      hideSearchOverlay();
+    }
+  });
+
   // Render React component
   renderReactApp(rootElement);
 

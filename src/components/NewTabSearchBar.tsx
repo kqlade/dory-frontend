@@ -135,8 +135,13 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       // In new tab context, navigate in the same tab
       window.location.href = url;
     } else {
-      // In overlay context, open in a new tab
-      chrome.tabs.create({ url });
+      // In overlay context, use chrome.tabs if available, otherwise fallback to window.open
+      if (chrome.tabs) {
+        chrome.tabs.create({ url });
+      } else {
+        // Fallback if chrome.tabs is not available
+        window.open(url, '_blank');
+      }
     }
   };
 
