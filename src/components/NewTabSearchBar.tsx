@@ -21,16 +21,12 @@ interface NewTabSearchBarProps {
 }
 
 const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }) => {
-  const { searchLocal, searchSemantic, trackResultClick } = useBackgroundSearch();
+  const { searchLocal, trackResultClick } = useBackgroundSearch();
 
   const [inputValue, setInputValue] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [localResults, setLocalResults] = useState<SearchResult[]>([]);
-  const [isSemanticSearching, setIsSemanticSearching] = useState(false);
-  const [semanticResults, setSemanticResults] = useState<SearchResult[]>([]);
-  const [semanticError, setSemanticError] = useState<Error | null>(null);
-
-  const [displayMode, setDisplayMode] = useState<'local' | 'semantic'>('local');
+  
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [startIndex, setStartIndex] = useState(0); // For showing 3 results at a time
   const [lastKeystrokeTime, setLastKeystrokeTime] = useState(Date.now());
@@ -51,10 +47,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     return () => document.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
-  // When user types, reset lastKeystrokeTime and revert to local search
+  // When user types, reset lastKeystrokeTime
   useEffect(() => {
     setLastKeystrokeTime(Date.now());
-    if (displayMode === 'semantic') setDisplayMode('local');
   }, [inputValue]);
 
   // Clean up any timeout on unmount
@@ -66,19 +61,15 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     };
   }, []);
 
-  // Decide which results to display and whether they're loading
-  const currentResults = displayMode === 'semantic' ? semanticResults : localResults;
-  const currentLoading = displayMode === 'semantic' ? isSemanticSearching : isSearching;
-
   // Visible items for the results list
-  const visibleResults = currentResults.slice(startIndex, startIndex + 3);
-  const maxStartIndex = Math.max(0, currentResults.length - 3);
+  const visibleResults = localResults.slice(startIndex, startIndex + 3);
+  const maxStartIndex = Math.max(0, localResults.length - 3);
 
   // Reset selection when the result set changes
   useEffect(() => {
-    setSelectedIndex(currentResults.length > 0 ? 0 : -1);
+    setSelectedIndex(localResults.length > 0 ? 0 : -1);
     setStartIndex(0);
-  }, [currentResults]);
+  }, [localResults]);
 
   // Notify parent about whether the search UI is active (>=2 chars)
   const isSearchActive = inputValue.trim().length >= 2;
@@ -119,36 +110,12 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setInputValue(value);
-    setDisplayMode('local');
     performDebouncedLocalSearch(value);
-  };
-
-  // Semantic search
-  const performSemanticSearch = (query: string) => {
-    if (!query.trim()) return;
-    
-    setIsSemanticSearching(true);
-    setSemanticError(null);
-    
-    // Reset pagination for consistency with local search
-    setStartIndex(0);
-    
-    searchSemantic(query)
-      .then(results => {
-        setSemanticResults(results);
-        setIsSemanticSearching(false);
-      })
-      .catch(err => {
-        console.error('[NewTabSearchBar] Semantic search error:', err);
-        setSemanticError(err);
-        setSemanticResults([]);
-        setIsSemanticSearching(false);
-      });
   };
 
   // Navigate to a result URL, track the click
   const navigateToResult = (result: SearchResult) => {
-    const idx = currentResults.findIndex(r => r.id === result.id);
+    const idx = localResults.findIndex(r => r.id === result.id);
     trackResultClick(result.id || result.pageId || '', idx, result.url, inputValue);
     
     // Ensure URL has proper protocol
@@ -161,13 +128,21 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     
     console.log('[SearchBar] Navigating to:', url, 'Original URL:', result.url);
     
-    // Use chrome.tabs.create with the properly formatted URL
-    chrome.tabs.create({ url });
+    // Determine if we're in a new tab context or overlay context by checking the URL
+    const isNewTabPage = window.location.href.includes('newtab.html');
+    
+    if (isNewTabPage) {
+      // In new tab context, navigate in the same tab
+      window.location.href = url;
+    } else {
+      // In overlay context, open in a new tab
+      chrome.tabs.create({ url });
+    }
   };
 
   // Handle user hitting Enter, Escape, or arrow keys in the input
   const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    const length = currentResults.length;
+    const length = localResults.length;
     if (e.key === 'ArrowDown' && length > 0) {
       e.preventDefault();
       const newIdx = selectedIndex < length - 1 ? selectedIndex + 1 : 0;
@@ -189,16 +164,10 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     } else if (e.key === 'Escape') {
       setSelectedIndex(-1);
     } else if (e.key === 'Enter') {
-      // If Ctrl/Cmd+Enter, do semantic search
-      if ((e.ctrlKey || e.metaKey) && inputValue.trim()) {
-        performSemanticSearch(inputValue);
-        setDisplayMode('semantic');
-        return;
-      }
-      // Otherwise, navigate if there's a selection
+      // Navigate if there's a selection
       if (selectedIndex >= 0 && selectedIndex < length) {
         e.preventDefault();
-        navigateToResult(currentResults[selectedIndex]);
+        navigateToResult(localResults[selectedIndex]);
       }
     }
   };
@@ -216,9 +185,9 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   // Determine UI states
   const timeSinceKeystroke = Date.now() - lastKeystrokeTime;
   const debounceElapsed = timeSinceKeystroke > 1000;
-  const showResults = isSearchActive && currentResults.length > 0 && !currentLoading;
-  const showSearching = isSearchActive && currentLoading;
-  const showNoResults = isSearchActive && currentResults.length === 0 && !currentLoading && debounceElapsed;
+  const showResults = isSearchActive && localResults.length > 0 && !isSearching;
+  const showSearching = isSearchActive && isSearching;
+  const showNoResults = isSearchActive && localResults.length === 0 && !isSearching && debounceElapsed;
 
   return (
     <div className="search-container">
@@ -236,7 +205,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
           onKeyDown={onInputKeyDown}
           autoFocus
         />
-        {(isSearching || isSemanticSearching) && (
+        {isSearching && (
           <div className="spinner-wrapper">
             <div className="spinner" />
           </div>
@@ -246,7 +215,7 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
       {showResults && (
         <>
           <div className="results-header">
-            {displayMode === 'semantic' ? 'Semantic Engine Results' : 'Quick Launch Results'}
+            Quick Launch Results
           </div>
           <ul className="results-list" onWheel={handleScroll}>
             {visibleResults.map((item, idx) => {
@@ -263,11 +232,6 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
                     {item.title}
                   </div>
                   <div className="result-url">{item.url}</div>
-                  {item.explanation && item.source === 'semantic' && (
-                    <div className="result-explanation">
-                      <span className="explanation-label">Why: </span>{item.explanation}
-                    </div>
-                  )}
                 </li>
               );
             })}
@@ -277,15 +241,13 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
 
       {showSearching && (
         <div className="status-message searching">
-          {displayMode === 'semantic' ? 'Using semantic engine...' : 'Using quick launcher...'}
+          Using quick launcher...
         </div>
       )}
 
       {showNoResults && (
         <div className="status-message no-results">
-          {displayMode === 'semantic'
-            ? 'No results from semantic engine'
-            : 'No results found in quick launcher'}
+          No results found in quick launcher
         </div>
       )}
     </div>

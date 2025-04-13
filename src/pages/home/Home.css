@@ -1,0 +1,41 @@
+/* Home page styles */
+
+/* Page container */
+.page {
+  width: 100%;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+/* Page header */
+.page-header {
+  margin-top: 0;
+  margin-bottom: 40px;
+  text-align: center;
+}
+
+/* Header title */
+.page-header h1 {
+  color: var(--text-color);
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 600;
+  font-size: clamp(1.21rem, 0.88rem + 1.65vw, 2.2rem);
+  letter-spacing: clamp(0.05em, 0.04em + 0.03vw, 0.1em);
+  transition: color 0.3s ease;
+  margin: 0 0 5px 0;
+  white-space: nowrap;
+}
+
+/* Subheader text */
+.page-subheader {
+  font-size: clamp(0.9rem, 0.8rem + 0.5vw, 1.1rem);
+  color: var(--text-secondary);
+  font-family: 'Cabinet Grotesk', sans-serif;
+  margin: 0;
+  font-weight: 500;
+}
+
+/* Main content area */
+.page-content {
+  width: 100%;
+}

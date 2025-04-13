@@ -11,17 +11,12 @@ import { exposeBackgroundAPI } from '../utils/comlinkSetup';
 import { isWebPage, shouldRecordHistoryEntry } from '../utils/urlUtils';
 import { DatabaseManager, initializeDatabase, isDatabaseInitialized } from '../db/DatabaseCore'; 
 import { createColdStorageSyncer, ColdStorageSync, SYNC_SOURCE } from '../services/coldStorageService';
-import { CLUSTERING_CONFIG, STORAGE_KEYS, QUEUE_CONFIG } from '../config';
-// No longer need Comlink for content extraction
+import { STORAGE_KEYS, COLD_STORAGE_CONFIG } from '../config';
 
 // -------------------- Constants & State --------------------
 const SESSION_IDLE_THRESHOLD = 15 * 60 * 1000; // 15 min (from the first version)
 const IDLE_CHECK_INTERVAL = 60 * 1000;         // 1 min interval between each check
 const COLD_STORAGE_ALARM_NAME = 'doryColdStorageSync';
-const CLUSTERING_ALARM_NAME = 'doryClusteringRefresh';
-
-// Content extraction debounce delay - wait for page to stabilize
-const EXTRACTION_DEBOUNCE_DELAY = QUEUE_CONFIG.EXTRACTION_DEBOUNCE_DELAY;
 
 /**
  * Single flag for overall readiness (formerly `isFullyInitialized`).
@@ -43,10 +38,6 @@ let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 const tabToCurrentUrl: Record<number, string | undefined> = {};
 const tabToPageId: Record<number, string> = {}; 
 const tabToVisitId: Record<number, string> = {}; 
-const extractionRequestedForVisitId: Record<number, string> = {};
-
-// Track pending extraction timeouts
-const extractionTimeouts: Record<number, NodeJS.Timeout> = {};
 
 // No longer tracking content extractors by tab ID - using direct messaging now
 
@@ -210,20 +201,7 @@ chrome.commands.onCommand.addListener(async (command) => {
       console.error('[Background] Error opening side panel:', err);
     }
   }
-  else if (command === 'toggle-cluster-view') {
-    // Old code used the same approach: check active tab => if it's New Tab => send message
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs && tabs[0] && tabs[0].id && tabs[0].url?.startsWith('chrome://newtab')) {
-      try {
-        await chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE_CLUSTER_VIEW' });
-        console.log('[Background] Sent TOGGLE_CLUSTER_VIEW message to New Tab');
-      } catch (err) {
-        console.error('[Background] Failed to send TOGGLE_CLUSTER_VIEW message:', err);
-      }
-    } else {
-      console.log('[Background] toggle-cluster-view command ignored: Not on New Tab page.');
-    }
-  }
+  // Removed toggle-cluster-view command handler as it's no longer needed
 });
 
 // -------------------- Navigation & History Tracking --------------------
@@ -301,7 +279,6 @@ async function processNavigationEvent(details: {
       const validEntry = shouldRecordHistoryEntry(url, title, 'processNavigationEvent');
       if (!validEntry) {
         console.log(`[Background] Filtered navigation, skipping record for ${url}`);
-        delete extractionRequestedForVisitId[tabId];
         return;
       }
 
@@ -336,40 +313,6 @@ async function processNavigationEvent(details: {
       tabToPageId[tabId] = newPageId;
       tabToVisitId[tabId] = newVisitId;
       console.log(`[Background] State updated for tab ${tabId}: pageId=${newPageId}, visitId=${newVisitId}`);
-
-      // Request extraction if not already requested
-      if (extractionRequestedForVisitId[tabId] !== newVisitId) {
-        // Clear any existing extraction timeout for this tab
-        if (extractionTimeouts[tabId]) {
-          clearTimeout(extractionTimeouts[tabId]);
-          delete extractionTimeouts[tabId];
-        }
-
-        console.log(`[Background] Scheduling content extraction for visit ${newVisitId} with ${EXTRACTION_DEBOUNCE_DELAY}ms delay`);
-        
-        // Schedule extraction with debounce delay to let the page load and stabilize
-        extractionTimeouts[tabId] = setTimeout(async () => {
-          try {
-            console.log(`[Background] Executing delayed content extraction for visit ${newVisitId}`);
-            const extractionSuccess = await backgroundApi.content.extractAndSendContent(tabId, {
-              pageId: newPageId,
-              visitId: newVisitId,
-              sessionId
-            });
-            
-            if (extractionSuccess) {
-              extractionRequestedForVisitId[tabId] = newVisitId;
-              console.log(`[Background] Successful content extraction for visit ${newVisitId}`);
-            } else {
-              console.warn(`[Background] Content extraction request failed for visit ${newVisitId}`);
-            }
-          } catch (exErr) {
-            console.error(`[Background] Content extraction error:`, exErr);
-          } finally {
-            delete extractionTimeouts[tabId];
-          }
-        }, EXTRACTION_DEBOUNCE_DELAY);
-      }
     } 
     else {
       // console.log(`[Background] Skipping navigation: URL unchanged (${url})`);
@@ -379,7 +322,6 @@ async function processNavigationEvent(details: {
     // In case of an error, remove partial state:
     delete tabToVisitId[tabId];
     delete tabToPageId[tabId];
-    delete extractionRequestedForVisitId[tabId];
     tabToCurrentUrl[tabId] = url; 
   }
 }
@@ -445,16 +387,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // No longer need to unregister content extractor with direct messaging
   backgroundApi.commands.unregisterCommandHandler?.(tabId); // If the new code had this method
 
-  // Clear any pending extraction timeouts for this tab
-  if (extractionTimeouts[tabId]) {
-    clearTimeout(extractionTimeouts[tabId]);
-    delete extractionTimeouts[tabId];
-  }
-
   delete tabToCurrentUrl[tabId];
   delete tabToPageId[tabId];
   delete tabToVisitId[tabId];
-  delete extractionRequestedForVisitId[tabId];
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -546,17 +481,13 @@ function cleanupServices() {
 }
 
 function setupScheduledTasks() {
-  // Setup cold storage sync alarm
-  ColdStorageSync.initializeScheduling();
-  
-  // Setup clustering refresh alarm
-  chrome.alarms.clear(CLUSTERING_ALARM_NAME);
-  chrome.alarms.create(CLUSTERING_ALARM_NAME, {
-    periodInMinutes: CLUSTERING_CONFIG.REFRESH_INTERVAL_MINUTES,
-    when: Date.now() + CLUSTERING_CONFIG.INITIAL_DELAY_MS
+  // Set up cold storage sync alarm
+  chrome.alarms.clear(COLD_STORAGE_ALARM_NAME);
+  chrome.alarms.create(COLD_STORAGE_ALARM_NAME, {
+    periodInMinutes: COLD_STORAGE_CONFIG.SYNC_INTERVAL_MINUTES
   });
   
-  console.log('[Background] Scheduled tasks (Cold Storage Sync, Clustering Refresh) set up.');
+  console.log('[Background] Scheduled tasks (Cold Storage Sync) set up.');
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -569,22 +500,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     console.log('[Background] Initiating cold storage sync task.');
     const syncer = createColdStorageSyncer(SYNC_SOURCE.ALARM);
     await syncer.performSync();
-  }
-  else if (alarm.name === CLUSTERING_ALARM_NAME) {
-    if (!isSessionActive) {
-      console.log('[Background] Skipping clustering refresh: Session not active.');
-      return;
-    }
-    
-    console.log('[Background] Initiating scheduled clustering refresh');
-    
-    try {
-      // ClusteringService now handles polling in the service worker context
-      const jobId = await backgroundApi.clusters.triggerClustering();
-      console.log(`[Background] Started clustering job: ${jobId}`);
-    } catch (error) {
-      console.error('[Background] Error starting clustering job:', error);
-    }
   }
 });
 

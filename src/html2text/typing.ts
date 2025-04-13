@@ -1,1 +1,0 @@
-export type OutCallback = (s: string) => void;

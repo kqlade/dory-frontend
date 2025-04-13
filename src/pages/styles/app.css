@@ -1,0 +1,100 @@
+/* Global styles for the app */
+:root {
+  --background-color: white;
+  --text-color: #000000;
+  --text-color-rgb: 0, 0, 0;
+  --border-color: rgba(0, 0, 0, 0.3);
+  --border-hover-color: rgba(0, 0, 0, 0.5);
+  --border-focus-color: rgba(0, 0, 0, 0.8);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+  --shadow-focus-color: rgba(0, 0, 0, 0.15);
+  --icon-filter: invert(0);
+}
+
+/* Dark mode */
+html.dark-mode {
+  --background-color: #191919;
+  --text-color: #ffffff;
+  --text-color-rgb: 255, 255, 255;
+  --border-color: rgba(255, 255, 255, 0.3);
+  --border-hover-color: rgba(255, 255, 255, 0.5);
+  --border-focus-color: rgba(255, 255, 255, 0.8);
+  --shadow-color: rgba(255, 255, 255, 0.1);
+  --shadow-focus-color: rgba(255, 255, 255, 0.15);
+  --icon-filter: invert(1);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Utility classes */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.app-content {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+} 

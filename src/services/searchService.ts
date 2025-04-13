@@ -2,29 +2,17 @@
  * @file searchService.ts
  * 
  * Service for performing search operations across different sources.
- * Combines local browser history search, local database ranking,
- * and semantic search via the backend API.
+ * Combines local browser history search and local database ranking.
  */
 
-import { API_BASE_URL, SEARCH_ENDPOINTS, SEARCH_CONFIG } from '../config';
-import { SearchResult, SearchResponse } from '../types';
-import { authService } from './authService';
+import { SEARCH_CONFIG } from '../config';
+import { SearchResult } from '../types';
 import { historySearchService } from '../utils/historySearch';
 import { localRanker } from '../utils/localDoryRanking';
 
 /**
- * Options for semantic search
- */
-export interface SearchOptions {
-  limit?: number;
-  useHybridSearch?: boolean;
-  useLLMExpansion?: boolean;
-  useReranking?: boolean;
-}
-
-/**
  * SearchService provides methods for searching across different sources.
- * It orchestrates calls to browser history, local database, and backend API.
+ * It orchestrates calls to browser history and local database.
  */
 class SearchService {
   /**
@@ -52,110 +40,6 @@ class SearchService {
     } catch (error) {
       console.error('[SearchService] Error in local search:', error);
       return [];
-    }
-  }
-
-  /**
-   * Performs a semantic search via the backend API.
-   * 
-   * @param query The search query
-   * @param options Search options
-   * @returns Promise resolving to array of search results
-   */
-  async searchSemantic(
-    query: string, 
-    options: SearchOptions = {}
-  ): Promise<SearchResult[]> {
-    if (!query || query.length < SEARCH_CONFIG.MIN_QUERY_LENGTH) {
-      return [];
-    }
-
-    try {
-      console.log(`[SearchService] Performing semantic search for: "${query}"`);
-      
-      const authState = await authService.getAuthState();
-      if (!authState.isAuthenticated || !authState.user?.id) {
-        console.warn('[SearchService] User not authenticated for semantic search');
-        return [];
-      }
-
-      const userId = authState.user.id;
-      
-      // Create request body as JSON instead of URL parameters
-      const requestBody = {
-        query,
-        userId,
-        limit: options.limit || SEARCH_CONFIG.MAX_SEMANTIC_RESULTS,
-        useHybridSearch: options.useHybridSearch !== false,
-        useLLMExpansion: options.useLLMExpansion !== false,
-        useReranking: options.useReranking !== false
-      };
-
-      const response = await fetch(`${API_BASE_URL}${SEARCH_ENDPOINTS.SEARCH}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authState.accessToken}`
-        },
-        credentials: 'include',
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        throw new Error(`Semantic search failed: ${response.statusText}`);
-      }
-
-      const semanticResults = await response.json() as SearchResponse;
-      
-      // Transform results and filter by minimum score threshold
-      return semanticResults
-        .map(result => ({
-          id: result.id || `semantic-${result.pageId || result.url}`, // Ensure ID is never undefined
-          pageId: result.pageId,
-          title: result.title,
-          url: result.url,
-          score: result.score,
-          source: 'semantic',
-          explanation: result.explanation,
-          snippet: result.snippet
-        }))
-        // Filter out results with scores below the minimum threshold
-        .filter(result => result.score >= SEARCH_CONFIG.MIN_SEMANTIC_SCORE);
-    } catch (error) {
-      console.error('[SearchService] Error in semantic search:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Performs both local and semantic search, returning results from both.
-   * 
-   * @param query The search query
-   * @param options Search options for semantic search
-   * @returns Promise resolving to object containing both result sets
-   */
-  async searchHybrid(
-    query: string, 
-    options: SearchOptions = {}
-  ): Promise<{
-    localResults: SearchResult[],
-    semanticResults: SearchResult[]
-  }> {
-    if (!query || query.length < SEARCH_CONFIG.MIN_QUERY_LENGTH) {
-      return { localResults: [], semanticResults: [] };
-    }
-
-    try {
-      // Run searches in parallel for better performance
-      const [localResults, semanticResults] = await Promise.all([
-        this.searchLocal(query),
-        this.searchSemantic(query, options)
-      ]);
-
-      return { localResults, semanticResults };
-    } catch (error) {
-      console.error('[SearchService] Error in hybrid search:', error);
-      return { localResults: [], semanticResults: [] };
     }
   }
 

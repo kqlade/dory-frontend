@@ -1,55 +1,30 @@
 /**
  * localDoryRanking.ts
  *
- * Demonstrates an advanced local ranking system with a two-tier approach:
- *  1) Fuzzy text matching with Fuse.js (replaced BM25 + specialized tokenization)
- *  2) Contextual intelligence (recency, Markov transitions, time-of-day, etc.) as tie-breakers.
+ * A combined system that uses:
+ *  1) Bayesian Markov transitions & time-of-day
+ *  2) A Bayesian linear model for final re-ranking
+ *  3) Enhanced text matching (BM25 + fuzzy edit distance, plus basic stemming, stopword removal)
+ *
+ * Works entirely locally, suitable for a Chrome extension or similar environment.
  */
 
 import { DEBUG, RANKING_CONFIG } from '../config';
 import * as mathjs from 'mathjs'; // For numeric/entropy ops as needed
 import { PageRecord, VisitRecord, EdgeRecord, BrowsingSession } from '../types';
-import { 
-  pageRepository, 
-  visitRepository, 
-  edgeRepository, 
+import {
+  pageRepository,
+  visitRepository,
+  edgeRepository,
   sessionRepository,
-  metadataRepository 
+  metadataRepository
 } from '../db/repositories';
-import { HybridSearchProvider } from './hybridSearchProvider';
 
-// -------------------------------------------------------------------------
-// 1) Helper Functions
-// -------------------------------------------------------------------------
-
+// ---------------------------------------------------------------------------------
+// 1) Helpers, Stopwords, and Basic Preprocessing
+// ---------------------------------------------------------------------------------
 function log(...args: any[]) {
   if (DEBUG) console.log(...args);
-}
-
-// -------------------------------------------------------------------------
-// 2) Tokenization & Utilities
-// -------------------------------------------------------------------------
-function tokenizeTitle(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-}
-
-function tokenizeUrl(url: string): string[] {
-  // Specialized URL tokenization (splits on / ? # : . - _ =)
-  return url
-    .toLowerCase()
-    .split(/[\/\?\#\:\.\-\_\=]+/)
-    .filter(Boolean);
-}
-
-function computeFrequency(tokens: string[]): Record<string, number> {
-  const freq: Record<string, number> = {};
-  for (const tk of tokens) {
-    freq[tk] = (freq[tk] || 0) + 1;
-  }
-  return freq;
 }
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -60,8 +35,39 @@ function toSeconds(ts: number): number {
   return ts > 10000000000 ? Math.floor(ts / 1000) : ts;
 }
 
+/** Example minimal English stopword set. Extend as needed. */
+const STOPWORDS = new Set([
+  'the','is','at','of','on','and','a','an','for','to','in','that','this','it',
+  'be','am','are','or','as','was','were','so','we','by','has','have','had','etc'
+]);
+
 /**
- * Substring/prefix bonus for quick launch:
+ * A naive stemmer demonstration. You can replace this with a real Porter stemmer.
+ */
+function naiveStem(word: string): string {
+  return word
+    .replace(/(ing|ed|ly|s)$/i, '')
+    .toLowerCase();
+}
+
+/**
+ * Preprocess text into normalized tokens:
+ * 1) Lowercase
+ * 2) Split on non-alphanumerics
+ * 3) Remove stopwords
+ * 4) Apply naive stemming
+ */
+function preprocessTextForIndex(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map(w => STOPWORDS.has(w) ? '' : naiveStem(w))
+    .filter(Boolean);
+}
+
+/**
+ * Substring/prefix bonus for quick matches:
  * +2 if query is a prefix of URL
  * +1 if query is a prefix of title
  * +1 if query is found anywhere in URL
@@ -87,9 +93,9 @@ function computeSubstringBonus(query: string, page: PageRecord): number {
   return bonus;
 }
 
-// -------------------------------------------------------------------------
-// 3) BM25 Implementation (Title + URL) with Weighted URL
-// -------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------
+// 2) BM25 Implementation (with Proper Inverted Index)
+// ---------------------------------------------------------------------------------
 interface InvertedIndexDoc {
   pageId: string;
   titleTokens: Record<string, number>;
@@ -102,6 +108,10 @@ class BM25Engine {
   private docs: InvertedIndexDoc[] = [];
   private avgTitleLen = 1;
   private avgUrlLen = 1;
+  // Inverted index: token -> array of document indices
+  private invertedIndex: Record<string, number[]> = {};
+  // Map page IDs to document indices for faster lookup
+  private pageIdToIndex: Map<string, number> = new Map();
 
   // BM25 parameters from config
   private k1 = RANKING_CONFIG.BM25.K1;
@@ -115,119 +125,301 @@ class BM25Engine {
   }
 
   private buildIndex(pageRecords: PageRecord[]) {
-    this.docs = pageRecords.map((p) => {
-      const tArr = tokenizeTitle(p.title);
-      const uArr = tokenizeUrl(p.url);
+    // Clear previous index
+    this.invertedIndex = {};
+    this.pageIdToIndex.clear();
+    
+    // Build document representations
+    this.docs = pageRecords.map((p, idx) => {
+      const tArr = preprocessTextForIndex(p.title);
+      const uArr = preprocessTextForIndex(p.url);
+      
+      // Update pageId to index mapping
+      this.pageIdToIndex.set(p.pageId, idx);
+      
+      // Title tokens into frequencies
+      const titleTokens = this.computeFrequency(tArr);
+      // URL tokens into frequencies
+      const urlTokens = this.computeFrequency(uArr);
+      
+      // Add each token to the inverted index
+      const allTokens = new Set([...Object.keys(titleTokens), ...Object.keys(urlTokens)]);
+      allTokens.forEach(token => {
+        if (!this.invertedIndex[token]) {
+          this.invertedIndex[token] = [];
+        }
+        this.invertedIndex[token].push(idx);
+      });
+      
       return {
         pageId: p.pageId,
-        titleTokens: computeFrequency(tArr),
-        urlTokens: computeFrequency(uArr),
+        titleTokens,
+        urlTokens,
         titleLen: tArr.length,
         urlLen: uArr.length
       };
     });
 
+    // Calculate average lengths
     const N = this.docs.length || 1;
     this.avgTitleLen = this.docs.reduce((sum, d) => sum + d.titleLen, 0) / N;
     this.avgUrlLen = this.docs.reduce((sum, d) => sum + d.urlLen, 0) / N;
+    
+    // Deduplicate document indices in inverted index
+    Object.keys(this.invertedIndex).forEach(token => {
+      this.invertedIndex[token] = [...new Set(this.invertedIndex[token])];
+    });
+  }
+
+  private computeFrequency(tokens: string[]): Record<string, number> {
+    const freq: Record<string, number> = {};
+    for (const tk of tokens) {
+      freq[tk] = (freq[tk] || 0) + 1;
+    }
+    return freq;
   }
 
   public computeScores(query: string): Array<{ pageId: string; score: number }> {
-    const qTokens = tokenizeTitle(query);
+    // Preprocess query
+    const qTokens = preprocessTextForIndex(query);
     if (!qTokens.length) {
       return this.docs.map(d => ({ pageId: d.pageId, score: 0 }));
     }
 
     const N = this.docs.length;
+    
+    // Quick output for empty query
+    if (!qTokens.length) {
+      return this.docs.map(d => ({ pageId: d.pageId, score: 0 }));
+    }
+    
+    // Find candidate documents that contain ANY of the query tokens
+    const candidateDocIndices = new Set<number>();
+    for (const qt of qTokens) {
+      const indices = this.invertedIndex[qt] || [];
+      indices.forEach(idx => candidateDocIndices.add(idx));
+    }
+    
+    // No candidates found for any query terms
+    if (candidateDocIndices.size === 0) {
+      return [];
+    }
+    
+    // Pre-calculate document frequencies and IDF values once
     const docFreq: Record<string, number> = {};
-    for (const qt of qTokens) {
-      docFreq[qt] = 0;
-      for (const d of this.docs) {
-        if (d.titleTokens[qt] || d.urlTokens[qt]) {
-          docFreq[qt]++;
-        }
-      }
-    }
-
     const idf: Record<string, number> = {};
+    
     for (const qt of qTokens) {
-      const df = docFreq[qt] || 0;
-      idf[qt] = Math.log((N - df + 0.5) / (df + 0.5) + 1);
+      docFreq[qt] = (this.invertedIndex[qt] || []).length;
+      idf[qt] = Math.log((N - docFreq[qt] + 0.5) / (docFreq[qt] + 0.5) + 1);
     }
 
+    // Calculate BM25 scores only for candidates
     const results: Array<{ pageId: string; score: number }> = [];
-    for (const doc of this.docs) {
+    candidateDocIndices.forEach(idx => {
+      const doc = this.docs[idx];
       let score = 0;
+      
       for (const qt of qTokens) {
         const freqT = doc.titleTokens[qt] || 0;
         const freqU = doc.urlTokens[qt] || 0;
+        
+        if (freqT === 0 && freqU === 0) continue; // Skip terms not in this doc
 
-        const TFt =
-          (this.wTitle * freqT * (this.k1 + 1)) /
+        const TFt = (this.wTitle * freqT * (this.k1 + 1)) /
           (freqT + this.k1 * (1 - this.bTitle + this.bTitle * (doc.titleLen / this.avgTitleLen)));
 
-        const TFu =
-          (this.wUrl * freqU * (this.k1 + 1)) /
+        const TFu = (this.wUrl * freqU * (this.k1 + 1)) /
           (freqU + this.k1 * (1 - this.bUrl + this.bUrl * (doc.urlLen / this.avgUrlLen)));
 
         score += (idf[qt] || 0) * (TFt + TFu);
       }
+      
       results.push({ pageId: doc.pageId, score });
-    }
+    });
+    
     return results;
   }
 }
 
-// -------------------------------------------------------------------------
-// 4) Contextual Signals: Markov Chain, Time-of-Day, Recency, Session
-// -------------------------------------------------------------------------
-interface MarkovTable {
-  [fromPageId: string]: {
-    [toPageId: string]: number;
-  };
+// ---------------------------------------------------------------------------------
+// 3) Simple Fuzzy Edit-Distance
+// ---------------------------------------------------------------------------------
+function editDistance(a: string, b: string): number {
+  const dp: number[][] = [];
+  for (let i = 0; i <= a.length; i++) {
+    dp[i] = new Array(b.length + 1).fill(0);
+    dp[i][0] = i;
+  }
+  for (let j = 0; j <= b.length; j++) {
+    dp[0][j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[a.length][b.length];
 }
 
-function buildMarkovChain(edges: EdgeRecord[]): MarkovTable {
-  const table: MarkovTable = {};
+function fuzzySimilarity(strA: string, strB: string): number {
+  if (!strA || !strB) return 0;
+  const maxLen = Math.max(strA.length, strB.length);
+  if (!maxLen) return 0;
+  const dist = editDistance(strA, strB);
+  const ratio = 1 - dist / maxLen;
+  return Math.max(0, ratio);
+}
+
+// ---------------------------------------------------------------------------------
+// 4) EnhancedSearchProvider: BM25 + Fuzzy
+// ---------------------------------------------------------------------------------
+interface EnhancedSearchResult {
+  page: PageRecord;
+  score: number;
+  matchType: 'exact' | 'approx' | 'partial' | 'none';
+}
+
+export class EnhancedSearchProvider {
+  private pages: PageRecord[];
+  private bm25Engine: BM25Engine;
+
+  constructor(pages: PageRecord[]) {
+    this.pages = pages;
+    this.bm25Engine = new BM25Engine(this.pages);
+  }
+
+  public updatePages(pages: PageRecord[]) {
+    this.pages = pages;
+    this.bm25Engine = new BM25Engine(this.pages);
+  }
+
+  public search(query: string): EnhancedSearchResult[] {
+    if (!query.trim()) return [];
+
+    // First: BM25
+    const bm25Scores = this.bm25Engine.computeScores(query);
+    const scoreMap: Record<string, number> = {};
+    for (const s of bm25Scores) {
+      scoreMap[s.pageId] = s.score;
+    }
+
+    // Also do fuzzy pass on each page's title/URL
+    const results: EnhancedSearchResult[] = [];
+    const queryLower = query.toLowerCase();
+
+    for (const page of this.pages) {
+      const titleLower = page.title.toLowerCase();
+      const urlLower   = page.url.toLowerCase();
+      const bm25Val    = scoreMap[page.pageId] || 0;
+
+      // Fuzzy similarity on title or URL
+      const simTitle = fuzzySimilarity(titleLower, queryLower);
+      const simUrl   = fuzzySimilarity(urlLower, queryLower);
+      const fuzzySim = Math.max(simTitle, simUrl);
+
+      // Weighted combination of BM25 + fuzzy
+      const alpha = 0.7; // e.g., 70% weight to BM25, 30% to fuzzy
+      const combinedScore = alpha * bm25Val + (1 - alpha) * fuzzySim;
+
+      let matchType: 'exact' | 'approx' | 'partial' | 'none' = 'none';
+      if (titleLower === queryLower || urlLower === queryLower) {
+        matchType = 'exact';
+      } else if (fuzzySim > 0.75) {
+        matchType = 'approx';
+      } else if (bm25Val > 0.5 || fuzzySim > 0.4) {
+        matchType = 'partial';
+      }
+
+      results.push({
+        page,
+        score: combinedScore,
+        matchType
+      });
+    }
+
+    // Sort descending by combined text score
+    results.sort((a, b) => b.score - a.score);
+    return results;
+  }
+}
+
+// ---------------------------------------------------------------------------------
+// 5) Bayesian Markov Chain & Bayesian Time-of-Day
+// ---------------------------------------------------------------------------------
+interface BayesianEdgeState {
+  fromPageId: string;
+  toPageId: string;
+  alpha: number;
+  beta: number;
+}
+
+function bayesianMarkovTransitionMean(edge: BayesianEdgeState): number {
+  return edge.alpha / (edge.alpha + edge.beta);
+}
+
+function buildBayesianMarkovChain(edges: EdgeRecord[]): Record<string, Record<string, BayesianEdgeState>> {
+  const table: Record<string, Record<string, BayesianEdgeState>> = {};
+  // Example: alpha=1 + count, beta=1
   for (const e of edges) {
-    if (!table[e.fromPageId]) table[e.fromPageId] = {};
-    table[e.fromPageId][e.toPageId] = (table[e.fromPageId][e.toPageId] || 0) + e.count;
+    if (!table[e.fromPageId]) {
+      table[e.fromPageId] = {};
+    }
+    table[e.fromPageId][e.toPageId] = {
+      fromPageId: e.fromPageId,
+      toPageId: e.toPageId,
+      alpha: 1 + e.count,
+      beta: 1
+    };
   }
   return table;
 }
 
-function computeMarkovTransitionProb(
-  table: MarkovTable,
+function computeBayesianMarkovTransitionProb(
+  table: Record<string, Record<string, BayesianEdgeState>>,
   fromPageId: string,
   toPageId: string
 ): number {
-  if (!table[fromPageId]) return 0;
-  const total = Object.values(table[fromPageId]).reduce((acc, c) => acc + c, 0) || 1;
-  const freq = table[fromPageId][toPageId] || 0;
-  return freq / total;
+  const row = table[fromPageId];
+  if (!row) return 0;
+  const edge = row[toPageId];
+  if (!edge) return 0;
+  return bayesianMarkovTransitionMean(edge);
 }
 
-interface TimeOfDayHistogram {
-  [pageId: string]: number[]; // 24 bins
+// Bayesian Time-of-Day: each page has 24 alpha-values; each new visit increments the alpha for that hour.
+interface BayesianTimeOfDayState {
+  [pageId: string]: number[]; // 24 alpha values
 }
 
-function buildTimeOfDayHistogram(visits: VisitRecord[]): TimeOfDayHistogram {
-  const hist: TimeOfDayHistogram = {};
+function buildBayesianTimeOfDay(visits: VisitRecord[]): BayesianTimeOfDayState {
+  const hist: BayesianTimeOfDayState = {};
   for (const v of visits) {
-    const hour = new Date(v.startTime).getHours(); // 0..23
-    if (!hist[v.pageId]) hist[v.pageId] = new Array(24).fill(0);
-    hist[v.pageId][hour]++;
+    const hour = new Date(v.startTime).getHours();
+    if (!hist[v.pageId]) {
+      hist[v.pageId] = new Array(24).fill(1);
+    }
+    hist[v.pageId][hour] += 1;
   }
   return hist;
 }
 
-function computeTimeOfDayProb(hist: TimeOfDayHistogram, pageId: string, hourNow: number): number {
+function computeBayesianTimeOfDayProb(hist: BayesianTimeOfDayState, pageId: string, hourNow: number): number {
   const arr = hist[pageId];
   if (!arr) return 0;
   const sum = arr.reduce((acc, x) => acc + x, 0);
   return sum ? arr[hourNow] / sum : 0;
 }
 
+// ---------------------------------------------------------------------------------
+// 6) Multi-scale Recency, Session Features, etc.
+// ---------------------------------------------------------------------------------
 function multiScaleRecencyScore(
   page: PageRecord,
   visits: VisitRecord[],
@@ -256,9 +448,10 @@ function multiScaleRecencyScore(
     mediumTerm += medDecay  * dwellFactor;
     longTerm   += longDecay * dwellFactor;
   }
+
   return (
-    RANKING_CONFIG.RECENCY_WEIGHTS.SHORT_TERM * shortTerm + 
-    RANKING_CONFIG.RECENCY_WEIGHTS.MEDIUM_TERM * mediumTerm + 
+    RANKING_CONFIG.RECENCY_WEIGHTS.SHORT_TERM * shortTerm +
+    RANKING_CONFIG.RECENCY_WEIGHTS.MEDIUM_TERM * mediumTerm +
     RANKING_CONFIG.RECENCY_WEIGHTS.LONG_TERM * longTerm
   );
 }
@@ -274,7 +467,7 @@ function buildSessionFeatures(
 ): SessionFeatures {
   const feats: SessionFeatures = { recentDomains: {} };
   if (sessionId === undefined) return feats;
-  
+
   const sessionVisits = visits.filter(v => v.sessionId === sessionId);
   for (const sv of sessionVisits) {
     const page = pages.find(px => px.pageId === sv.pageId);
@@ -292,11 +485,41 @@ function computeSessionContextWeight(
   return Math.log1p(features.recentDomains[page.domain] || 0);
 }
 
-// -------------------------------------------------------------------------
-// 5) Feature Vector, Model, Two-Tier Scoring
-// -------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------
+// 7) Regularity & Shannon Entropy
+// ---------------------------------------------------------------------------------
+function computeRegularity(pageId: string, visits: VisitRecord[]): number {
+  const pageVisits = visits.filter(v => v.pageId === pageId);
+  if (pageVisits.length < 2) return 0.5;
+
+  const sorted = [...pageVisits].sort((a, b) => a.startTime - b.startTime);
+  const intervals: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    intervals.push(sorted[i].startTime - sorted[i - 1].startTime);
+  }
+
+  const meanInt = mathjs.mean(intervals) as number;
+  const stdInt = mathjs.std(intervals, 'uncorrected') as number;
+  const cv = meanInt > 0 ? (stdInt / meanInt) : 0;
+  const ent = shannonEntropy(intervals);
+
+  const entFactor = pageVisits.length > 1 ? (1.0 + ent / Math.log(pageVisits.length)) : 1.0;
+  const r = (1 / (1 + cv)) * entFactor;
+  return (isFinite(r) && !isNaN(r)) ? r : 0.5;
+}
+
+function shannonEntropy(vals: number[]): number {
+  const sum = vals.reduce((a, b) => a + b, 0);
+  if (sum === 0) return 0;
+  const p = vals.map(x => x / sum);
+  return -p.reduce((acc, x) => (x > 0 ? acc + x * Math.log(x) : acc), 0);
+}
+
+// ---------------------------------------------------------------------------------
+// 8) Bayesian Linear Model (Mean + Variance for each feature weight)
+// ---------------------------------------------------------------------------------
 interface FeatureVector {
-  textMatch: number;   // Tier-1 text score
+  textMatch: number;   // Tier-1 text score (BM25 + fuzzy)
   recency: number;
   frequency: number;
   navigation: number;
@@ -305,111 +528,117 @@ interface FeatureVector {
   regularity: number;
 }
 
-function computeContextualScore(features: FeatureVector, weights: FeatureVector): number {
-  return (
-    weights.recency     * features.recency     +
-    weights.frequency   * features.frequency   +
-    weights.navigation  * features.navigation  +
-    weights.timeOfDay   * features.timeOfDay   +
-    weights.session     * features.session     +
-    weights.regularity  * features.regularity
-  );
-}
+class BayesianLinearModel {
+  // For each feature, store a mean and variance; also for bias
+  public weightMeans: FeatureVector;
+  public weightVars: FeatureVector;
+  public biasMean: number;
+  public biasVar: number;
 
-class OnlineLinearModel {
-  public weights: FeatureVector;
-  public bias = 0;
-  private learningRate = 0.01;
+  private learningRate = 0.01; // or tune as needed
 
   constructor(initial?: Partial<FeatureVector>, bias?: number) {
-    this.weights = {
-      textMatch: this.initRandom() + 0.1,
-      recency:   this.initRandom(),
-      frequency: this.initRandom(),
-      navigation:this.initRandom(),
-      timeOfDay: this.initRandom(),
-      session:   this.initRandom(),
-      regularity:this.initRandom(),
+    // Initialize means
+    this.weightMeans = {
+      textMatch:   0.1,
+      recency:     0.0,
+      frequency:   0.0,
+      navigation:  0.0,
+      timeOfDay:   0.0,
+      session:     0.0,
+      regularity:  0.0
     };
+    this.weightVars = {
+      textMatch:   1.0,
+      recency:     1.0,
+      frequency:   1.0,
+      navigation:  1.0,
+      timeOfDay:   1.0,
+      session:     1.0,
+      regularity:  1.0
+    };
+    this.biasMean = (typeof bias === 'number') ? bias : 0;
+    this.biasVar = 1.0;
+
     if (initial) {
-      Object.assign(this.weights, initial);
-    }
-    if (typeof bias === 'number') {
-      this.bias = bias;
+      Object.assign(this.weightMeans, initial);
     }
   }
-  
-  private initRandom(): number {
-    return (Math.random() - 0.5) * 0.1;
+
+  public predict(f: FeatureVector): number {
+    let score = this.biasMean;
+    score += this.weightMeans.textMatch   * f.textMatch;
+    score += this.weightMeans.recency     * f.recency;
+    score += this.weightMeans.frequency   * f.frequency;
+    score += this.weightMeans.navigation  * f.navigation;
+    score += this.weightMeans.timeOfDay   * f.timeOfDay;
+    score += this.weightMeans.session     * f.session;
+    score += this.weightMeans.regularity  * f.regularity;
+    return score;
   }
 
   /**
-   * Combined scoring with textMatch as the primary signal
+   * A simplified Bayesian update: we do a gradient step plus reduce variance slightly.
+   * outcome = 1 (clicked) or 0 (not clicked).
    */
-  public predict(f: FeatureVector): number {
-    const score =
-      this.weights.textMatch   * f.textMatch   +
-      this.weights.recency     * f.recency     +
-      this.weights.frequency   * f.frequency   +
-      this.weights.navigation  * f.navigation  +
-      this.weights.timeOfDay   * f.timeOfDay   +
-      this.weights.session     * f.session     +
-      this.weights.regularity  * f.regularity;
-
-    return score + this.bias;
-  }
-
   public update(f: FeatureVector, outcome: number) {
+    // logistic
     const rawScore = this.predict(f);
     const prob = 1 / (1 + Math.exp(-rawScore));
     const error = outcome - prob;
-    this.bias += this.learningRate * error;
 
-    const reg = 0.0001; // L2 regularization
-    this.weights.textMatch   += this.learningRate * (error * f.textMatch   - reg * this.weights.textMatch);
-    this.weights.recency     += this.learningRate * (error * f.recency     - reg * this.weights.recency);
-    this.weights.frequency   += this.learningRate * (error * f.frequency   - reg * this.weights.frequency);
-    this.weights.navigation  += this.learningRate * (error * f.navigation  - reg * this.weights.navigation);
-    this.weights.timeOfDay   += this.learningRate * (error * f.timeOfDay   - reg * this.weights.timeOfDay);
-    this.weights.session     += this.learningRate * (error * f.session     - reg * this.weights.session);
-    this.weights.regularity  += this.learningRate * (error * f.regularity  - reg * this.weights.regularity);
+    // bias
+    const gradBias = error;
+    const precisionBias = 1 / this.biasVar;
+    this.biasMean += this.learningRate * gradBias;
+    // shrink variance
+    this.biasVar = 1 / (precisionBias + 0.01);
 
-    this.constrainWeights();
-  }
-  
-  private constrainWeights() {
-    const maxW = 5.0;
-    const minW = -1.0;
-    this.weights.textMatch   = clamp(this.weights.textMatch,   minW, maxW);
-    this.weights.recency     = clamp(this.weights.recency,     minW, maxW);
-    this.weights.frequency   = clamp(this.weights.frequency,   minW, maxW);
-    this.weights.navigation  = clamp(this.weights.navigation,  minW, maxW);
-    this.weights.timeOfDay   = clamp(this.weights.timeOfDay,   minW, maxW);
-    this.weights.session     = clamp(this.weights.session,     minW, maxW);
-    this.weights.regularity  = clamp(this.weights.regularity,  minW, maxW);
-    this.bias = Math.max(-3.0, Math.min(3.0, this.bias));
+    // each weight
+    (Object.keys(this.weightMeans) as (keyof FeatureVector)[]).forEach(key => {
+      const grad = error * f[key];
+      const currentPrecision = 1 / this.weightVars[key];
+
+      // update mean
+      this.weightMeans[key] += this.learningRate * grad;
+
+      // shrink variance
+      const newPrecision = currentPrecision + 0.01;
+      this.weightVars[key] = 1 / newPrecision;
+
+      // clamp means
+      this.weightMeans[key] = Math.max(-5, Math.min(5, this.weightMeans[key]));
+    });
+
+    // clamp bias
+    this.biasMean = Math.max(-3, Math.min(3, this.biasMean));
   }
 }
 
-// -------------------------------------------------------------------------
-// 6) The AdvancedLocalRanker Class
-// -------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------
+// 9) The AdvancedLocalRanker Class
+// ---------------------------------------------------------------------------------
 export class AdvancedLocalRanker {
+  // Data
   private pages: PageRecord[] = [];
   private visits: VisitRecord[] = [];
   private edges: EdgeRecord[] = [];
   private sessions: BrowsingSession[] = [];
 
-  private searchProvider: HybridSearchProvider | null = null;
-  private markovTable: MarkovTable = {};
-  private timeOfDayHist: TimeOfDayHistogram = {};
+  // Tier-1 text search
+  private searchProvider: EnhancedSearchProvider | null = null;
 
-  private model = new OnlineLinearModel();
+  // Bayesian Markov & Time-of-Day
+  private bayesianMarkovTable: Record<string, Record<string, BayesianEdgeState>> = {};
+  private bayesianTimeOfDay: BayesianTimeOfDayState = {};
+
+  // Bayesian linear model for final re-ranking
+  private model = new BayesianLinearModel();
   private lastDisplayedFeatures: Record<string, FeatureVector> = {};
 
   constructor() {
     if (DEBUG) {
-      log('[AdvancedLocalRanker] Constructed.');
+      log('[AdvancedLocalRanker] Constructed: combined Bayesian + enhanced text matching.');
     }
   }
 
@@ -417,11 +646,12 @@ export class AdvancedLocalRanker {
     await this.loadDataFromDB();
     await this.loadModelWeights();
 
-    this.searchProvider = new HybridSearchProvider(this.pages, {
-      fuzzyMatchThreshold: 70 // 70% similarity is a good default
-    });
-    this.markovTable = buildMarkovChain(this.edges);
-    this.timeOfDayHist = buildTimeOfDayHistogram(this.visits);
+    // Enhanced search with BM25 + fuzzy
+    this.searchProvider = new EnhancedSearchProvider(this.pages);
+
+    // Build Bayesian Markov chain & time-of-day
+    this.bayesianMarkovTable = buildBayesianMarkovChain(this.edges);
+    this.bayesianTimeOfDay = buildBayesianTimeOfDay(this.visits);
 
     if (DEBUG) {
       log(`[AdvancedLocalRanker] Initialized. Pages=${this.pages.length}, Visits=${this.visits.length}, Edges=${this.edges.length}`);
@@ -436,12 +666,13 @@ export class AdvancedLocalRanker {
     if (!this.searchProvider || !query.trim()) return [];
     const nowSec = toSeconds(now);
 
+    // Tier-1: Enhanced text search
     const searchResults = this.searchProvider.search(query);
-    
     if (searchResults.length === 0) {
       return [];
     }
 
+    // Identify session for domain context
     let sessionId: number | undefined;
     let sessionFeatures: SessionFeatures | null = null;
     if (currentPageId) {
@@ -454,20 +685,36 @@ export class AdvancedLocalRanker {
       }
     }
 
+    // Tier-2: Bayesian re-ranking. For each candidate, compute contextual features, then model.predict.
     const finalScores = searchResults.map(result => {
       const page = result.page;
-      
-      const textMatchScore = result.matchType === 'exact' 
-        ? result.score * 1.2  // Boost exact matches
-        : result.score;
 
+      let textMatchScore = result.score;
+
+      // Optional substring bonus
+      textMatchScore += computeSubstringBonus(query, page);
+
+      // Recency
       const recencyVal = multiScaleRecencyScore(page, this.visits, nowSec);
+      // Frequency
       const freqVal = Math.log1p(page.visitCount) * (0.5 + page.personalScore);
-      const navVal = currentPageId ? computeMarkovTransitionProb(this.markovTable, currentPageId, page.pageId) : 0;
+
+      // Bayesian Markov transition
+      const navVal = currentPageId
+        ? computeBayesianMarkovTransitionProb(this.bayesianMarkovTable, currentPageId, page.pageId)
+        : 0;
+
+      // Bayesian time-of-day
       const hourNow = new Date(now).getHours();
-      const todVal = computeTimeOfDayProb(this.timeOfDayHist, page.pageId, hourNow);
-      const sessVal = sessionFeatures ? computeSessionContextWeight(page, sessionFeatures) : 0;
-      const regVal = this.computeRegularity(page.pageId);
+      const todVal = computeBayesianTimeOfDayProb(this.bayesianTimeOfDay, page.pageId, hourNow);
+
+      // Session
+      const sessVal = sessionFeatures
+        ? computeSessionContextWeight(page, sessionFeatures)
+        : 0;
+
+      // Regularity
+      const regVal = computeRegularity(page.pageId, this.visits);
 
       const features: FeatureVector = {
         textMatch: textMatchScore,
@@ -483,46 +730,70 @@ export class AdvancedLocalRanker {
       const score = this.model.predict(features);
       return { pageId: page.pageId, title: page.title, url: page.url, score };
     });
-    
+
+    // Sort final scores descending
     finalScores.sort((a, b) => b.score - a.score);
 
+    // (Optional) filter out extremely low scores
     const filtered = this.applyRelevanceFilter(finalScores, query);
 
-    const deduplicatedResults: Array<{ pageId: string; title: string; url: string; score: number }> = [];
+    // Deduplicate by title/url
+    const deduplicated: Array<{ pageId: string; title: string; url: string; score: number }> = [];
     const seenTitles = new Set<string>();
     const seenUrls = new Set<string>();
 
-    for (const result of filtered) {
-      if (!seenTitles.has(result.title) && !seenUrls.has(result.url)) {
-        deduplicatedResults.push({
-          pageId: result.pageId,
-          title: result.title,
-          url: result.url,
-          score: result.score
-        });
-        seenTitles.add(result.title);
-        seenUrls.add(result.url);
+    for (const item of filtered) {
+      if (!seenTitles.has(item.title) && !seenUrls.has(item.url)) {
+        deduplicated.push(item);
+        seenTitles.add(item.title);
+        seenUrls.add(item.url);
       }
     }
 
-    return deduplicatedResults;
+    return deduplicated;
   }
 
+  /**
+   * Record a user click -> Bayesian model update with outcome=1 for clicked,
+   * outcome=0 for the others displayed. Also updates personalScore.
+   */
   public recordUserClick(pageId: string, displayedIds: string[]) {
     const rank = displayedIds.indexOf(pageId);
     if (rank < 0) return;
     const page = this.pages.find(p => p.pageId === pageId);
     if (!page) return;
 
+    // Basic personalScore update
     const oldScore = page.personalScore;
     const boostFactor = rank >= 3 ? 0.15 : 0.1;
     const newScore = oldScore + boostFactor * (1 - oldScore);
     page.personalScore = clamp(newScore);
     this.updatePageInDB(page);
 
-    this.updateModelFromClick(pageId, displayedIds);
+    // Bayesian model updates
+    let updated = false;
+    const clickedFeatures = this.lastDisplayedFeatures[pageId];
+    if (clickedFeatures) {
+      this.model.update(clickedFeatures, 1);
+      updated = true;
+    }
+    for (const pid of displayedIds) {
+      if (pid !== pageId) {
+        const f = this.lastDisplayedFeatures[pid];
+        if (f) {
+          this.model.update(f, 0);
+          updated = true;
+        }
+      }
+    }
+    if (updated) {
+      this.saveModelWeights();
+    }
   }
 
+  /**
+   * recordImpressions (optional). If you want to lightly penalize unclicked items.
+   */
   public recordImpressions(pageIds: string[]) {
     for (const pid of pageIds) {
       const page = this.pages.find(p => p.pageId === pid);
@@ -542,19 +813,24 @@ export class AdvancedLocalRanker {
     if (this.searchProvider) {
       this.searchProvider.updatePages(this.pages);
     } else {
-      this.searchProvider = new HybridSearchProvider(this.pages);
+      this.searchProvider = new EnhancedSearchProvider(this.pages);
     }
-    
-    this.markovTable = buildMarkovChain(this.edges);
-    this.timeOfDayHist = buildTimeOfDayHistogram(this.visits);
+
+    // Rebuild Bayesian structures
+    this.bayesianMarkovTable = buildBayesianMarkovChain(this.edges);
+    this.bayesianTimeOfDay = buildBayesianTimeOfDay(this.visits);
 
     if (DEBUG) {
       log(`[AdvancedLocalRanker] Refreshed. Pages=${this.pages.length}, Visits=${this.visits.length}, Edges=${this.edges.length}`);
-      log(`Model weights: ${JSON.stringify(this.model.weights, null, 2)}`);
-      log(`Model bias: ${this.model.bias.toFixed(4)}`);
+      log(`Bayesian weight means: ${JSON.stringify(this.model.weightMeans, null, 2)}`);
+      log(`Bayesian weight vars:  ${JSON.stringify(this.model.weightVars, null, 2)}`);
+      log(`BiasMean: ${this.model.biasMean.toFixed(4)}, BiasVar: ${this.model.biasVar.toFixed(4)}`);
     }
   }
 
+  // ---------------------------------------------------------------------------------
+  // Internal load/save
+  // ---------------------------------------------------------------------------------
   private async loadDataFromDB(): Promise<void> {
     try {
       const [pages, visits, edges, sessions] = await Promise.all([
@@ -578,11 +854,14 @@ export class AdvancedLocalRanker {
 
   private async loadModelWeights() {
     try {
-      const record = await metadataRepository.getByKey('rankingModel');
+      // We store them under "rankingModelBayesian" or any key you like
+      const record = await metadataRepository.getByKey('rankingModelBayesian');
       if (record) {
         const parsed = JSON.parse(record.value);
-        this.model.bias = parsed.bias;
-        Object.assign(this.model.weights, parsed.weights);
+        this.model.biasMean = parsed.biasMean;
+        this.model.biasVar  = parsed.biasVar;
+        Object.assign(this.model.weightMeans, parsed.weightMeans);
+        Object.assign(this.model.weightVars,  parsed.weightVars);
       }
     } catch (err) {
       console.error('[AdvancedLocalRanker] Failed to load model weights:', err);
@@ -592,10 +871,12 @@ export class AdvancedLocalRanker {
   private async saveModelWeights() {
     try {
       await metadataRepository.saveValue(
-        'rankingModel',
+        'rankingModelBayesian',
         JSON.stringify({
-          bias: this.model.bias,
-          weights: this.model.weights
+          biasMean: this.model.biasMean,
+          biasVar:  this.model.biasVar,
+          weightMeans: this.model.weightMeans,
+          weightVars:  this.model.weightVars
         })
       );
     } catch (err) {
@@ -611,32 +892,10 @@ export class AdvancedLocalRanker {
     }
   }
 
-  private computeRegularity(pageId: string): number {
-    const pageVisits = this.visits.filter(v => v.pageId === pageId);
-    if (pageVisits.length < 2) return 0.5;
-
-    const sorted = [...pageVisits].sort((a, b) => a.startTime - b.startTime);
-    const intervals: number[] = [];
-    for (let i = 1; i < sorted.length; i++) {
-      intervals.push(sorted[i].startTime - sorted[i - 1].startTime);
-    }
-
-    const meanInt = mathjs.mean(intervals) as number;
-    const stdInt = mathjs.std(intervals, 'uncorrected') as number;
-    const cv = meanInt > 0 ? (stdInt / meanInt) : 0;
-    const ent = this.shannonEntropy(intervals);
-    const entFactor = pageVisits.length > 1 ? (1.0 + ent / Math.log(pageVisits.length)) : 1.0;
-    const r = (1 / (1 + cv)) * entFactor;
-    return (isFinite(r) && !isNaN(r)) ? r : 0.5;
-  }
-
-  private shannonEntropy(vals: number[]): number {
-    const sum = vals.reduce((a, b) => a + b, 0);
-    if (sum === 0) return 0;
-    const p = vals.map(x => x / sum);
-    return -p.reduce((acc, x) => (x > 0 ? acc + x * Math.log(x) : acc), 0);
-  }
-
+  /**
+   * Filter out extremely low scores using a logistic shape around topScore
+   * (same approach as your original).
+   */
   private applyRelevanceFilter<T extends { score: number }>(
     scores: T[],
     query: string
@@ -658,27 +917,7 @@ export class AdvancedLocalRanker {
       return prob >= 0.3;
     });
   }
-
-  private updateModelFromClick(clickedPageId: string, displayedIds: string[]) {
-    let updated = false;
-    const clickedFeatures = this.lastDisplayedFeatures[clickedPageId];
-    if (clickedFeatures) {
-      this.model.update(clickedFeatures, 1);
-      updated = true;
-    }
-    for (const pid of displayedIds) {
-      if (pid !== clickedPageId) {
-        const f = this.lastDisplayedFeatures[pid];
-        if (f) {
-          this.model.update(f, 0);
-          updated = true;
-        }
-      }
-    }
-    if (updated) {
-      this.saveModelWeights();
-    }
-  }
 }
 
+// Export a singleton if desired
 export const localRanker = new AdvancedLocalRanker();

@@ -27,18 +27,7 @@ export const COLD_STORAGE_ENDPOINTS = {
   VISITS: '/api/cold-storage/visits',
   SESSIONS: '/api/cold-storage/sessions',
   SEARCH_CLICKS: '/api/cold-storage/search-clicks',
-  SEARCH_QUERIES: '/api/cold-storage/search-queries'
-};
-
-export const CONTENT_ENDPOINTS = {
-  CONTENT: '/api/content'
-};
-
-export const CLUSTERING_ENDPOINTS = {
-  SUGGESTIONS: '/api/clustering/suggestions',
-  SUGGESTIONS_SYNC: '/api/clustering/suggestions_sync',
-  JOB_STATUS: '/api/clustering/job_status',
-  REFRESH: '/api/clustering/refresh'
+  SEARCH_QUERIES: '/api/cold-storage/search-queries',
 };
 
 export const SEARCH_ENDPOINTS = {
@@ -57,13 +46,9 @@ export const STORAGE_KEYS = {
   LAST_SYNC_KEY: 'lastColdStorageSync',
   CIRCUIT_BREAKER_KEY: 'coldStorageSyncCircuitBreaker',
   TELEMETRY_KEY: 'coldStorageSyncTelemetry',
-  CLUSTER_HISTORY_KEY: 'clusterHistory',
-  CLUSTER_STATUS_KEY: 'clusterStatus',
   ACTIVE_JOBS_KEY: 'activeJobs',
   PREFERRED_THEME_KEY: 'preferredTheme'
 };
-
-
 
 // Cold Storage Sync Configuration
 export const COLD_STORAGE_CONFIG = {
@@ -80,15 +65,6 @@ export const JOB_CONFIG = {
   
   // Maximum number of polling attempts before giving up
   MAX_POLLING_ATTEMPTS: 30
-};
-
-// Clustering configuration
-export const CLUSTERING_CONFIG = {
-  // Regular refresh interval for clusters (in minutes)
-  REFRESH_INTERVAL_MINUTES: 15,
-  
-  // Initial delay before first clustering job starts (in milliseconds)
-  INITIAL_DELAY_MS: 15000 // 15 seconds
 };
 
 // URL Filtering Configuration
@@ -183,32 +159,9 @@ export const RANKING_CONFIG = {
   }
 };
 
-// Content Extraction Configuration
-export const USE_FIT_MARKDOWN = true;
-export const QUEUE_CONFIG = {
-  // Maximum number of retries for processing a URL
-  MAX_RETRIES: 3,
-  
-  // Delay between retries (in milliseconds)
-  RETRY_DELAY_MS: 3000,
-  
-  // Maximum time to process a single URL (in milliseconds)
-  PROCESSING_TIMEOUT_MS: 60000,
-
-  // Maximum time to wait for DOM to settle (in milliseconds)
-  DOM_IDLE_TIMEOUT_MS: 7000,
-
-  // How long to wait after last mutation to declare DOM "idle" (in milliseconds)
-  DOM_IDLE_CHECK_DELAY_MS: 500,
-  
-  // Delay after navigation before attempting content extraction (in milliseconds)
-  EXTRACTION_DEBOUNCE_DELAY: 3000
-} as const;
-
 // Search Configuration
 export const SEARCH_CONFIG = {
   // Debounce delay for search inputs (in milliseconds)
-
   SEARCH_DEBOUNCE_MS: 150, // For the refactored components
   
   // Minimum length for a query to trigger search
@@ -218,13 +171,6 @@ export const SEARCH_CONFIG = {
   MAX_HISTORY_RESULTS: 100,
   
   // Maximum number of local results to show
-  MAX_LOCAL_RESULTS: 10,
-  
-  // Maximum number of semantic results to show
-  MAX_SEMANTIC_RESULTS: 10,
-  
-  // Minimum score threshold for semantic search results (0-1)
-  // Results with scores below this value will be filtered out
-  MIN_SEMANTIC_SCORE: 0.5
+  MAX_LOCAL_RESULTS: 10
 } as const;
 

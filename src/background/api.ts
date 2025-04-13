@@ -1,33 +1,24 @@
 /**
  * @file api.ts
  * Exposes a background API (via Comlink) that UI components can call.
- * Content script communication (content extraction and UI commands) uses direct Chrome messaging instead.
+ * Content script communication (UI commands) uses direct Chrome messaging instead.
  */
 
 import { authService } from '../services/authService';
-import { contentService } from '../services/contentService';
-import { clusteringService } from '../services/clusteringService';
 import { searchService } from '../services/searchService';
 import { eventService } from '../services/eventService';
 import preferencesService from '../services/preferencesService';
 import navigationService from '../services/navigationService';
 import uiCommandService from '../services/uiCommandService';
 import { isDatabaseInitialized } from '../db/DatabaseCore';
-import { isWebPage } from '../utils/urlUtils';
-import { QUEUE_CONFIG } from '../config';
 import { pageRepository } from '../db/repositories/PageRepository';
 
-import type { ContentData, ExtractedContent } from '../types';
-import type { SearchOptions } from '../services/searchService';
 import type {
   SystemServiceAPI,
   AuthServiceAPI,
-  ClusteringServiceAPI,
   SearchServiceAPI,
   EventServiceAPI,
   PreferencesServiceAPI,
-  ContentExtractorAPI,
-  ContentServiceAPI,
   ActivityServiceAPI,
   NavigationServiceAPI,
   UICommandServiceAPI,
@@ -36,7 +27,7 @@ import type {
 
 /**
  * The main background API object exposed via Comlink. Content scripts interact with
- * these methods to perform authentication, content extraction, clustering, search,
+ * these methods to perform authentication, search,
  * event tracking, preference management, navigation, and UI command operations.
  */
 export const backgroundApi = {
@@ -72,24 +63,6 @@ export const backgroundApi = {
   },
 
   /**
-   * Clustering-related methods.
-   */
-  clusters: {
-    /**
-     * Gets cluster suggestions.
-     * @param {object} [options] Optional config for force refresh or limiting suggestion count.
-     * @returns {Promise<any>} The cluster suggestions.
-     */
-    getClusterSuggestions: (options?: { forceRefresh?: boolean; count?: number }) =>
-      clusteringService.getClusterSuggestions(options),
-
-    /**
-     * Triggers the clustering process.
-     */
-    triggerClustering: () => clusteringService.triggerClustering(),
-  },
-
-  /**
    * Search-related methods.
    */
   search: {
@@ -99,22 +72,6 @@ export const backgroundApi = {
      * @returns {Promise<any>} The search results.
      */
     searchLocal: (query: string) => searchService.searchLocal(query),
-
-    /**
-     * Perform a semantic search via the backend API.
-     * @param {string} query The search term.
-     * @param {SearchOptions} [options] Additional search options.
-     * @returns {Promise<any>} The search results.
-     */
-    searchSemantic: (query: string, options?: SearchOptions) => searchService.searchSemantic(query, options),
-
-    /**
-     * Perform both local and semantic search in parallel.
-     * @param {string} query The search term.
-     * @param {SearchOptions} [options] Additional search options.
-     * @returns {Promise<any>} The combined or aggregated search results.
-     */
-    searchHybrid: (query: string, options?: SearchOptions) => searchService.searchHybrid(query, options),
   },
 
   /**
@@ -141,12 +98,12 @@ export const backgroundApi = {
      * Track a user performing a search action.
      * @param {string} query The search term.
      * @param {number} resultCount The number of results returned.
-     * @param {'local' | 'semantic' | 'hybrid'} [searchType='local'] The type of search performed.
+     * @param {'local'} [searchType='local'] The type of search performed.
      */
     trackSearchPerformed: (
       query: string,
       resultCount: number,
-      searchType: 'local' | 'semantic' | 'hybrid' = 'local'
+      searchType: 'local' = 'local'
     ) => eventService.trackSearchPerformed(query, resultCount, searchType),
 
     /**
@@ -185,140 +142,6 @@ export const backgroundApi = {
      * @param {'light' | 'dark' | 'system'} theme The theme to set.
      */
     setTheme: (theme: 'light' | 'dark' | 'system') => preferencesService.setTheme(theme),
-  },
-
-  /**
-   * Content-related methods (extract, send, ping).
-   */
-  content: {
-    /**
-     * Extracts content from a specified tab. Returns null on failure.
-     * @param {number} tabId The ID of the Chrome tab.
-     * @returns {Promise<ExtractedContent|null>} The extracted content or null if extraction fails.
-     */
-    async extractContent(tabId: number): Promise<ExtractedContent | null> {
-      try {
-        let tab;
-        try {
-          tab = await chrome.tabs.get(tabId);
-          if (!tab.url || !isWebPage(tab.url)) {
-            console.log(`[BackgroundAPI] Tab ${tabId} is not a regular web page, skipping extraction`);
-            return null;
-          }
-        } catch (err) {
-          console.log(`[BackgroundAPI] Tab ${tabId} does not exist or cannot be accessed`);
-          return null;
-        }
-
-        // Send extraction request directly without pinging first
-        console.log(`[BackgroundAPI] Sending extraction request to tab ${tabId}`);
-        const response = await new Promise<any>((resolve) => {
-          chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' }, (result) => {
-            if (chrome.runtime.lastError) {
-              console.error(`[BackgroundAPI] Error sending message to tab ${tabId}:`, chrome.runtime.lastError);
-              resolve({ success: false, error: chrome.runtime.lastError.message });
-              return;
-            }
-            resolve(result);
-          });
-        });
-
-        if (!response || !response.success) {
-          console.error(
-            `[BackgroundAPI] Content extraction failed for tab ${tabId}:`,
-            response?.error || 'Unknown error'
-          );
-          return null;
-        }
-
-        return response.content;
-      } catch (err) {
-        console.error(`[BackgroundAPI] extractContent failed (tab ${tabId}):`, err);
-        return null;
-      }
-    },
-
-    /**
-     * Extracts content from a tab and sends it directly to the backend.
-     * @param {number} tabId The ID of the Chrome tab.
-     * @param {object} contextData Additional context data like pageId, visitId, sessionId.
-     * @returns {Promise<boolean>} True if the operation was successful, false otherwise.
-     */
-    async extractAndSendContent(
-      tabId: number,
-      contextData: {
-        pageId: string;
-        visitId: string;
-        sessionId: string | null;
-      }
-    ): Promise<boolean> {
-      try {
-        console.log(`[BackgroundAPI] Extracting and sending content for tab ${tabId}`);
-        const content = await backgroundApi.content.extractContent(tabId);
-        if (!content) {
-          console.warn(`[BackgroundAPI] Failed to extract content from tab ${tabId}`);
-          return false;
-        }
-
-        // Create content data using normalized URL from extraction
-        const contentData: ContentData = {
-          ...contextData,
-          url: content.url, // Normalized URL (hostname+path)
-          title: content.title,
-          markdown: content.markdown,
-          metadata: content.metadata,
-        };
-
-        return await contentService.sendContent(contentData);
-      } catch (err) {
-        console.error(`[BackgroundAPI] extractAndSendContent failed (tab ${tabId}):`, err);
-        return false;
-      }
-    },
-
-    /**
-     * Sends already extracted content to the backend.
-     * @param {ContentData} content The content data to send.
-     * @returns {Promise<boolean>} True if sending was successful, false otherwise.
-     */
-    async sendContent(content: ContentData): Promise<boolean> {
-      try {
-        return await contentService.sendContent(content);
-      } catch (err) {
-        console.error('[BackgroundAPI] sendContent failed:', err);
-        return false;
-      }
-    },
-
-    /**
-     * Injects the content extractor script into a tab.
-     * @param tabId The ID of the tab to inject the script into
-     * @returns A promise resolving to true if injection was successful
-     */
-    async injectContentExtractor(tabId: number): Promise<boolean> {
-      const scriptPath = 'src/content/contentExtractor.ts';
-
-      try {
-        console.log(`[BackgroundAPI] Injecting content extractor script (${scriptPath}) into tab ${tabId}`);
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: [scriptPath]
-        });
-        console.log(`[BackgroundAPI] Successfully injected content extractor into tab ${tabId}`);
-        return true;
-      } catch (error: any) {
-        if (error.message?.includes('Cannot access') || error.message?.includes('extension context')) {
-          console.warn(`[BackgroundAPI] Cannot inject script into tab ${tabId}: ${error.message}`);
-        } else if (error.message?.includes('No tab with id')) {
-          console.warn(`[BackgroundAPI] Tab ${tabId} not found (closed?).`);
-        } else if (error.message?.includes('Could not load file')) {
-          console.error(`[BackgroundAPI] Check your build output path for ${scriptPath}. Error: ${error.message}`);
-        } else {
-          console.error(`[BackgroundAPI] Failed to inject content extractor into tab ${tabId}:`, error);
-        }
-        return false;
-      }
-    },
   },
 
   /**

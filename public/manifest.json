@@ -15,18 +15,13 @@
     "default_path": "src/pages/sidepanel/sidepanel.html"
   },
   "chrome_url_overrides": {
-    "newtab": "src/pages/newtab/newtab.html"
+    "newtab": "index.html"
   },
   "background": {
     "service_worker": "src/background/serviceWorker.ts",
     "type": "module"
   },
   "content_scripts": [
-    {
-      "js": ["src/content/contentExtractor.ts"],
-      "matches": ["<all_urls>"],
-      "run_at": "document_idle"
-    },
     {
       "js": ["src/content/activityTracker.ts"],
       "matches": ["<all_urls>"]

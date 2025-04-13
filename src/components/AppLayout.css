@@ -1,0 +1,136 @@
+/* AppLayout.css */
+
+:root {
+  /* Layout dimensions */
+  --sidebar-width: 260px;
+  --sidebar-collapsed-width: 40px;
+  --sidebar-mobile-width: 20px;
+  --content-max-width: 1200px;
+  --header-height: 6vh;
+  
+  /* Spacing */
+  --content-padding-desktop: 40px;
+  --content-padding-tablet: 30px;
+  --content-padding-mobile: 20px;
+  
+  /* Transitions */
+  --content-transition: all 0.3s ease;
+  
+  /* Breakpoints */
+  --breakpoint-tablet: 1024px;
+  --breakpoint-mobile: 768px;
+}
+
+/* Main layout grid */
+.app-container {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "sidebar main";
+  min-height: 100vh;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: 'Cabinet Grotesk', system-ui, sans-serif;
+  transition: grid-template-columns var(--content-transition);
+}
+
+/* Remove the pseudo-element */
+.app-container::before {
+  display: none;
+}
+
+.app-container.sidebar-collapsed {
+  grid-template-columns: var(--sidebar-collapsed-width) 1fr;
+}
+
+/* Create a right side container for header and content */
+.main-container {
+  grid-area: main;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-areas: 
+    "header"
+    "content";
+  min-height: 100vh;
+}
+
+/* App header */
+.app-header {
+  grid-area: header;
+  background-color: var(--bg-color);
+  padding: 8px 16px;
+  display: flex;
+  justify-content: flex-end;
+  z-index: 10;
+}
+
+/* Google services */
+.google-services {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  margin-right: 16px;
+}
+
+.service-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--text-color);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.service-icon:hover {
+  background-color: rgba(var(--text-color-rgb), 0.1);
+}
+
+.service-icon span {
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+/* Main content area */
+.main-content {
+  grid-area: content;
+  padding: 2.5vh 0 0 0;
+  transition: var(--content-transition);
+  overflow-y: auto;
+}
+
+/* Content container */
+.content-container {
+  max-width: var(--content-max-width);
+  width: 100%;
+  margin: 0 auto;
+  height: 100%;
+}
+
+/* Tablet breakpoint */
+@media (max-width: var(--breakpoint-tablet)) {
+  .app-container {
+    grid-template-columns: var(--sidebar-collapsed-width) 1fr;
+  }
+  
+  .app-container.sidebar-expanded {
+    grid-template-columns: var(--sidebar-width) 1fr;
+  }
+  
+  .main-content {
+    padding: 2.5vh 0 0 0;
+  }
+}
+
+/* Mobile breakpoint */
+@media (max-width: var(--breakpoint-mobile)) {
+  .app-container {
+    grid-template-columns: var(--sidebar-mobile-width) 1fr;
+  }
+  
+  .main-content {
+    padding: 2.5vh 0 0 0;
+  }
+}

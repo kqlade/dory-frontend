@@ -221,6 +221,17 @@ html.dark-mode .google-sign-in-button {
   border: 1px solid var(--border-color);
 }
 
+/* Specific hover/focus styles for dark mode to override base dark mode styles */
+html.dark-mode .google-sign-in-button:hover {
+  border-color: var(--border-hover-color); /* Use the hover color defined in dark mode */
+  box-shadow: 0 4px 8px var(--shadow-color); /* Use the shadow color defined in dark mode */
+}
+
+html.dark-mode .google-sign-in-button:focus {
+  border-color: var(--border-focus-color); /* Use the focus color defined in dark mode */
+  box-shadow: 0 4px 8px var(--shadow-focus-color); /* Use the focus shadow color defined in dark mode */
+}
+
 /* Responsive adjustments for cluster positioning */
 @media (max-width: 768px) {
   .clusters-wrapper {

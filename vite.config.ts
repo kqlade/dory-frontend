@@ -22,9 +22,21 @@ export default defineConfig({
     sourcemap: true,
     minify: true,
     rollupOptions: {
+      input: {
+        // Explicitly map the HTML page from the manifest to its JS entry point
+        // Even though index.html doesn't exist physically, this tells Vite
+        // which JS file to associate with it when the CRX plugin processes it.
+        'index.html': path.resolve(__dirname, 'main.tsx'),
+        // Add mappings for other HTML pages defined in your manifest if needed:
+        // 'src/pages/sidepanel/sidepanel.html': path.resolve(__dirname, 'src/pages/sidepanel/index.tsx'), 
+        // 'src/pages/options/options.html': path.resolve(__dirname, 'src/pages/options/index.tsx'),
+      },
       output: {
         // Standard naming patterns
         entryFileNames: '[name].js',
+        // Ensure consistent chunk naming if needed
+        // chunkFileNames: 'assets/[name]-[hash].js',
+        // assetFileNames: 'assets/[name]-[hash].[ext]',
       }
     }
   },

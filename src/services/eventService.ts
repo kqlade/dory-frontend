@@ -102,7 +102,7 @@ export async function trackSearchClick(
 export async function trackSearchPerformed(
   query: string,
   resultCount: number,
-  searchType: 'local' | 'semantic' | 'hybrid' = 'local'
+  searchType: 'local' = 'local'
 ): Promise<{ searchSessionId: string }> {
   
   // Generate a unique search session ID regardless of logging success

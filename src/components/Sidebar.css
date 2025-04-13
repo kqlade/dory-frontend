@@ -1,0 +1,351 @@
+/* Sidebar.css – Refactored structure */
+
+:root {
+  /* Sidebar dimensions */
+  --sidebar-width: 260px;
+  --sidebar-border-radius: 12px;
+  
+  /* Spacing variables */
+  --sidebar-spacing-sm: 8px;
+  --sidebar-spacing-md: 12px;
+  --sidebar-spacing-lg: 24px;
+  
+  /* Breakpoints */
+  --breakpoint-tablet: 1024px;
+  --breakpoint-mobile: 768px;
+}
+
+/* Main sidebar structure */
+.sidebar {
+  position: relative;
+  width: var(--sidebar-width);
+  height: 75vh;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  border-right: none;
+  transition: width 0.3s ease;
+  overflow: hidden;
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+  align-self: center;
+  margin: 0;
+}
+
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
+}
+
+/* Hide navigation content when sidebar is collapsed */
+.sidebar.collapsed .sidebar-nav,
+.sidebar.collapsed .sidebar-footer {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Inner content container */
+.sidebar-content {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border-radius: 0 var(--sidebar-border-radius) var(--sidebar-border-radius) 0;
+  border-top: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.sidebar-content:hover {
+  border-color: var(--border-hover-color);
+  box-shadow: 0 0 8px 0 var(--shadow-color);
+}
+
+html.dark-mode .sidebar-content:hover {
+  border-color: var(--border-hover-color);
+  box-shadow: 0 0 8px 0 var(--shadow-color);
+}
+
+/* Header area */
+.sidebar-header {
+  position: relative;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Navigation area */
+.sidebar-nav {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 0 var(--sidebar-spacing-md);
+}
+
+/* Footer area */
+.sidebar-footer {
+  padding: var(--sidebar-spacing-md);
+  margin-top: auto;
+}
+
+/* Sections */
+.sidebar-section {
+  margin-bottom: var(--sidebar-spacing-lg);
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Cabinet Grotesk', sans-serif;
+  color: var(--text-secondary);
+  margin: 0 0 var(--sidebar-spacing-sm) 0;
+  padding: 6px var(--sidebar-spacing-md);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+/* Section content list */
+.sidebar-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* Individual items */
+.sidebar-item {
+  margin-bottom: 2px;
+  list-style-type: none;
+}
+
+/* Sidebar links */
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sidebar-spacing-md);
+  padding: 10px var(--sidebar-spacing-md);
+  border-radius: 4px;
+  color: var(--text-color);
+  text-decoration: none;
+  position: relative;
+  transition: background-color 0.2s;
+  cursor: pointer;
+  font-family: 'Cabinet Grotesk', sans-serif;
+  font-weight: 500;
+}
+
+.sidebar-link:hover {
+  background-color: var(--hover-color, rgba(255, 255, 255, 0.05));
+}
+
+.sidebar-link.active {
+  background-color: var(--hover-color, rgba(255, 255, 255, 0.05));
+  font-weight: 600;
+}
+
+/* Add dark mode specific hover states */
+html.dark-mode .sidebar-link:hover {
+  background-color: rgba(230, 230, 230, 1); /* 90% white in dark mode */
+  color: var(--bg-color); /* Background color (black in dark mode) for text */
+}
+
+html.dark-mode .sidebar-link.active {
+  background-color: rgba(230, 230, 230, 1); /* 90% white in dark mode */
+  color: var(--bg-color); /* Background color (black in dark mode) for text */
+  font-weight: 600;
+}
+
+/* Ensure icon colors also change on dark mode hover */
+html.dark-mode .sidebar-link:hover svg,
+html.dark-mode .sidebar-link.active svg {
+  color: var(--bg-color); /* Switch to background color for contrast */
+}
+
+/* Icons within links */
+.sidebar-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.sidebar-item-text {
+  display: flex;
+  align-items: center;
+  line-height: 1.2;
+}
+
+.sidebar-link svg {
+  color: var(--text-secondary);
+  stroke-width: 2px;
+  flex-shrink: 0;
+}
+
+.sidebar-link:hover svg {
+  color: var(--text-color);
+}
+
+/* Notification counter */
+.notification-count {
+  background-color: var(--accent-color, #0078d7);
+  color: white;
+  border-radius: 50%;
+  min-width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  position: absolute;
+  right: var(--sidebar-spacing-md);
+}
+
+/* Nested items */
+.sidebar-nested-list {
+  list-style: none;
+  padding: 0;
+  margin: 3px 0 6px var(--sidebar-spacing-md);
+}
+
+.sidebar-nested-list .sidebar-link {
+  padding: 5px var(--sidebar-spacing-md);
+  font-size: 13.5px;
+  margin-bottom: 3px;
+}
+
+/* Corner icons for nested items */
+.corner-icon {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+/* Action buttons */
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sidebar-action-button {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0;
+}
+
+.sidebar-action-button:hover {
+  background-color: var(--hover-color);
+  color: var(--text-color);
+}
+
+/* Collapse button */
+.sidebar-collapse-button {
+  position: absolute;
+  top: 13px;
+  right: 9px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10;
+  opacity: 0.7;
+  transition: transform 0.3s ease;
+}
+
+.sidebar.collapsed .sidebar-collapse-button {
+  transform: rotate(180deg);
+}
+
+.sidebar-collapse-button:hover {
+  opacity: 1;
+}
+
+.sidebar-collapse-button svg {
+  stroke-width: 2px;
+}
+
+.sidebar-collapse-button:hover svg {
+  color: var(--text-color);
+}
+
+/* Settings icon */
+.settings-icon-link {
+  position: absolute;
+  bottom: 13px;
+  right: 9px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s ease, color 0.2s ease;
+  z-index: 100;
+  pointer-events: auto; /* Ensure clickability */
+  background-color: transparent;
+}
+
+.sidebar.collapsed .settings-icon-link {
+  visibility: visible; /* Ensure visibility */
+  pointer-events: auto; /* Ensure clickability */
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+}
+
+.settings-icon-link:hover {
+  opacity: 1;
+}
+
+.settings-icon-link svg {
+  color: var(--text-secondary);
+  stroke-width: 2px;
+  width: 20px;
+  height: 20px;
+}
+
+.settings-icon-link:hover svg {
+  color: var(--text-color);
+}
+
+/* Responsive adjustments for tablet */
+@media (max-width: 1024px) {
+  .sidebar {
+    width: var(--sidebar-collapsed-width);
+  }
+  
+  .sidebar.expanded {
+    width: var(--sidebar-width);
+  }
+}
+
+/* Responsive adjustments for mobile */
+@media (max-width: 768px) {
+  .sidebar {
+    width: var(--sidebar-mobile-width);
+  }
+  
+  .sidebar.expanded {
+    width: var(--sidebar-width);
+  }
+}

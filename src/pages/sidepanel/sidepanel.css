@@ -96,6 +96,19 @@ body.dark-mode .logout-button {
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.3));
 }
 
+/* Specific hover/focus styles for dark mode to override base dark mode styles */
+body.dark-mode .google-sign-in-button:hover,
+body.dark-mode .logout-button:hover {
+  border-color: var(--border-hover-color, rgba(255, 255, 255, 0.5)); /* Use the hover color, fallback if needed */
+  box-shadow: 0 4px 8px var(--shadow-color, rgba(255, 255, 255, 0.1)); /* Use the shadow color, fallback if needed */
+}
+
+body.dark-mode .google-sign-in-button:focus,
+body.dark-mode .logout-button:focus {
+  border-color: var(--border-focus-color, rgba(255, 255, 255, 0.8)); /* Use the focus color, fallback if needed */
+  box-shadow: 0 4px 8px var(--shadow-focus-color, rgba(255, 255, 255, 0.15)); /* Use the focus shadow color, fallback if needed */
+}
+
 /* Only for the login button - separate styling */
 .login-button {
   background-color: var(--dory-button-bg);
