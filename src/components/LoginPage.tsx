@@ -1,6 +1,6 @@
 import React from 'react';
 import ThemeToggle from './ThemeToggle'; 
-import { useAuth } from '../hooks/useBackgroundAuth'; 
+import { useAuth } from '../services/AuthContext'; 
 import '../components/LoginPage.css'; 
 
 const LoginPage: React.FC = () => {
@@ -8,29 +8,37 @@ const LoginPage: React.FC = () => {
   const { login } = useAuth();
 
   return (
-    <div className="newtab-container"> {/* Use existing container class */} 
-      <div className="dory-container">
-        <div className="dory-text">
-          Dynamic Online Recall for You
+    <div className="app-container">
+      <header className="app-header">
+        {/* Empty header to match home page structure */}
+      </header>
+      
+      <main className="main-content">
+        <div className="content-container login-content">
+          <div className="dory-container">
+            <div className="dory-text">
+              Dynamic Online Recall for You
+            </div>
+          </div>
+          <div className="google-button-container">
+            <button
+              className="google-sign-in-button"
+              onClick={() => {
+                const clickId = Math.random();
+                console.log(`[LoginPage] onClick triggered. ID: ${clickId}`);
+                console.log('[LoginPage] Sign in button clicked');
+                login();
+              }}
+            >
+              Sign in with Google
+            </button>
+          </div>
         </div>
-      </div>
-      {/* Consider a more semantic class name if this only holds the button */}
-      <div className="search-bar-wrapper">
-        <div className="google-button-container">
-          <button
-            className="google-sign-in-button"
-            onClick={() => {
-              const clickId = Math.random();
-              console.log(`[LoginPage] onClick triggered. ID: ${clickId}`);
-              console.log('[LoginPage] Sign in button clicked');
-              login();
-            }}
-          >
-            Sign in with Google
-          </button>
-        </div>
-      </div>
-      <ThemeToggle /> {/* Include the ThemeToggle */} 
+      </main>
+      
+      <footer className="app-footer">
+        <ThemeToggle />
+      </footer>
     </div>
   );
 };

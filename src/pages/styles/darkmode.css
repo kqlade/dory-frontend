@@ -1,7 +1,7 @@
 /* Dark mode variables for the app section */
 :root {
   /* Common variables */
-  --background-color: #fafafa;
+  --background-color: #ffffff;  /* Changed from #fafafa to #ffffff (pure white) */
   --text-color: #202124;       /* Google's Material primary text color */
   --text-secondary: #5f6368;   /* Muted text for subheaders, labels */
   --text-disabled: #9e9e9e;    /* Disabled/inactive text */
@@ -17,7 +17,7 @@
 
 html.dark-mode {
   /* Common variables */
-  --background-color: #202124;
+  --background-color: #000000;  /* Changed to true black (#000000) from dark gray (#202124) */
   --text-color: #e8eaed;        /* Google's Material light-on-dark text */
   --text-secondary: #9aa0a6;    /* Muted text for dark mode */
   --text-disabled: #5f6368;     /* Disabled text for dark mode */

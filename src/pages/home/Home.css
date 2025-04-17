@@ -2,9 +2,13 @@
 
 /* Page container */
 .page {
-  width: 100%;
-  padding-top: 0;
-  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  /* Let events pass through to canvas behind, unless a specific child re-enables them */
+  pointer-events: none; 
+  position: relative; /* Needed for z-index stacking */
+  z-index: 1; /* Position above the canvas-container */
 }
 
 /* Page header */
@@ -12,6 +16,8 @@
   margin-top: 0;
   margin-bottom: 40px;
   text-align: center;
+  position: relative;
+  z-index: 10;
 }
 
 /* Header title */
@@ -37,26 +43,97 @@
 
 /* Main content area */
 .page-content {
-  width: 100%;
+  flex-grow: 1;
+  /* This content area should not block events unless it has specific clickable items */
+  pointer-events: none; 
+  z-index: 1; /* Same level as .page */
 }
 
 /* Search bar wrapper - positioned from the top of viewport */
+.search-bar-flex-container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start; /* Align to top */
+  flex-grow: 1; 
+  padding-top: 43vh; /* Increased from 43vh to move it down */
+  width: 100%;
+  /* This container itself shouldn't block events */
+  pointer-events: none; 
+  z-index: 2; /* Ensure it's above .page, below specific UI */
+}
+
 .home-search-wrapper {
-  position: absolute;
-  top: 49vh; /* Positioned from top, equivalent to previous 33vh from bottom */
-  left: 50%;
-  transform: translateX(-50%);
-  width: 50%; /* Width as percentage of viewport */
-  max-width: 800px; /* Maximum width to prevent excessive stretching on large screens */
-  z-index: 10; /* Ensure it appears above other content */
+  /* Re-enable pointer events for the wrapper containing the actual input/buttons */
+  pointer-events: auto; 
+  width: 40%; /* Reverted back to 40% */
+  max-width: 640px; /* Reverted max-width */
+  z-index: 3; /* Above the flex container */
+}
+
+.ball-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80px;
+  margin: 0 auto;
 }
 
 /* Helper text for keyboard shortcut */
 .shortcut-helper-text {
-  text-align: center;
+  text-align: right;
   font-size: 14px;
   color: var(--text-secondary);
   margin-top: 12px;
   opacity: 0.8;
   font-style: italic;
+}
+
+/* Canvas Container */
+.canvas-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0; /* Behind everything else */
+  pointer-events: auto; /* Allows the canvas/R3F to receive events */
+}
+
+/* Ensure specific clickable content *within* page-content re-enables events */
+.page-content button,
+.page-content a,
+.page-content input,
+.page-content select,
+.page-content textarea {
+  pointer-events: auto;
+}
+
+/* drag-feedback */
+body.dragging .sidebar {
+  width: var(--sidebar-collapsed-width);
+}
+body.dragging .app-header,
+body.dragging .google-services,
+body.dragging .home-search-wrapper {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+body:not(.dragging) .app-header,
+body:not(.dragging) .google-services,
+body:not(.dragging) .home-search-wrapper {
+  opacity: 1;
+  transition: opacity 0.35s ease;
+}
+
+.sidebar {
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.dragging .sidebar-nav,
+body.dragging .sidebar-footer {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
 }

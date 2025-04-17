@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { useAuth } from '../../hooks/useBackgroundAuth';
+import { useAuth } from '../../services/AuthContext';
 import useBackgroundPreferences from '../../hooks/useBackgroundPreferences';
 
 export default function SidePanel() {

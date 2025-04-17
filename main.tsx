@@ -3,8 +3,8 @@ import ReactDOM from 'react-dom/client';
 // Use HashRouter for extension contexts
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'; 
 
-import './src/pages/styles/app.css';
-import './src/pages/styles/darkmode.css';
+import './src/pages/styles/global.css';
+// darkmode.css is no longer needed as it's consolidated into theme.css, which is imported in global.css
 
 // Import Layout Components
 import AppLayout from './src/components/AppLayout';
@@ -13,9 +13,23 @@ import AppLayout from './src/components/AppLayout';
 import AppHome from './src/pages/home/Home'; 
 
 // Import utility and auth components
-import { useAuth } from './src/hooks/useBackgroundAuth'; 
+import { AuthProvider, useAuth } from './src/services/AuthContext';
 import LoginPage from './src/components/LoginPage'; 
 import LoadingSpinner from './src/components/LoadingSpinner';
+import { STORAGE_KEYS } from './src/config';
+import { DragProvider } from './src/context/DragContext';
+
+// Initialize dark mode before React renders
+// This ensures the loading spinner respects the user's theme preference
+try {
+  const storedTheme = localStorage.getItem(STORAGE_KEYS.PREFERRED_THEME_KEY);
+  if (storedTheme === 'dark' || 
+      (!storedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark-mode');
+  }
+} catch (err) {
+  console.error('[DORY] Error applying initial theme:', err);
+}
 
 // If this is a new tab page and not our redirected normal tab, create a new tab and close this one
 // This helps us steal focus from the omnibox when the tab opens
@@ -75,10 +89,13 @@ function AppInitializer() {
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    {/* No AuthProvider needed based on useAuth implementation */}
-    <HashRouter> 
-      <AppInitializer />
-    </HashRouter>
+    <AuthProvider>
+      <DragProvider>
+        <HashRouter>
+          <AppInitializer />
+        </HashRouter>
+      </DragProvider>
+    </AuthProvider>
     {/* <Analytics /> */}
   </React.StrictMode>,
 ); 

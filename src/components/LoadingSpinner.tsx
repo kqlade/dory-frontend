@@ -5,7 +5,7 @@ const LoadingSpinner: React.FC = () => {
   return (
     <div className="loading-container">
       <div className="loading-spinner"></div>
-      <p>Loading...</p>
+      <p className="loading-text">Loading...</p>
     </div>
   );
 };

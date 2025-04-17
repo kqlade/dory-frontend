@@ -6,7 +6,6 @@
   --sidebar-collapsed-width: 40px;
   --sidebar-mobile-width: 20px;
   --content-max-width: 1200px;
-  --header-height: 6vh;
   
   /* Spacing */
   --content-padding-desktop: 40px;
@@ -14,55 +13,134 @@
   --content-padding-mobile: 20px;
   
   /* Transitions */
-  --content-transition: all 0.3s ease;
+  --content-transition: padding-left 0.3s ease;
+  --sidebar-transition: width 0.3s ease;
   
   /* Breakpoints */
   --breakpoint-tablet: 1024px;
   --breakpoint-mobile: 768px;
 }
 
-/* Main layout grid */
+/* Main layout container */
 .app-container {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
-  grid-template-rows: 1fr;
-  grid-template-areas: "sidebar main";
-  min-height: 100vh;
-  background-color: var(--bg-color);
+  grid-template-rows: 12.5vh 75vh 12.5vh;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "header"
+    "main"
+    "footer";
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--background-color);
   color: var(--text-color);
   font-family: 'Cabinet Grotesk', system-ui, sans-serif;
-  transition: grid-template-columns var(--content-transition);
+  position: relative;
+  overflow: hidden;
+  transition: none;
+  /* Allow events to pass through by default */
+  pointer-events: none; 
+  z-index: 1; /* Position above canvas */
 }
 
-/* Remove the pseudo-element */
-.app-container::before {
-  display: none;
+/* Sidebar overlay: fixed, vertically centered, 75vh tall, flush left, overlays content */
+.sidebar {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--sidebar-width);
+  height: 75vh;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  z-index: 10; /* High z-index */
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+  border-radius: 0 var(--sidebar-border-radius) var(--sidebar-border-radius) 0;
+  transition: width 0.3s cubic-bezier(0.4,0,0.2,1), transform 0.3s cubic-bezier(0.4,0,0.2,1);
+  margin: 0;
+  /* The sidebar itself needs pointer events for its content */
+  pointer-events: auto; 
 }
 
-.app-container.sidebar-collapsed {
-  grid-template-columns: var(--sidebar-collapsed-width) 1fr;
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
 }
 
-/* Create a right side container for header and content */
-.main-container {
-  grid-area: main;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  grid-template-areas: 
-    "header"
-    "content";
-  min-height: 100vh;
+/* Ensure .sidebar-content fills the sidebar */
+.sidebar .sidebar-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0 var(--sidebar-border-radius) var(--sidebar-border-radius) 0;
+  border-top: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  background: transparent;
+  overflow: hidden;
+  position: relative;
+  /* Content inside needs events, but container itself doesn't need separate setting */
 }
 
 /* App header */
 .app-header {
   grid-area: header;
-  background-color: var(--bg-color);
-  padding: 8px 16px;
+  padding: 16px var(--content-padding-desktop) 0 var(--content-padding-desktop);
   display: flex;
-  justify-content: flex-end;
-  z-index: 10;
-  padding-right: 20px;
+  justify-content: space-between;
+  align-items: flex-start;
+  z-index: 10; /* High z-index */
+  position: relative;
+  /* Header area allows pass-through, only specific children get events */
+  pointer-events: none; 
+}
+
+.header-left {
+  width: 40px; /* Placeholder for symmetry, adjust as needed */
+  flex-shrink: 0;
+  pointer-events: auto; /* Allow interaction if needed */
+}
+
+/* Header content with greeting */
+.header-content {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 24px; /* 16px (header padding) + 8px (icon padding) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  pointer-events: none; /* Text should not block */
+  z-index: 1;
+}
+
+/* Greeting container */
+.greeting-container {
+  text-align: center;
+}
+
+/* Greeting text */
+.greeting {
+  color: var(--text-color);
+  font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 600;
+  font-size: clamp(1.21rem, 0.88rem + 1.65vw, 2.2rem);
+  letter-spacing: clamp(0.05em, 0.04em + 0.03vw, 0.1em);
+  transition: color 0.3s ease;
+  margin: 0 0 5px 0;
+  white-space: nowrap;
+}
+
+/* Subheader text */
+.subheader {
+  font-size: clamp(0.9rem, 0.8rem + 0.5vw, 1.1rem);
+  color: var(--text-secondary);
+  font-family: 'Cabinet Grotesk', sans-serif;
+  margin: 0;
+  font-weight: 400;
 }
 
 /* Google services */
@@ -70,6 +148,11 @@
   display: flex;
   gap: 24px;
   align-items: center;
+  position: relative;
+  z-index: 2; /* Above header-content */
+  margin-left: auto;
+  /* This container needs pointer events for the icons */
+  pointer-events: auto; 
 }
 
 .service-icon {
@@ -81,65 +164,107 @@
   font-size: 12px;
   padding: 8px;
   border-radius: 4px;
-  transition: background-color 0.2s ease;
+  transition: transform 0.3s ease, background 0.2s, border-color 0.3s;
+  /* Icons themselves are clickable */
+  pointer-events: auto; 
 }
 
-.service-icon:hover {
-  background-color: var(--hover-color);
+.service-icon:hover, .service-icon:focus {
+  transform: scale(1.1);
+  background: var(--hover-color);
+  border-color: var(--border-hover-color);
+  outline: none;
+}
+
+.service-icon:focus {
+  box-shadow: 0 0 0 2px var(--border-focus-color);
 }
 
 .service-icon span {
-  margin-top: 4px;
-  font-weight: 500;
+  display: inline-block;
+  transition: transform 0.3s ease;
+}
+
+.service-icon:hover span, .service-icon:focus span {
+  transform: scale(1.1);
 }
 
 /* Main content area */
 .main-content {
-  grid-area: content;
-  padding: 2.5vh 0 0 0;
-  transition: var(--content-transition);
+  grid-area: main;
   overflow-y: auto;
   display: flex;
   justify-content: center;
+  padding: 0;
+  position: relative;
+  /* Pass-through by default */
+  pointer-events: none; 
 }
 
-/* Content container */
+/* Content container - centers content within the main area */
 .content-container {
   max-width: var(--content-max-width);
-  width: var(--content-max-width);
+  width: 100%;
   height: 100%;
-  /* Position it relative to viewport, not grid cell */
-  position: relative;
-  left: calc(var(--sidebar-width) / -2);
-  transition: left var(--content-transition);
+  margin: 0 auto;
+  padding: var(--content-padding-desktop);
+  /* Pass-through by default, children enable events if needed */
+  pointer-events: none; 
 }
 
-.app-container.sidebar-collapsed .content-container {
-  left: calc(var(--sidebar-collapsed-width) / -2);
+/* Optional Footer Area */
+.app-footer {
+  grid-area: footer;
+  padding: 8px var(--content-padding-desktop);
+  border-top: none;
+  z-index: 10; /* High z-index */
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  /* Allow pass-through, children enable events */
+  pointer-events: none; 
+}
+
+/* Re-enable events for specific clickable elements within footer */
+.app-footer button,
+.app-footer a {
+  pointer-events: auto;
+}
+
+/* Remove the pseudo-element */
+.app-container::before {
+  display: none;
 }
 
 /* Tablet breakpoint */
 @media (max-width: var(--breakpoint-tablet)) {
   .app-container {
-    grid-template-columns: var(--sidebar-collapsed-width) 1fr;
+      padding-left: var(--sidebar-collapsed-width);
   }
-  
   .app-container.sidebar-expanded {
-    grid-template-columns: var(--sidebar-width) 1fr;
+      padding-left: var(--sidebar-width);
   }
-  
-  .main-content {
-    padding: 2.5vh 0 0 0;
+  .content-container {
+    padding: var(--content-padding-tablet);
   }
 }
 
 /* Mobile breakpoint */
 @media (max-width: var(--breakpoint-mobile)) {
   .app-container {
-    grid-template-columns: var(--sidebar-mobile-width) 1fr;
+      padding-left: var(--sidebar-mobile-width);
   }
-  
-  .main-content {
-    padding: 2.5vh 0 0 0;
+   .app-container.sidebar-expanded {
+      padding-left: var(--sidebar-width);
+  }
+  .sidebar {
+    width: var(--sidebar-mobile-width);
+  }
+  .sidebar.expanded {
+     width: var(--sidebar-width);
+  }
+  .content-container {
+    padding: var(--content-padding-mobile);
   }
 }

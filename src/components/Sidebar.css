@@ -4,6 +4,7 @@
   /* Sidebar dimensions */
   --sidebar-width: 260px;
   --sidebar-border-radius: 12px;
+  --sidebar-collapsed-width: 40px;
   
   /* Spacing variables */
   --sidebar-spacing-sm: 8px;
@@ -17,20 +18,22 @@
 
 /* Main sidebar structure */
 .sidebar {
-  position: relative;
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
   width: var(--sidebar-width);
   height: 75vh;
-  background-color: var(--bg-color);
+  background-color: var(--background-color);
   color: var(--text-color);
   border-right: none;
   transition: width 0.3s ease;
   overflow: hidden;
-  grid-area: sidebar;
   display: flex;
   flex-direction: column;
-  z-index: 1;
-  align-self: center;
-  margin: 0;
+  z-index: var(--z-index-sidebar, 10);
+  right: auto;
+  pointer-events: auto;
 }
 
 .sidebar.collapsed {
@@ -50,6 +53,7 @@
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  pointer-events: auto;
 }
 
 .sidebar-content:hover {
@@ -69,15 +73,22 @@ html.dark-mode .sidebar-content:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  pointer-events: none;
 }
 
 /* Navigation and content areas */
 .sidebar-nav,
 .sidebar-footer {
-  transition: opacity 0.2s ease 0.05s, transform 0.2s ease 0.05s;
+  width: 100%;
+  pointer-events: auto;
   opacity: 1;
-  transform: translateX(0);
-  width: var(--sidebar-width);
+  transition: opacity 0s 0.3s;
+}
+
+.sidebar.collapsed .sidebar-nav,
+.sidebar.collapsed .sidebar-footer {
+  opacity: 0;
+  transition: opacity 0s;
 }
 
 /* Navigation specific styles */
@@ -91,13 +102,6 @@ html.dark-mode .sidebar-content:hover {
 .sidebar-footer {
   padding: var(--sidebar-spacing-md);
   margin-top: auto;
-}
-
-.sidebar.collapsed .sidebar-nav,
-.sidebar.collapsed .sidebar-footer {
-  opacity: 0;
-  transform: translateX(-20px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 /* Sections */
@@ -118,6 +122,7 @@ html.dark-mode .sidebar-content:hover {
   cursor: pointer;
   border-radius: 4px;
   transition: background-color 0.2s;
+  pointer-events: auto;
 }
 
 /* Section content list */
@@ -148,6 +153,7 @@ html.dark-mode .sidebar-content:hover {
   font-family: 'Cabinet Grotesk', sans-serif;
   font-weight: 500;
   font-size: 16px;
+  pointer-events: auto;
 }
 
 .sidebar-link:hover {
@@ -174,7 +180,7 @@ html.dark-mode .sidebar-link.active {
 /* Ensure icon colors also change on dark mode hover */
 html.dark-mode .sidebar-link:hover svg,
 html.dark-mode .sidebar-link.active svg {
-  color: var(--text-color); /* Keep the text color instead of switching to bg color */
+  color: var(--text-color);
 }
 
 /* Icons within links */
@@ -185,18 +191,21 @@ html.dark-mode .sidebar-link.active svg {
   width: 22px;
   height: 22px;
   flex-shrink: 0;
+  pointer-events: none;
 }
 
 .sidebar-item-text {
   display: flex;
   align-items: center;
   line-height: 1.2;
+  pointer-events: none;
 }
 
 .sidebar-link svg {
   color: var(--text-secondary);
   stroke-width: 2px;
   flex-shrink: 0;
+  pointer-events: none;
 }
 
 .sidebar-link:hover svg {
@@ -216,6 +225,7 @@ html.dark-mode .sidebar-link.active svg {
   font-size: 12px;
   position: absolute;
   right: var(--sidebar-spacing-md);
+  pointer-events: none;
 }
 
 /* Nested items */
@@ -235,6 +245,7 @@ html.dark-mode .sidebar-link.active svg {
 .corner-icon {
   color: var(--text-secondary);
   opacity: 0.6;
+  pointer-events: none;
 }
 
 /* Action buttons */
@@ -243,6 +254,7 @@ html.dark-mode .sidebar-link.active svg {
   align-items: center;
   gap: 6px;
   margin-left: auto;
+  pointer-events: auto;
 }
 
 .sidebar-action-button {
@@ -257,6 +269,7 @@ html.dark-mode .sidebar-link.active svg {
   cursor: pointer;
   color: var(--text-secondary);
   padding: 0;
+  pointer-events: auto;
 }
 
 .sidebar-action-button:hover {
@@ -280,7 +293,8 @@ html.dark-mode .sidebar-link.active svg {
   cursor: pointer;
   z-index: 10;
   opacity: 0.7;
-  transition: transform 0.3s ease;
+  transition: transform 0.1s ease;
+  pointer-events: auto;
 }
 
 .sidebar.collapsed .sidebar-collapse-button {
@@ -293,6 +307,7 @@ html.dark-mode .sidebar-link.active svg {
 
 .sidebar-collapse-button svg {
   stroke-width: 2px;
+  pointer-events: none;
 }
 
 .sidebar-collapse-button:hover svg {
@@ -311,14 +326,14 @@ html.dark-mode .sidebar-link.active svg {
   justify-content: center;
   opacity: 0.7;
   transition: opacity 0.2s ease, color 0.2s ease;
-  z-index: 100;
-  pointer-events: auto; /* Ensure clickability */
+  z-index: 11;
+  pointer-events: auto;
   background-color: transparent;
 }
 
 .sidebar.collapsed .settings-icon-link {
-  visibility: visible; /* Ensure visibility */
-  pointer-events: auto; /* Ensure clickability */
+  visibility: visible;
+  pointer-events: auto;
   background-color: rgba(255, 255, 255, 0.05);
   border-radius: 50%;
 }
@@ -332,6 +347,7 @@ html.dark-mode .sidebar-link.active svg {
   stroke-width: 2px;
   width: 20px;
   height: 20px;
+  pointer-events: none;
 }
 
 .settings-icon-link:hover svg {

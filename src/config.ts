@@ -174,3 +174,19 @@ export const SEARCH_CONFIG = {
   MAX_LOCAL_RESULTS: 10
 } as const;
 
+// Ball and Connection Configuration
+export const BALL_CONFIG = {
+  ANIMATION_DURATION: 0.4, // seconds
+  HORIZONTAL_SEPARATION: 3, // world units
+  SIDEBAR_SNAP_MARGIN: 8, // px
+  SEARCH_SNAP_MARGIN: 16, // px
+  SNAP_MS: 200, // ms
+  NODE_RADIUS: 0.3,
+  ANCHOR_RADIUS: 0.5,
+  SPRING: {
+    tension: 240,
+    friction: 9,
+  },
+  BRAIN_NODE_COUNT: 12
+};
+

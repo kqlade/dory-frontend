@@ -1,0 +1,99 @@
+{
+    "concept": {
+      "conceptId": "concept_railway_settings",
+      "userId": "67e9a9db2082ad28e1a34518",
+      "label": "Railway Project Settings",
+      "description": "This cluster focuses on Railway app configuration settings and database connections",
+      "confidence": 0.85,
+      "createdAt": 1744590151725,
+      "updatedAt": 1744590151725,
+      "pageCount": 3,
+      "parentConceptId": null,
+      "lastActivated": 1744600000000,
+      "pages": [
+        {
+          "pageId": "page_railway_project_dashboard",
+          "title": "Project Dashboard | My Cool App | Railway",
+          "url": "https://railway.app/project/abc-123/dashboard",
+          "domain": "railway.app",
+          "visitCount": 15,
+          "totalActiveTime": 450.2,
+          "totalDuration": 520.5,
+          "firstVisit": "2023-10-15T10:20:30Z",
+          "lastVisit": "2023-10-28T14:25:45Z",
+          "confidence": 0.92,
+          "assignedAt": "2023-10-27T10:01:00Z"
+        },
+        {
+          "pageId": "page_railway_service_settings",
+          "title": "Service Settings | My Cool App | Railway",
+          "url": "https://railway.app/project/abc-123/service/def-456/settings",
+          "domain": "railway.app",
+          "visitCount": 10,
+          "totalActiveTime": 320.5,
+          "totalDuration": 380.0,
+          "firstVisit": "2023-10-16T11:30:22Z",
+          "lastVisit": "2023-10-28T14:10:30Z",
+          "confidence": 0.88,
+          "assignedAt": "2023-10-27T10:05:00Z"
+        },
+        {
+          "pageId": "page_railway_db_connect",
+          "title": "Database Connection | My Cool App | Railway",
+          "url": "https://railway.app/project/abc-123/plugin/postgresql/ghi-789",
+          "domain": "railway.app",
+          "visitCount": 8,
+          "totalActiveTime": 280.3,
+          "totalDuration": 340.8,
+          "firstVisit": "2023-10-17T09:45:15Z",
+          "lastVisit": "2023-10-28T15:05:20Z",
+          "confidence": 0.75,
+          "assignedAt": "2023-10-27T10:10:00Z"
+        }
+      ]
+    },
+    "relationships": [
+      {
+        "source": "page_railway_project_dashboard",
+        "target": "page_railway_service_settings",
+        "type": "TRANSITIONS_TO",
+        "properties": {
+          "transition_count": 8,
+          "transition_time_ms": 2500,
+          "transition_timestamp": "2023-10-28T13:40:12Z",
+          "src_active_time": 55.2,
+          "dst_active_time": 75.6
+        }
+      },
+      {
+        "source": "page_railway_service_settings",
+        "target": "page_railway_db_connect",
+        "type": "TRANSITIONS_TO",
+        "properties": {
+          "transition_count": 6,
+          "transition_time_ms": 1800,
+          "transition_timestamp": "2023-10-28T14:15:30Z",
+          "src_active_time": 45.8,
+          "dst_active_time": 68.2
+        }
+      },
+      {
+        "source": "page_railway_db_connect",
+        "target": "page_railway_project_dashboard",
+        "type": "CO_OCCURRING",
+        "properties": {
+          "occurrences": 5,
+          "weight": 0.85,
+          "window_ms": 300000,
+          "firstOccurrence": "2023-10-15T10:20:30Z",
+          "lastOccurrence": "2023-10-28T14:25:45Z"
+        }
+      }
+    ],
+    "metrics": {
+      "totalVisitCount": 33,
+      "averageConfidence": 0.85,
+      "mostRecentVisit": "2023-10-28T15:05:20Z",
+      "mostVisitedPage": "page_railway_project_dashboard"
+    }
+  }

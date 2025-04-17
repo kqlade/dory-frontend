@@ -14,6 +14,8 @@
     position: relative; /* to contain absolutely positioned elements if needed */
     box-sizing: border-box; /* Ensure padding is included in width calculation */
     text-align: left; /* Explicit text alignment for input */
+    z-index: var(--z-index-search);
+    pointer-events: auto; /* Input always needs to be clickable */
   }
   
   /* Hover & focus states */
@@ -24,6 +26,7 @@
   .search-container:focus-within {
     border-color: var(--border-focus-color);
     box-shadow: 0 0 25px var(--shadow-focus-color);
+    pointer-events: auto; /* Become interactive when focused */
   }
   
   /* The top bar with the icon + input + spinner */
@@ -70,6 +73,7 @@
     padding: 0;
     margin: 0;
     outline: none;
+    pointer-events: auto; /* Input always needs to be clickable */
   }
   .search-input::placeholder {
     color: var(--text-color);

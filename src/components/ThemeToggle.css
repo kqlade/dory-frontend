@@ -1,9 +1,4 @@
-/* src/pages/newtab/ThemeToggle.css */
-
 .theme-toggle {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
     width: 40px;
     height: 40px;
     border-radius: 50%;
@@ -13,19 +8,18 @@
     border: 1px solid var(--border-color);
     background: transparent;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: transform 0.3s ease, border-color 0.3s;
     padding: 0;
-    z-index: 1000;
+    position: relative;
+    z-index: 11; /* Always above canvas & wobbling balls */
     color: var(--text-color);
   }
   
-  /* Hover state */
   .theme-toggle:hover {
     transform: scale(1.1);
-    border-color: var(--border-focus-color);
+    border-color: var(--border-hover-color);
   }
   
-  /* Focus state */
   .theme-toggle:focus {
     outline: none;
     box-shadow: 0 0 0 2px var(--border-focus-color);

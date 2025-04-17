@@ -13,14 +13,10 @@ export * from './auth';
 // Export database-related types
 export * from './database';
 
-// Export content-related types - removed
-// export * from './content';
 
 // Export search-related types
 export * from './search';
 
-// Export clustering-related types - removed
-// export * from './clustering';
 
 // Export job manager-related types
 export * from './jobManager';
@@ -30,3 +26,6 @@ export * from './ui';
 
 // Export hooks types
 export * from './centralTypes';
+
+// Export graph-related types
+export * from './graph';

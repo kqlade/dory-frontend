@@ -47,7 +47,7 @@ html.dark-mode {
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--bg-color);
+  background-color: var(--background-color);
   color: var(--text-color);
   width: 100vw;
   height: 100vh;
@@ -56,61 +56,21 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Container for the entire NewTab page */
-.newtab-container {
-  width: 100%;
-  height: 100vh;
+/* Login-specific content container */
+.login-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  padding-top: 32.5vh; /* Keep initial vertical spacing */
+  justify-content: center;
+  height: 100%;
 }
 
-/* DORY container & text */
+/* DORY container & text - updated to work in grid */
 .dory-container {
   width: 600px;
   max-width: 90%;
   text-align: center;
-  margin-bottom: 24px;
-  box-sizing: border-box;
-}
-
-/* Search section containing search bar and helper text */
-.search-section {
-  width: 600px;
-  max-width: 90%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: 8px;
-  box-sizing: border-box;
-}
-
-/* Wrapper for the search bar */
-.search-bar-wrapper {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-/* Helper text for keyboard shortcut */
-.shortcut-helper-text {
-  width: 100%;
-  text-align: right; /* Right-aligned as requested */
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  opacity: 0.7;
-  font-weight: 400;
-  margin-top: 8px;
-  box-sizing: border-box;
-  pointer-events: none; /* Ensure it doesn't interfere with clicks */
-  padding-right: 16px; /* Add some right padding to match the search bar's internal padding */
-}
-
-/* Wrapper for the clusters */
-.clusters-wrapper {
-  width: 600px; /* Same width as search bar */
-  max-width: 90%;
+  margin-bottom: 40px;
   box-sizing: border-box;
 }
 
@@ -119,67 +79,20 @@ body {
   color: var(--dory-text-color);
   font-family: 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-weight: 500;
-  font-size: 1.1rem;
-  letter-spacing: 0.05em;
+  font-size: 1.7rem;
+  letter-spacing: 0.1em;
   transition: color 0.3s ease;
   margin: 0 auto;
   white-space: nowrap;
 }
 
-/* Media queries for responsive font sizing */
-@media (min-width: 480px) {
-  .dory-text {
-    font-size: 1.4rem;
-    letter-spacing: 0.075em;
-  }
-}
-
-@media (min-width: 768px) {
-  .dory-text {
-    font-size: 1.7rem;
-    letter-spacing: 0.1em;
-  }
-}
-
-@media (min-width: 1024px) {
-  .dory-text {
-    font-size: 2rem;
-  }
-}
-
-/* Removed any old .search-container or .results-list styling,
-   because those are now in NewTabSearchBar.css */
-
-/* The fixed footer or theme toggle is still allowed. */
-.newtab-footer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  padding: 16px;
-}
-
-/* Loading indicator */
-.loading-indicator {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  position: absolute;
-  left: 50%;
-  top: 42vh;
-  transform: translateX(-50%);
-  width: 600px;
-  max-width: 90%;
-}
-
-/* Google button container */
+/* Google button container - updated to work in grid */
 .google-button-container {
   display: flex;
   justify-content: center;
   align-items: center;
   width: 100%;
+  margin-top: 20px;
 }
 
 /* Custom Google Sign In Button */
@@ -202,6 +115,8 @@ body {
   padding: 0 16px;
   box-shadow: none;
   margin: 0 auto; /* Add auto margins to help with centering */
+  /* Explicitly enable pointer events for this button */
+  pointer-events: auto; 
 }
 
 .google-sign-in-button:hover {
@@ -232,23 +147,23 @@ html.dark-mode .google-sign-in-button:focus {
   box-shadow: 0 4px 8px var(--shadow-focus-color); /* Use the focus shadow color defined in dark mode */
 }
 
-/* Responsive adjustments for cluster positioning */
-@media (max-width: 768px) {
-  .clusters-wrapper {
-    top: 50vh; /* Reduced from 52vh to maintain consistent spacing */
+/* Media queries for responsive font sizing - keep these */
+@media (min-width: 480px) {
+  .dory-text {
+    font-size: 1.4rem;
+    letter-spacing: 0.075em;
   }
 }
 
-@media (max-width: 480px) {
-  .dory-container {
-    top: 20vh;
+@media (min-width: 768px) {
+  .dory-text {
+    font-size: 1.7rem;
+    letter-spacing: 0.1em;
   }
-  
-  .search-bar-wrapper {
-    top: 30vh;
-  }
-  
-  .clusters-wrapper {
-    top: 38vh; /* Reduced from 42vh to maintain consistent spacing */
+}
+
+@media (min-width: 1024px) {
+  .dory-text {
+    font-size: 2rem;
   }
 }

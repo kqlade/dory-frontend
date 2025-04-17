@@ -1,15 +1,12 @@
-/**
- * @file ThemeToggle.tsx
- * 
- * A toggle button component for switching between light and dark mode
- * Uses the background API via useBackgroundPreferences
- */
-
-import React from 'react';
+import React, { memo } from 'react';
 import { FiSun, FiMoon } from 'react-icons/fi';
 import useBackgroundPreferences from '../hooks/useBackgroundPreferences';
 import './ThemeToggle.css';
 
+/**
+ * ThemeToggle – clickable icon button that flips the colour scheme.
+ * Pointer‑events rely on CSS, so keep this element at z‑index 11.
+ */
 const ThemeToggle: React.FC = () => {
   const { isDarkMode, toggleTheme } = useBackgroundPreferences();
 
@@ -25,4 +22,4 @@ const ThemeToggle: React.FC = () => {
   );
 };
 
-export default ThemeToggle;
+export default memo(ThemeToggle);

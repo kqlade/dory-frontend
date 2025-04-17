@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import './AppLayout.css';
 import Sidebar from './Sidebar';
 import ThemeToggle from './ThemeToggle';
+import { useAuth } from '../services/AuthContext';
 import { Home, FolderOpen, Users, BookOpen, UserPlus, Mail, CalendarDays, HardDrive } from 'lucide-react';
 
 interface SidebarItem {
@@ -23,6 +24,8 @@ interface SidebarSection {
 const AppLayout = () => {
   const [sidebarExpanded, setSidebarExpanded] = useState(window.innerWidth > 1024);
   const [sidebarOpen] = useState(true);
+  const [greeting, setGreeting] = useState('');
+  const { user } = useAuth();
 
   useEffect(() => {
     const handleResize = () => {
@@ -30,12 +33,28 @@ const AppLayout = () => {
         setSidebarExpanded(false);
       }
     };
-    
     window.addEventListener('resize', handleResize);
     handleResize();
-    
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    const currentHour = new Date().getHours();
+    let newGreeting = 'Good evening';
+
+    if (currentHour < 12) {
+      newGreeting = 'Good morning';
+    } else if (currentHour < 18) {
+      newGreeting = 'Good afternoon';
+    }
+
+    if (user?.name) {
+      const firstName = user.name.split(' ')[0];
+      newGreeting = `${newGreeting}, ${firstName}`;
+    }
+
+    setGreeting(newGreeting);
+  }, [user]);
 
   const sidebarSections: SidebarSection[] = [{
     collapsible: false,
@@ -45,7 +64,7 @@ const AppLayout = () => {
       { label: 'Getting Started', icon: <BookOpen size={18} />, href: '/app/getting-started' },
       { 
         label: 'Collections',
-        icon: <FolderOpen size={18} />,
+        icon: <FolderOpen size={18} />, 
         children: [
           { label: 'Project Alpha', href: '/app/alpha' },
           { label: 'Project Beta', href: '/app/beta' }
@@ -53,7 +72,7 @@ const AppLayout = () => {
       },
       {
         label: 'Teams',
-        icon: <Users size={18} />,
+        icon: <Users size={18} />, 
         children: [
           { label: 'Marketing Team', href: '/app/teams/marketing' },
           { label: 'Engineering Team', href: '/app/teams/engineering' }
@@ -71,30 +90,37 @@ const AppLayout = () => {
         isExpanded={sidebarExpanded}
         onToggleExpand={() => setSidebarExpanded(!sidebarExpanded)}
       />
-      <div className="main-container">
-        <header className="app-header">
-          <div className="google-services">
-            <a href="https://mail.google.com" target="_blank" rel="noopener noreferrer" className="service-icon">
-              <Mail size={20} />
-              <span>Mail</span>
-            </a>
-            <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" className="service-icon">
-              <CalendarDays size={20} />
-              <span>Calendar</span>
-            </a>
-            <a href="https://drive.google.com" target="_blank" rel="noopener noreferrer" className="service-icon">
-              <HardDrive size={20} />
-              <span>Drive</span>
-            </a>
+      <header className="app-header">
+        <div className="header-left" />
+        <div className="header-content">
+          <div className="greeting-container">
+            <h1 className="greeting">{greeting}</h1>
+            <p className="subheader">Here's what you were working on recently</p>
           </div>
-        </header>
-        <main className="main-content">
-          <div className="content-container">
-            <Outlet />
-          </div>
-        </main>
-      </div>
-      <ThemeToggle />
+        </div>
+        <div className="google-services">
+          <a href="https://mail.google.com" target="_blank" rel="noopener noreferrer" className="service-icon">
+            <Mail size={20} />
+            <span>Mail</span>
+          </a>
+          <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" className="service-icon">
+            <CalendarDays size={20} />
+            <span>Calendar</span>
+          </a>
+          <a href="https://drive.google.com" target="_blank" rel="noopener noreferrer" className="service-icon">
+            <HardDrive size={20} />
+            <span>Drive</span>
+          </a>
+        </div>
+      </header>
+      <main className="main-content">
+        <div className="content-container">
+          <Outlet />
+        </div>
+      </main>
+      <footer className="app-footer">
+        <ThemeToggle />
+      </footer>
     </div>
   );
 };
