@@ -34,6 +34,10 @@ export const SEARCH_ENDPOINTS = {
   SEARCH: '/api/search'
 };
 
+export const CONCEPTS_ENDPOINTS = {
+  RECENT: (userId: string) => `/api/concepts/${userId}/recent`,
+};
+
 // UI Configuration
 export const UI_CONFIG = {
   // Duration to show loading animation for clusters (in milliseconds)
@@ -189,4 +193,5 @@ export const BALL_CONFIG = {
   },
   BRAIN_NODE_COUNT: 12
 };
+
 

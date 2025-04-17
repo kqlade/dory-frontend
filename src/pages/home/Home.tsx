@@ -1,181 +1,319 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
-import { useDrag } from '../../context/DragContext';
+/* -------------------------------------------------------------------------- */
+/*  Home.tsx – Interactive "brain" scene with draggable nodes                 */
+/* -------------------------------------------------------------------------- */
 
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
+
+import { useDrag } from '../../context/DragContext';
 import AnchorBall from '../../components/AnchorBall';
 import NodeBall from '../../components/NodeBall';
 import FloppyConnection from '../../components/FloppyConnection';
 import NewTabSearchBar from '../../components/NewTabSearchBar';
 import useBackgroundPreferences from '../../hooks/useBackgroundPreferences';
 import { BALL_CONFIG } from '../../config';
+import { useAuth } from '../../services/AuthContext';
+import { fetchRecentConcept, getCachedRecentConcept } from '../../services/graphService';
+import { PageData, RelationshipData } from '../../types/graph';
 
 import './Home.css';
 
 /* -------------------------------------------------------------------------- */
-/*                                 Constants                                  */
+/*  Utility: Fibonacci-sphere point cloud                                     */
 /* -------------------------------------------------------------------------- */
-const ANIMATION_DURATION = 0.4; // s – must match ball entry animation
-const HORIZONTAL_SEPARATION = 3; // distance between the two balls
+
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ~2.39996 rad
+
+const makeFibonacciSphere = (count: number, radius: number): THREE.Vector3[] =>
+  Array.from({ length: count }, (_, i) => {
+    const offset = 2 / count;
+    const y = (i * offset - 1) + offset / 2;
+    const r = Math.sqrt(1 - y * y);
+    const phi = i * GOLDEN_ANGLE;
+
+    return new THREE.Vector3(
+      radius * Math.cos(phi) * r,
+      radius * y,
+      radius * Math.sin(phi) * r,
+    );
+  });
 
 /* -------------------------------------------------------------------------- */
-/*                               BallScene                                    */
+/*  Brain scene                                                               */
 /* -------------------------------------------------------------------------- */
+
 interface BallSceneProps {
-  screenY: number; // vertical position (in px) around which to centre the pair
+  screenY: number;
+  pages?: PageData[] | null;
+  relationships?: RelationshipData[] | null;
   onDragStateChange: (dragging: boolean) => void;
 }
 
-const BallScene: React.FC<BallSceneProps> = ({ screenY, onDragStateChange }) => {
-  /* ------------------------------- R3F hooks ------------------------------ */
-  const { viewport } = useThree();
+const BallScene: React.FC<BallSceneProps> = ({ screenY, pages, relationships, onDragStateChange }) => {
+  /* ------------ R3F context -------------------------------------------- */
+  const { viewport, invalidate } = useThree();
 
-  /* --------------------------- Derived world Y ---------------------------- */
-  const worldY = (0.5 - screenY / window.innerHeight) * viewport.height;
+  /* ------------ Anchor position ---------------------------------------- */
+  const [anchorPos, setAnchorPos] = useState(
+    () => new THREE.Vector3(0, (0.5 - screenY / window.innerHeight) * viewport.height, 0),
+  );
 
-  /* -------------------------- Positions & state -------------------------- */
-  const [anchorPos, setAnchorPos] = useState(() => new THREE.Vector3(0, worldY, 0)); // centre
+  // Generate initial offsets and connections once --------------------------------
+  const initialOffsets = useMemo(
+    () => makeFibonacciSphere(
+      // Use pages length if available, otherwise fallback to demo count
+      pages?.length || BALL_CONFIG.BRAIN_NODE_COUNT,
+      // Scale radius down as node count increases
+      2.5 * Math.pow(BALL_CONFIG.BRAIN_NODE_COUNT / (pages?.length || BALL_CONFIG.BRAIN_NODE_COUNT), 1/3)
+    ),
+    [pages]
+  );
 
-  // Generate a hemispherical cloud of ~30 nodes around the anchor (runs once per mount)
-  const [nodePositions, setNodePositions] = useState<THREE.Vector3[]>(() => {
-    const pts: THREE.Vector3[] = [];
-    const N = BALL_CONFIG.BRAIN_NODE_COUNT;
-    const radius = 3; // sphere radius
-    const offset = 2 / N;
-    const increment = Math.PI * (3 - Math.sqrt(5)); // golden angle
-    for (let i = 0; i < N; i++) {
-      const y = ((i * offset) - 1) + (offset / 2);
-      const r = Math.sqrt(1 - y * y);
-      const phi = i * increment;
-      pts.push(
-        new THREE.Vector3(
-          radius * Math.cos(phi) * r,
-          radius * y,
-          radius * Math.sin(phi) * r,
-        ).add(new THREE.Vector3(0, worldY, 0)),
-      );
-    }
-    return pts;
-  });
+  const [nodeOffsets, setNodeOffsets] = useState<THREE.Vector3[]>(initialOffsets);
 
-  /* ----------------------- Update when screenY/viewport change ------------ */
+  // Update offsets when pages change
   useEffect(() => {
-    setAnchorPos(new THREE.Vector3(0, worldY, 0));
-    // Shift all nodes by the delta Y to preserve relative layout on resize
-    setNodePositions(prev => prev.map(p => p.clone().setY(p.y - anchorPos.y + worldY)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worldY]);
+    setNodeOffsets(initialOffsets);
+  }, [initialOffsets]);
 
-  /* ----------------------------- Opacity anim ----------------------------- */
-  const [opacity, setOpacity] = useState(0);
-  const startTimeRef = useRef(performance.now());
+  const [nodeConnections] = useState<[number, number][]>(() => {
+    // If we have relationships data, use that to create connections
+    if (relationships?.length && pages?.length) {
+      const edges = new Set<string>();
+      relationships.forEach(rel => {
+        if (rel.type === 'TRANSITIONS_TO' || rel.type === 'CO_OCCURRING') {
+          const sourceIdx = pages.findIndex(p => p.pageId === rel.source);
+          const targetIdx = pages.findIndex(p => p.pageId === rel.target);
+          if (sourceIdx !== -1 && targetIdx !== -1) {
+            const key = `${Math.min(sourceIdx, targetIdx)}-${Math.max(sourceIdx, targetIdx)}`;
+            edges.add(key);
+          }
+        }
+      });
+      return Array.from(edges).map(key => {
+        const [a, b] = key.split('-').map(Number);
+        return [a, b] as [number, number];
+      });
+    }
 
-  useFrame(() => {
-    if (opacity === 1) return; // stop updating once fully opaque
-    const t = Math.min((performance.now() - startTimeRef.current) / 1000 / ANIMATION_DURATION, 1);
-    setOpacity(t);
+    // Otherwise use demo connections logic
+    const K_NEIGHBOURS = 2;
+    const EXTRA_RANDOM = Math.min(3, initialOffsets.length);
+    const edges: [number, number][] = [];
+    const seen = new Set<string>();
+
+    initialOffsets.forEach((v, i) => {
+      initialOffsets
+        .map((w, j) => ({ j, dist: v.distanceTo(w) }))
+        .filter(({ j }) => j !== i)
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, K_NEIGHBOURS)
+        .forEach(({ j }) => {
+          const key = `${Math.min(i, j)}-${Math.max(i, j)}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            edges.push([i, j]);
+          }
+        });
+    });
+
+    while (edges.length < (initialOffsets.length * K_NEIGHBOURS) / 2 + EXTRA_RANDOM) {
+      const a = Math.floor(Math.random() * initialOffsets.length);
+      const b = Math.floor(Math.random() * initialOffsets.length);
+      if (a === b) continue;
+      const key = `${Math.min(a, b)}-${Math.max(a, b)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push([a, b]);
+      }
+    }
+
+    return edges;
   });
 
-  /* --------------------------- Position handlers -------------------------- */
-  const handleAnchorMove = useCallback((v: THREE.Vector3) => {
-    setAnchorPos(v);
-    // Update node positions relative to the new anchor position
-    setNodePositions(prev => prev.map(p => {
-      const relativePos = p.clone().sub(anchorPos);
-      return relativePos.add(v);
-    }));
-  }, [anchorPos]);
+  /* ------------ Animation state --------------------------------------- */
+  const rotationY = useRef(0);               // current rotation about Y axis
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const stopRotation = useRef(false);        // latch – flips true on first drag
+  const [worldPositions, setWorldPositions] = useState<THREE.Vector3[]>([]);
+  const { isDragging } = useDrag();
+  const { isDarkMode } = useBackgroundPreferences();
 
-  const updateNode = useCallback((idx: number, v: THREE.Vector3) => {
-    setNodePositions(prev => {
-      const next = [...prev];
-      next[idx] = v;
-      return next;
-    });
+  /* ------------ Drag state handler ------------------------------------ */
+  const handleDragStateChange = useCallback((d: boolean) => {
+    if (d) stopRotation.current = true; // permanently stop rotation
+    onDragStateChange(d);               // propagate to context
+  }, [onDragStateChange]);
+
+  /* ------------ Per-frame update -------------------------------------- */
+  useFrame((_, delta) => {
+    if (!stopRotation.current && !isDragging) {
+      rotationY.current += 0.6 * delta; // rotate until first drag
+    }
+
+    const next = nodeOffsets.map((local) =>
+      local
+        .clone()
+        .applyAxisAngle(yAxis, rotationY.current)
+        .add(anchorPos),
+    );
+
+    setWorldPositions(next);
+    invalidate(); // force React refresh so children receive new props
+  });
+
+  /* ------------ Callbacks --------------------------------------------- */
+  const handleAnchorMove = useCallback((v: THREE.Vector3) => {
+    setAnchorPos(v.clone());
   }, []);
 
-  /* ------------------------------ Radii ----------------------------------- */
-  const anchorRadius = BALL_CONFIG.ANCHOR_RADIUS;
-  const nodeRadius = BALL_CONFIG.NODE_RADIUS;
+  const updateNode = useCallback(
+    (idx: number, worldPos: THREE.Vector3) => {
+      setNodeOffsets((prev) => {
+        const unrotated = worldPos
+          .clone()
+          .sub(anchorPos)
+          .applyAxisAngle(yAxis, -rotationY.current); // remove current rot
 
-  /* ------------------------------ Render ---------------------------------- */
+        const next = [...prev];
+        next[idx] = unrotated;
+        return next;
+      });
+    },
+    [anchorPos],
+  );
+
+  /* ------------ Radii -------------------------------------------------- */
+  const anchorR = BALL_CONFIG.ANCHOR_RADIUS;
+  const nodeR = BALL_CONFIG.NODE_RADIUS;
+
+  /* ------------ Render ------------------------------------------------- */
   return (
     <>
-      {/* Lights */}
       <ambientLight intensity={1.2} />
       <directionalLight position={[3, 4, 5]} intensity={1} />
-      <directionalLight position={[-2, -1, 3]} intensity={0.3} />
 
-      {/* Anchor Ball */}
+      {/* Anchor ball */}
       <AnchorBall
         position={anchorPos.toArray() as [number, number, number]}
-        radius={anchorRadius}
+        radius={anchorR}
         allowDrag
         onPositionChange={handleAnchorMove}
-        onDragStateChange={onDragStateChange}
+        onDragStateChange={handleDragStateChange}
       />
 
-      {/* Nodes + their strings */}
-      {nodePositions.map((p, i) => (
+      {/* Nodes + spokes */}
+      {worldPositions.map((worldPos, i) => (
         <React.Fragment key={i}>
           <NodeBall
-            position={p.toArray() as [number, number, number]}
-            radius={nodeRadius}
+            position={worldPos.toArray() as [number, number, number]}
+            radius={nodeR}
             allowDrag
-            onPositionChange={v => updateNode(i, v)}
-            onDragStateChange={onDragStateChange}
+            onPositionChange={(v) => updateNode(i, v)}
+            onDragStateChange={handleDragStateChange}
+            isDarkMode={isDarkMode}
           />
           <FloppyConnection
             startCenter={anchorPos}
-            endCenter={p}
-            startRadius={anchorRadius}
-            endRadius={nodeRadius}
-            opacity={opacity}
+            endCenter={worldPos}
+            startRadius={anchorR}
+            endRadius={nodeR}
+            opacity={1}
             maxSag={0.8}
             tautDistance={10}
             minDistance={2}
           />
         </React.Fragment>
       ))}
+
+      {/* Node-to-node connections */}
+      {worldPositions.length > 0 &&
+        nodeConnections.map(([a, b], idx) => (
+          <FloppyConnection
+            key={`nn-${idx}`}
+            startCenter={worldPositions[a]}
+            endCenter={worldPositions[b]}
+            startRadius={nodeR}
+            endRadius={nodeR}
+            opacity={0.6}
+            maxSag={0.4}
+            tautDistance={5}
+            minDistance={1}
+          />
+        ))}
     </>
   );
 };
 
 /* -------------------------------------------------------------------------- */
-/*                                   Home                                    */
+/*  Page component                                                            */
 /* -------------------------------------------------------------------------- */
+
 const Home: React.FC = () => {
   const searchBarRef = useRef<HTMLDivElement>(null);
   const [midpointY, setMidpointY] = useState<number | null>(null);
-  const { isDarkMode } = useBackgroundPreferences(); // dark‑mode hook kept if needed later
 
-  // drag context
   const { isDragging, setDragging } = useDrag();
+  const { isDarkMode } = useBackgroundPreferences(); // currently only read for children
+  const { user } = useAuth();
 
-  // toggle body class
-  useEffect(() => {
-    document.body.classList.toggle('dragging', isDragging);
-  }, [isDragging]);
+  // concept graph state
+  const [pages, setPages] = useState<PageData[] | null>(null);
+  const [rels, setRels] = useState<RelationshipData[] | null>(null);
 
-  /* ------------------------ Compute midpoint lazily ----------------------- */
+  // Fetch recent concept once authenticated
   useEffect(() => {
-    const calculateMidY = () => {
-      // Allow layout to settle
+    if (!user?.id) return;
+    const cached = getCachedRecentConcept(user.id);
+    if (cached) {
+      setPages(cached.concept.pages);
+      setRels(cached.relationships);
+    }
+    fetchRecentConcept(user.id)
+      .then((res) => {
+        setPages(res.concept.pages);
+        setRels(res.relationships);
+      })
+      .catch((err) => console.warn('[Home] recent concept fetch failed', err));
+  }, [user]);
+
+  /** becomes true on the first drag and never goes back */
+  const [hasDragged, setHasDragged] = useState(false);
+
+  /* ---- Fade UI while dragging ----------------------------------------- */
+  useEffect(() => {
+    document.body.classList.toggle('dragging', hasDragged);
+    if (hasDragged) {
+      const sb = document.querySelector('.sidebar');
+      sb?.classList.add('collapsed'); // mimic manual collapse
+    }
+  }, [hasDragged]);
+
+  /* ---- Compute vertical midpoint -------------------------------------- */
+  useEffect(() => {
+    const calculateMidpoint = () =>
       requestAnimationFrame(() => {
-        const header = document.querySelector('.app-header');
-        const searchBarEl = searchBarRef.current;
-        const topBound = header ? header.getBoundingClientRect().bottom : 50;
-        const searchTop = searchBarEl ? searchBarEl.getBoundingClientRect().top : window.innerHeight * 0.4;
-        setMidpointY(topBound + (searchTop - topBound) / 2);
-      });
-    };
+        const headerBottom =
+          document.querySelector('.app-header')?.getBoundingClientRect().bottom ?? 50;
+        const searchTop =
+          searchBarRef.current?.getBoundingClientRect().top ??
+          window.innerHeight * 0.4;
 
-    calculateMidY();
-    window.addEventListener('resize', calculateMidY);
-    return () => window.removeEventListener('resize', calculateMidY);
+        setMidpointY(headerBottom + (searchTop - headerBottom) / 2);
+      });
+
+    calculateMidpoint();
+    window.addEventListener('resize', calculateMidpoint);
+    return () => window.removeEventListener('resize', calculateMidpoint);
   }, []);
 
-  /* ------------------------------ Render ---------------------------------- */
   return (
     <div className="page">
       {/* Canvas backdrop */}
@@ -187,7 +325,15 @@ const Home: React.FC = () => {
           style={{ width: '100%', height: '100%' }}
         >
           {midpointY !== null && (
-            <BallScene screenY={midpointY} onDragStateChange={setDragging} />
+            <BallScene
+              screenY={midpointY}
+              pages={pages}
+              relationships={rels}
+              onDragStateChange={(d) => {
+                setDragging(d);
+                if (d) setHasDragged(true);
+              }}
+            />
           )}
         </Canvas>
       </div>
@@ -199,8 +345,8 @@ const Home: React.FC = () => {
         </div>
       </div>
 
-      {/* Page content */}
-      <main className="page-content">{/* … */}</main>
+      {/* Future page content */}
+      <main className="page-content" />
     </div>
   );
 };

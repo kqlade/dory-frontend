@@ -9,9 +9,8 @@ export interface PageData {
   pageId: string;
   title: string;
   url: string;
-  confidence?: number;
-  assignedAt?: string;
-  [key: string]: any;
+  confidence: number;
+  assignedAt: number;
 }
 
 /**
@@ -31,8 +30,8 @@ export interface RelationshipProperties {
 export interface RelationshipData {
   source: string;
   target: string;
-  type: string;
-  properties?: RelationshipProperties;
+  type: 'TRANSITIONS_TO' | 'CO_OCCURRING';
+  properties: Record<string, any>;
 }
 
 /**
@@ -47,8 +46,8 @@ export interface ConceptData {
   createdAt: number;
   updatedAt: number;
   pageCount: number;
-  parentConceptId: string | null;
-  lastActivated: number;
+  parentConceptId?: string;
+  lastActivated?: number;
   pages: PageData[];
 }
 
@@ -67,4 +66,9 @@ export enum RelationshipType {
   TRANSITIONS_TO = "TRANSITIONS_TO",
   CO_OCCURRING = "CO_OCCURRING",
   CONCEPT_TO_PAGE = "CONCEPT_TO_PAGE"
+}
+
+export interface RecentConceptResponse {
+  concept: ConceptData;
+  relationships: RelationshipData[];
 } 

@@ -1,285 +1,172 @@
-import React, { useMemo, useRef, useEffect, useState } from 'react';
-import { MeshProps, useFrame, useThree } from '@react-three/fiber';
+import React, {
+  useRef,
+  useMemo,
+  useEffect,
+  useState,
+  useCallback,
+} from 'react';
+import {
+  MeshProps,
+  ThreeEvent,
+  useFrame,
+  useThree,
+} from '@react-three/fiber';
 import * as THREE from 'three';
 import { BALL_CONFIG } from '../config';
 
 /**
- * AnchorBall.tsx – Accent‑coloured, draggable anchor sphere.
- * Mirrors NodeBall's fixes: typesafety, prop‑sync, cached theming, and
- * robust drag with pointer‑capture + screen‑parallel plane.
+ * AnchorBall – main (cyan) sphere.
+ * Snap / forbidden‑zone logic removed (UI elements fade permanently).
  */
 
-type AnchorBallProps = Omit<MeshProps, 'position'> & {
+type Props = Omit<MeshProps, 'position'> & {
   position: [number, number, number];
   radius?: number;
-  onPositionChange?: (position: THREE.Vector3) => void;
+  onPositionChange?: (p: THREE.Vector3) => void;
   onDragStateChange?: (dragging: boolean) => void;
   fixedY?: boolean;
   allowDrag?: boolean;
 };
 
-const ANIMATION_DURATION = 0.4; // s
+const ENTRY_DUR = 0.4; // s
 
-const AnchorBall: React.FC<AnchorBallProps> = ({
+const AnchorBall: React.FC<Props> = ({
   position,
   radius = BALL_CONFIG.ANCHOR_RADIUS,
   onPositionChange,
   onDragStateChange,
   fixedY = false,
   allowDrag = true,
-  ...props
+  ...rest
 }) => {
-  /* ─────────────────────────── Refs & state ───────────────────────────── */
-  const meshRef = useRef<THREE.Mesh>(null);
-  const materialRef = useRef<THREE.MeshStandardMaterial>(null);
+  /* ─────────── Refs & state ─────────── */
+  const mesh   = useRef<THREE.Mesh>(null!);
+  const mat    = useRef<THREE.MeshStandardMaterial>(null!);
+  const offset = useRef(new THREE.Vector3());
+  const plane  = useRef(new THREE.Plane());
+  const curr   = useRef(new THREE.Vector3(...position));
+  const dest   = useRef(new THREE.Vector3(...position));
 
-  const [entryAnimating, setEntryAnimating] = useState(true);
-  const [hovered, setHovered] = useState(false);
-  const [clicked, setClicked] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const { camera } = useThree();
 
-  const dragOffset = useRef(new THREE.Vector3());
-  const dragPlane = useRef(new THREE.Plane());
+  const [entryDone, setEntryDone] = useState(false);
+  const [hover,     setHover]     = useState(false);
+  const [click,     setClick]     = useState(false);
+  const [drag,      setDrag]      = useState(false);
 
-  const { camera, size } = useThree();
+  /* ─────────── Theme colours ─────────── */
+  const theme = useMemo(
+    () => ({ base: '#00c8e6', emissive: '#00c8e6' }),
+    []
+  );
 
-  const currentPosition = useRef(new THREE.Vector3(...position));
-  const targetPos = useRef(new THREE.Vector3(...position));
-  const originalXRef = useRef(position[0]);
-
-  /* ─────────────────────────── Theme (cached) ──────────────────────────── */
-  const theme = useMemo(() => {
-    const color = new THREE.Color('#00c8e6');
-    return {
-      baseColor: '#00c8e6',
-      emissive: '#00c8e6',
-    } as const;
-  }, []);
-
-  /* ─────────────────────── Sync external position prop ─────────────────── */
+  /* ─────────── Sync external position ─────────── */
   useEffect(() => {
-    currentPosition.current.set(...position);
-    targetPos.current.set(...position);
-    meshRef.current?.position.copy(targetPos.current);
+    curr.current.set(...position);
+    dest.current.set(...position);
+    mesh.current.position.copy(dest.current);
   }, [position]);
 
-  /* ───────────────────────── Initial placement ─────────────────────────── */
-  useEffect(() => {
-    meshRef.current?.position.copy(targetPos.current);
-  }, []);
+  const emitPos = (v: THREE.Vector3) => onPositionChange?.(v.clone());
+  const setCursor = (c: 'default' | 'grab' | 'grabbing') =>
+    (document.body.style.cursor = c);
 
-  const emitPosition = (v: THREE.Vector3) => onPositionChange?.(v.clone());
-
-  const forbiddenZone = (x: number, y: number): 'header' | 'search' | 'left' | null => {
-    const hit = (sel: string) => {
-      const el = document.querySelector(sel) as HTMLElement | null;
-      if (!el) return false;
-      const r = el.getBoundingClientRect();
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-    };
-    if (hit('.app-header') || hit('.subheader')) return 'header';
-    if (hit('.home-search-wrapper')) return 'search';
-    const sidebar = document.querySelector('.sidebar') as HTMLElement | null;
-    if (sidebar) {
-      const r = sidebar.getBoundingClientRect();
-      const sidebarRight = r.left + r.width;
-      if (x <= sidebarRight) return 'left';
-    }
-    return null;
-  };
-
-  const screenYToWorldY = (screenY: number) => {
-    const ndcY = 1 - (screenY / size.height) * 2;
-    return new THREE.Vector3(0, ndcY, 0).unproject(camera).y;
-  };
-
-  const screenXToWorldX = (screenX: number) => {
-    const ndcX = (screenX / size.width) * 2 - 1;
-    return new THREE.Vector3(ndcX, 0, 0).unproject(camera).x;
-  };
-
-  const animateSnap = (from: THREE.Vector3, to: THREE.Vector3) => {
-    const start = performance.now();
-    const DURATION = 350; // ms
-    const step = () => {
-      const t = Math.min((performance.now() - start) / DURATION, 1);
-      const eased = 1 - Math.pow(1 - t, 3); // cubic ease-out
-      const next = from.clone().lerp(to, eased);
-      targetPos.current.copy(next);
-      currentPosition.current.copy(next);
-      emitPosition(next);
-      if (t < 1) {
-        requestAnimationFrame(step);
-      } else {
-        onDragStateChange?.(false);
-      }
-    };
-    onDragStateChange?.(true);
-    step();
-  };
-
-  /* ───────────────────────────── useFrame loop ─────────────────────────── */
+  /* ─────────── Frame loop ─────────── */
   useFrame(({ clock }) => {
-    if (!meshRef.current || !materialRef.current) return;
-
-    const { baseColor, emissive } = theme;
-
-    /* Entry animation */
-    if (entryAnimating) {
-      const t = Math.min(clock.getElapsedTime() / ANIMATION_DURATION, 1);
-      const scale = 0.8 + 0.2 * t;
-
-      meshRef.current.scale.set(scale, scale, scale);
-      materialRef.current.opacity = t;
-      materialRef.current.transparent = true;
-
-      if (t >= 1) {
-        setEntryAnimating(false);
-        materialRef.current.opacity = 1;
-        materialRef.current.transparent = false;
-        meshRef.current.scale.set(1, 1, 1);
+    /* entry fade‑in */
+    if (!entryDone) {
+      const t = Math.min(clock.elapsedTime / ENTRY_DUR, 1);
+      mesh.current.scale.setScalar(0.8 + 0.2 * t);
+      mat.current.opacity = t;
+      if (t === 1) {
+        mat.current.transparent = false;
+        setEntryDone(true);
       }
     }
 
-    /* Position lerp */
-    meshRef.current.position.lerp(targetPos.current, 0.25);
+    mesh.current.position.lerp(dest.current, 0.25);
 
-    /* Hover / click pulse */
-    if (hovered || clicked) {
-      const time = clock.getElapsedTime();
-      const pulse = 1 + 0.03 * Math.sin(time * 1.8) * (clicked ? 1.2 : 1);
-      meshRef.current.scale.set(pulse, pulse, pulse);
+    /* pulse */
+    const active = hover || click;
+    const pulse =
+      active ? 1 + 0.03 * Math.sin(clock.elapsedTime * 1.8) * (click ? 1.2 : 1) : 1;
+    mesh.current.scale.setScalar(pulse);
 
-      if (clicked) {
-        materialRef.current.emissiveIntensity = 0.15 + 0.07 * Math.sin(time * 2);
-        materialRef.current.color.set(baseColor);
-        materialRef.current.emissive.set(emissive);
-      } else {
-        materialRef.current.emissiveIntensity = 0.2 + 0.08 * Math.sin(time * 1.8);
-        materialRef.current.color.set(baseColor);
-        materialRef.current.emissive.set(emissive);
-      }
-    } else {
-      materialRef.current.color.set(theme.baseColor);
-      materialRef.current.emissive.set(theme.emissive);
-      materialRef.current.emissiveIntensity = 1.08;
-    }
+    mat.current.color.set(theme.base);
+    mat.current.emissive.set(theme.emissive);
+    mat.current.emissiveIntensity = active ? 0.25 : 1.05;
   });
 
-  /* ─────────────────────────── Handlers (shared) ───────────────────────── */
-  const onOver = (e: any) => {
+  /* ─────────── Pointer events ─────────── */
+  const over = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    setHovered(true);
-    if (!dragging) document.body.style.cursor = 'grab';
-  };
+    setHover(true);
+    if (!drag) setCursor('grab');
+  }, [drag]);
 
-  const onOut = (e: any) => {
+  const out = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    setHovered(false);
-    if (!dragging) document.body.style.cursor = 'default';
-  };
+    setHover(false);
+    if (!drag) setCursor('default');
+  }, [drag]);
 
-  const onDown = (e: any) => {
+  const down = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    setClicked(true);
-    (document.activeElement as HTMLElement)?.blur();
-
+    setClick(true);
     if (!allowDrag) return;
-    setDragging(true);
+    setDrag(true);
     onDragStateChange?.(true);
-    meshRef.current && dragOffset.current.copy(meshRef.current.position).sub(e.point);
 
+    offset.current.copy(mesh.current.position).sub(e.point);
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
 
-    // Build screen‑parallel plane
-    const normal = new THREE.Vector3();
-    camera.getWorldDirection(normal);
-    dragPlane.current.setFromNormalAndCoplanarPoint(normal, meshRef.current?.position ?? new THREE.Vector3());
+    const n = new THREE.Vector3();
+    camera.getWorldDirection(n);
+    plane.current.setFromNormalAndCoplanarPoint(n, mesh.current.position);
 
-    document.body.style.cursor = 'grabbing';
-  };
+    setCursor('grabbing');
+  }, [allowDrag, camera, onDragStateChange]);
 
-  const onMove = (e: any) => {
-    if (!dragging) return;
+  const move = useCallback((e: ThreeEvent<PointerEvent>) => {
+    if (!drag) return;
     e.stopPropagation();
-    const intersection = new THREE.Vector3();
-    if (e.ray.intersectPlane(dragPlane.current, intersection)) {
-      const newPos = intersection.clone().add(dragOffset.current);
-      if (fixedY) newPos.y = currentPosition.current.y;
-      targetPos.current.copy(newPos);
-      currentPosition.current.copy(newPos);
-      emitPosition(newPos);
+    const hit = new THREE.Vector3();
+    if (e.ray.intersectPlane(plane.current, hit)) {
+      const next = hit.add(offset.current);
+      if (fixedY) next.y = curr.current.y;
+      dest.current.copy(next);
+      curr.current.copy(next);
+      emitPos(next);
     }
-  };
+  }, [drag, fixedY]);
 
-  const onUp = (e: any) => {
+  const up = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    setClicked(false);
-    setDragging(false);
-    const pos = currentPosition.current.clone();
-    const zone = forbiddenZone(e.clientX, e.clientY);
-    if (zone) {
-      const from = pos.clone();
-      const to = pos.clone();
-      if (zone === 'header') {
-        const headerBottom = (document.querySelector('.app-header') as HTMLElement)?.getBoundingClientRect().bottom || 0;
-        const radiusPx = radius * camera.zoom;
-        const safeYScreen = headerBottom + BALL_CONFIG.SEARCH_SNAP_MARGIN + radiusPx;
-        to.y = screenYToWorldY(safeYScreen);
-      }
-      if (zone === 'search') {
-        const bar = document.querySelector('.home-search-wrapper') as HTMLElement | null;
-        if (!bar) return;
-        const searchTopPx = bar.getBoundingClientRect().top;
-        
-        // current sphere centre in px
-        const currentScreenY = ((1 - pos.clone().project(camera).y) / 2) * size.height;
-        const radiusPx = radius * camera.zoom;
-        
-        // Are we actually intruding?
-        const overlapping = currentScreenY + radiusPx > 
-                         searchTopPx - BALL_CONFIG.SEARCH_SNAP_MARGIN;
-        
-        if (overlapping) {
-          const safeWorldY = screenYToWorldY(
-            searchTopPx - BALL_CONFIG.SEARCH_SNAP_MARGIN - radiusPx
-          );
-          to.y = safeWorldY;
-        }
-      }
-      if (zone === 'left') {
-        const sidebar = document.querySelector('.sidebar') as HTMLElement;
-        const sidebarRightPx = sidebar.getBoundingClientRect().right;
-        const sidebarWorldX = screenXToWorldX(sidebarRightPx);
-        const marginWorld = BALL_CONFIG.SIDEBAR_SNAP_MARGIN / camera.zoom;
-        to.x = sidebarWorldX + marginWorld;
-      }
-      animateSnap(from, to);
-    } else {
-      onDragStateChange?.(false);
-    }
-    document.body.style.cursor = hovered ? 'grab' : 'auto';
+    setClick(false);
+    setDrag(false);
+    onDragStateChange?.(false);
+
+    setCursor(hover ? 'grab' : 'default');
     (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-  };
+  }, [hover, onDragStateChange]);
 
-  /* ───────────────────────────────── JSX ────────────────────────────────── */
+  /* ─────────── Render ─────────── */
   return (
     <mesh
-      ref={meshRef}
+      ref={mesh}
       position={position}
-      onPointerOver={onOver}
-      onPointerOut={onOut}
-      onPointerDown={onDown}
-      onPointerMove={onMove}
-      onPointerUp={onUp}
-      {...props}
+      onPointerOver={over}
+      onPointerOut={out}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      {...rest}
     >
       <sphereGeometry args={[radius, 64, 64]} />
       <meshStandardMaterial
-        ref={materialRef}
+        ref={mat}
         roughness={0.3}
         metalness={0.3}
-        emissiveIntensity={0.15}
         opacity={0}
         transparent
       />
@@ -287,4 +174,4 @@ const AnchorBall: React.FC<AnchorBallProps> = ({
   );
 };
 
-export default AnchorBall;
+export default React.memo(AnchorBall);

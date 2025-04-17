@@ -109,11 +109,7 @@
 }
 
 /* drag-feedback */
-body.dragging .sidebar {
-  width: var(--sidebar-collapsed-width);
-}
 body.dragging .app-header,
-body.dragging .google-services,
 body.dragging .home-search-wrapper {
   opacity: 0;
   pointer-events: none;
@@ -121,7 +117,6 @@ body.dragging .home-search-wrapper {
 }
 
 body:not(.dragging) .app-header,
-body:not(.dragging) .google-services,
 body:not(.dragging) .home-search-wrapper {
   opacity: 1;
   transition: opacity 0.35s ease;
@@ -131,9 +126,9 @@ body:not(.dragging) .home-search-wrapper {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-body.dragging .sidebar-nav,
-body.dragging .sidebar-footer {
+body.dragging .sidebar.collapsed .sidebar-nav,
+body.dragging .sidebar.collapsed .sidebar-footer {
   opacity: 0;
   transition: opacity 0.2s ease;
-  pointer-events: none;
+  pointer-events: auto; /* still clickable */
 }
