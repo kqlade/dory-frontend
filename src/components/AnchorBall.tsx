@@ -13,6 +13,8 @@ import {
 } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BALL_CONFIG } from '../config';
+import { ConceptData } from '../types/graph';
+import NodeTooltip from './NodeTooltip';
 
 /**
  * AnchorBall – main (cyan) sphere.
@@ -26,6 +28,8 @@ type Props = Omit<MeshProps, 'position'> & {
   onDragStateChange?: (dragging: boolean) => void;
   fixedY?: boolean;
   allowDrag?: boolean;
+  isDarkMode?: boolean;
+  conceptData?: ConceptData;
 };
 
 const ENTRY_DUR = 0.4; // s
@@ -37,6 +41,8 @@ const AnchorBall: React.FC<Props> = ({
   onDragStateChange,
   fixedY = false,
   allowDrag = true,
+  isDarkMode: propIsDarkMode,
+  conceptData,
   ...rest
 }) => {
   /* ─────────── Refs & state ─────────── */
@@ -47,25 +53,26 @@ const AnchorBall: React.FC<Props> = ({
   const curr   = useRef(new THREE.Vector3(...position));
   const dest   = useRef(new THREE.Vector3(...position));
 
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
 
   const [entryDone, setEntryDone] = useState(false);
   const [hover,     setHover]     = useState(false);
   const [click,     setClick]     = useState(false);
   const [drag,      setDrag]      = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
 
   /* ─────────── Theme colours ─────────── */
-  const theme = useMemo(
-    () => ({ base: '#00c8e6', emissive: '#00c8e6' }),
-    []
-  );
+  const theme = {
+    base: '#00c8e6',
+    emissive: '#00c8e6'
+  };
 
   /* ─────────── Sync external position ─────────── */
   useEffect(() => {
+    if (drag) return; // ignore while user is dragging to avoid jitter
     curr.current.set(...position);
     dest.current.set(...position);
-    mesh.current.position.copy(dest.current);
-  }, [position]);
+  }, [position, drag]);
 
   const emitPos = (v: THREE.Vector3) => onPositionChange?.(v.clone());
   const setCursor = (c: 'default' | 'grab' | 'grabbing') =>
@@ -84,7 +91,8 @@ const AnchorBall: React.FC<Props> = ({
       }
     }
 
-    mesh.current.position.lerp(dest.current, 0.25);
+    // Always follow dest precisely to avoid mismatch jitters
+    mesh.current.position.copy(dest.current);
 
     /* pulse */
     const active = hover || click;
@@ -101,14 +109,22 @@ const AnchorBall: React.FC<Props> = ({
   const over = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     setHover(true);
+    setShowTooltip(true);
     if (!drag) setCursor('grab');
   }, [drag]);
 
   const out = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     setHover(false);
+    if (!click) setShowTooltip(false);
     if (!drag) setCursor('default');
-  }, [drag]);
+  }, [drag, click]);
+
+  const handleClick = useCallback((e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    setClick((prev) => !prev);
+    setShowTooltip((prev) => !prev);
+  }, []);
 
   const down = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
@@ -117,12 +133,14 @@ const AnchorBall: React.FC<Props> = ({
     setDrag(true);
     onDragStateChange?.(true);
 
-    offset.current.copy(mesh.current.position).sub(e.point);
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    // Use world-space position as reference
+    const worldPos = new THREE.Vector3();
+    mesh.current.getWorldPosition(worldPos);
+    offset.current.copy(worldPos).sub(e.point);
 
     const n = new THREE.Vector3();
     camera.getWorldDirection(n);
-    plane.current.setFromNormalAndCoplanarPoint(n, mesh.current.position);
+    plane.current.setFromNormalAndCoplanarPoint(n, worldPos);
 
     setCursor('grabbing');
   }, [allowDrag, camera, onDragStateChange]);
@@ -147,7 +165,7 @@ const AnchorBall: React.FC<Props> = ({
     onDragStateChange?.(false);
 
     setCursor(hover ? 'grab' : 'default');
-    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+    (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
   }, [hover, onDragStateChange]);
 
   /* ─────────── Render ─────────── */
@@ -160,6 +178,7 @@ const AnchorBall: React.FC<Props> = ({
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
+      onClick={handleClick}
       {...rest}
     >
       <sphereGeometry args={[radius, 64, 64]} />
@@ -170,6 +189,13 @@ const AnchorBall: React.FC<Props> = ({
         opacity={0}
         transparent
       />
+      {showTooltip && conceptData && (
+        <NodeTooltip 
+          title={conceptData.label} 
+          url={conceptData.description}
+          radius={radius} 
+        />
+      )}
     </mesh>
   );
 };

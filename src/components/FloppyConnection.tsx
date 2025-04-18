@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Line } from '@react-three/drei';
 import { BALL_CONFIG } from '../config';
+import { useTheme } from '../theme';
 
 /**
  * FloppyConnection.tsx – Animated quadratic line that "sags" and wobbles
@@ -28,6 +29,7 @@ interface FloppyConnectionProps {
   maxSag?: number;
   tautDistance?: number;
   minDistance?: number;
+  isDarkMode?: boolean;
 }
 
 const FloppyConnection: React.FC<FloppyConnectionProps> = ({
@@ -41,8 +43,10 @@ const FloppyConnection: React.FC<FloppyConnectionProps> = ({
   maxSag = 0.8,
   tautDistance = 10,
   minDistance = 2,
+  isDarkMode: propIsDarkMode,
 }) => {
   const [curvePoints, setCurvePoints] = useState<THREE.Vector3[]>([]);
+  const { colors } = useTheme();
 
   /* ───────────── Refs to avoid 60fps React state churn ───────────── */
   const sagRef = useRef(0);
@@ -54,12 +58,8 @@ const FloppyConnection: React.FC<FloppyConnectionProps> = ({
   const SPRING = BALL_CONFIG.SPRING;
 
   /* ───────────────────── Cached theme‑driven line colour ─────────── */
-  const lineColor = useMemo(() => {
-    const rgb = getComputedStyle(document.documentElement)
-      .getPropertyValue('--text-color-rgb')
-      .trim();
-    return `rgb(${rgb})`;
-  }, []);
+  const effectiveDarkMode = propIsDarkMode !== undefined ? propIsDarkMode : false;
+  const lineColor = effectiveDarkMode ? '#e8eaed' : '#202124';
 
   /* ───────────────────────────── Frame loop ───────────────────────── */
   useFrame(() => {

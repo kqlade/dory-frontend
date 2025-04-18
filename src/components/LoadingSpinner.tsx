@@ -1,11 +1,27 @@
 import React from 'react';
-import './LoadingSpinner.css'; // We'll add basic styles
 
-const LoadingSpinner: React.FC = () => {
+interface SpinnerProps {
+  /** Optional custom message. If omitted, defaults to "Loading..." */
+  message?: string;
+  /** Whether to show the text message under the spinner */
+  showText?: boolean;
+  /** Render as full‑screen centered (default) or inline‑embedded */
+  fullScreen?: boolean;
+  /** Extra className(s) for the outer container */
+  className?: string;
+}
+
+const LoadingSpinner: React.FC<SpinnerProps> = ({
+  message = 'Loading...',
+  showText = true,
+  fullScreen = true,
+  className = '',
+}) => {
+  const baseClass = fullScreen ? 'loading-container' : 'loading-inline-container';
   return (
-    <div className="loading-container">
-      <div className="loading-spinner"></div>
-      <p className="loading-text">Loading...</p>
+    <div className={`${baseClass} ${className}`.trim()}>
+      <div className="loading-spinner" />
+      {showText && <p className="loading-text">{message}</p>}
     </div>
   );
 };

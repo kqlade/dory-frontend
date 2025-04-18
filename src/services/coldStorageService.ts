@@ -206,6 +206,15 @@ export class ColdStorageSync {
       await this.syncEvents(EventType.SEARCH_PERFORMED, searchEvents, userId);
     }
 
+    // Sync note events
+    {
+      const noteEvents = await eventRepository.getEventsByTypeAfterTime(
+        EventType.NOTE_ADDED,
+        lastSyncTime
+      );
+      await this.syncEvents(EventType.NOTE_ADDED, noteEvents, userId);
+    }
+
     // Add more collections as needed...
   }
 
@@ -375,6 +384,8 @@ export class ColdStorageSync {
         await this.sendSearchClickBatch(batch);
       } else if (eventType === EventType.SEARCH_PERFORMED) {
         await this.sendSearchPerformedBatch(batch);
+      } else if (eventType === EventType.NOTE_ADDED) {
+        await this.sendNoteAddedBatch(batch);
       } else {
         console.warn(`[ColdStorageSync] No direct sync logic for ${eventType}, skipping`);
       }
@@ -445,6 +456,39 @@ export class ColdStorageSync {
     }
     const data = await response.json();
     console.log(`[ColdStorageSync] Synced search queries => server ack:`, data);
+  }
+
+  /**
+   * Method for syncing note events
+   */
+  private async sendNoteAddedBatch(events: any[]): Promise<void> {
+    const endpoint = COLD_STORAGE_ENDPOINTS.NOTES;
+    const transformed = events.map(e => ({
+      noteId: `note_${e.eventId}`,
+      userId: e.userId,
+      pageId: e.data?.pageId,
+      url: e.data?.url,
+      selectionText: e.data?.selectionText,
+      noteText: e.data?.noteText,
+      timestamp: e.timestamp
+    }));
+
+    if (DEBUG) {
+      console.log('[ColdStorageSync] Posting note events =>', transformed);
+    }
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(transformed)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} from server: ${response.statusText}`);
+    }
+    const data = await response.json();
+    console.log(`[ColdStorageSync] Synced note events => server ack:`, data);
   }
 
   /**

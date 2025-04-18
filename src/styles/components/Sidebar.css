@@ -30,7 +30,6 @@
   transition: width 0.3s ease;
   overflow: hidden;
   display: flex;
-  flex-direction: column;
   z-index: var(--z-index-sidebar, 10);
   right: auto;
   pointer-events: auto;
@@ -50,21 +49,12 @@
   border-right: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
   display: flex;
-  flex-direction: column;
   overflow: hidden;
   position: relative;
   pointer-events: auto;
 }
 
-.sidebar-content:hover {
-  border-color: var(--border-hover-color);
-  box-shadow: 0 0 8px 0 var(--shadow-color);
-}
-
-html.dark-mode .sidebar-content:hover {
-  border-color: var(--border-hover-color);
-  box-shadow: 0 0 8px 0 var(--shadow-color);
-}
+/* Hover styles provided by .u-surface--hover util */
 
 /* Header area */
 .sidebar-header {
@@ -374,4 +364,14 @@ html.dark-mode .sidebar-link.active svg {
   .sidebar.expanded {
     width: var(--sidebar-width);
   }
+}
+
+/* Dark‑mode hover also covered by .u-surface--hover util */
+
+/* Ensure 3‑sided border shows darker on hover (utility sets left side) */
+.sidebar-content.u-surface--hover:hover, 
+.sidebar-content.u-surface--hover:focus-within {
+  border-top-color: var(--border-hover-color);
+  border-right-color: var(--border-hover-color);
+  border-bottom-color: var(--border-hover-color);
 }

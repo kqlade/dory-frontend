@@ -328,8 +328,17 @@ async function showSearchOverlay(theme: 'light' | 'dark' | 'system' = 'system'):
     }
   });
 
-  // Render React component
-  renderReactApp(rootElement);
+  // Capture any highlighted text on the page
+  const selObj = window.getSelection?.();
+  const selectionStr = selObj?.toString().trim() || null;
+  let selectionRect: DOMRect | null = null;
+  if (selObj && selObj.rangeCount > 0) {
+    const rect = selObj.getRangeAt(0).getBoundingClientRect();
+    if (rect.width && rect.height) selectionRect = rect;
+  }
+
+  // Render React component, pass highlighted selection
+  renderReactApp(rootElement, selectionStr, selectionRect);
 
   // Animate in
   setTimeout(() => {
@@ -385,13 +394,13 @@ function hideSearchOverlay(): void {
  * Render the React SearchOverlay component.
  * @param container The DOM element to render the React component in.
  */
-function renderReactApp(container: HTMLElement): void {
+function renderReactApp(container: HTMLElement, selection: string | null, selectionRect: DOMRect | null): void {
   try {
     console.log('[DORY] Creating React root...');
     reactRoot = createRoot(container);
 
     console.log('[DORY] React root created, rendering SearchOverlay...');
-    reactRoot.render(<SearchOverlay onClose={hideSearchOverlay} />);
+    reactRoot.render(<SearchOverlay onClose={hideSearchOverlay} selection={selection} selectionRect={selectionRect} />);
     console.log('[DORY] SearchOverlay rendered successfully');
 
   } catch (err: any) {

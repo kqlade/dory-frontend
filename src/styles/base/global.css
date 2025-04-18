@@ -1,0 +1,84 @@
+/**
+ * Global Styles
+ * 
+ * Base application styles and theme integration.
+ */
+
+/* Apply theme colors to body */
+body {
+  background-color: var(--background-color);
+  color: var(--text-color);
+}
+
+/* Apply focus styles to containers (rather than all elements) */
+.sidebar-content:focus-within {
+  outline: 2px solid var(--border-focus-color);
+  outline-offset: 2px;
+}
+
+/* The search container focus is handled by its own border styles */
+.search-container:focus-within {
+  outline: none;
+}
+
+/* Special case for search input to avoid double borders */
+.search-input:focus {
+  outline: none;
+}
+
+/* Utility classes for app layout */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.app-content {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--text-color-rgb), 0.2);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--text-color-rgb), 0.3);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Add a clear z-index hierarchy for the app */
+:root {
+  /* Z-index architecture */
+  --z-index-background: 1;
+  --z-index-content: 5;
+  --z-index-ball: 10;
+  --z-index-sidebar: 20;
+  --z-index-search: 30;
+  --z-index-controls: 40;
+  --z-index-modal: 100;
+  --z-index-toast: 999;
+} 

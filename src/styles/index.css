@@ -1,0 +1,36 @@
+/**
+ * Main style entry point
+ * 
+ * This file imports all necessary CSS files in the correct order:
+ * 1. Theme variables (from theme folder)
+ * 2. Reset/base styles
+ * 3. Global styles
+ * 4. Component styles
+ * 5. Layout styles
+ * 6. Page-specific styles
+ */
+
+/* Theme variables - CSS variables for theming */
+@import '../theme/variables.css';
+
+/* Base styles */
+@import './base/reset.css';
+@import './base/fonts.css';
+@import './base/global.css';
+
+/* Utility classes */
+@import './utilities.css';
+
+/* Component styles */
+@import './components/themeToggle.css';
+@import './components/NodeTooltip.css';
+@import './components/Sidebar.css';
+@import './components/LoginPage.css';
+@import './components/NewTabSearchBar.css';
+@import './components/LoadingSpinner.css';
+
+/* Layout styles */
+@import './layout/AppLayout.css';
+
+/* Page-specific styles */
+@import './pages/Home.css'; 

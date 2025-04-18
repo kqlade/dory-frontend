@@ -1,0 +1,39 @@
+/* Utility classes – single source DRY helpers
+   Import once via styles/index.css */
+
+/* ───────── Flex helpers ───────── */
+.u-flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.u-flex-col-center {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+/* ───────── Surface (border + shadow) ───────── */
+.u-surface {
+  border: 1px solid var(--border-color);
+  background-color: var(--background-color);
+  transition: border-color 0.2s ease, box-shadow 0.3s ease;
+}
+
+.u-surface--hover:hover,
+.u-surface--hover:focus-within {
+  border-color: var(--border-hover-color);
+  box-shadow: 0 0 8px 0 var(--shadow-color);
+}
+
+html.dark-mode .u-surface--hover:hover,
+html.dark-mode .u-surface--hover:focus-within {
+  border-color: var(--border-hover-color);
+  box-shadow: 0 0 8px 0 var(--shadow-color);
+}
+
+/* ───────── Hover background utility ───────── */
+.u-hover-bg:hover {
+  background-color: var(--item-hover-bg);
+} 

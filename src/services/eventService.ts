@@ -158,12 +158,68 @@ export async function trackSearchPerformed(
 }
 
 /**
+ * Track a note attached to a page/selection
+ */
+export async function trackNote(
+  pageId: string,
+  url: string,
+  selectionText: string,
+  noteText: string,
+  annotationId?: string
+): Promise<number> {
+  try {
+    const authState = authService.getAuthState();
+    if (!authState.isAuthenticated) throw new Error('Authentication required');
+    if (!isDatabaseInitialized()) throw new Error('Database not initialized');
+
+    const sessionId = sessionRepository.getCurrentSessionId();
+    if (!sessionId) throw new Error('No active session');
+
+    const userId = authState.user?.id;
+    const userEmail = authState.user?.email;
+
+    return await eventRepository.logEvent(
+      EventType.NOTE_ADDED,
+      String(sessionId),
+      {
+        pageId,
+        url,
+        selectionText,
+        noteText,
+        annotationId,
+        timestamp: Date.now(),
+      },
+      userId,
+      userEmail
+    );
+  } catch (err) {
+    console.error('[EventService] Failed to track note:', err);
+    throw err;
+  }
+}
+
+/**
+ * Retrieve recent notes for a given page.
+ */
+export async function getNotesForPage(pageId: string, limit = 20) {
+  if (!isDatabaseInitialized()) return [];
+  try {
+    return await eventRepository.getNotesByPage(pageId, limit);
+  } catch (err) {
+    console.error('[EventService] Failed to fetch notes:', err);
+    return [];
+  }
+}
+
+/**
  * Class to represent the EventService with all event-related functions
  * This allows for easier mocking and dependency injection
  */
 class EventService {
     trackSearchClick = trackSearchClick; // Needs similar readiness checks
     trackSearchPerformed = trackSearchPerformed;
+    trackNote = trackNote;
+    getNotesForPage = getNotesForPage;
 }
 
 // Create and export a singleton instance

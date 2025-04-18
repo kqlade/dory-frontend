@@ -25,6 +25,7 @@ export enum EventType {
   // User actions
   SEARCH_PERFORMED = 'search_performed',
   SEARCH_RESULT_CLICKED = 'search_result_clicked',
+  NOTE_ADDED = 'note_added',
   
   // System events
   SYNC_STARTED = 'sync_started',
@@ -260,6 +261,27 @@ export class EventRepository {
       .equals(eventType)
       .and(e => e.timestamp > timestamp)
       .toArray();
+  }
+  
+  /**
+   * Get recent NOTE_ADDED events for a specific page.
+   * @param pageId Target page ID
+   * @param limit  Maximum number of notes to return (most recent first)
+   */
+  async getNotesByPage(pageId: string, limit = 20): Promise<EventRecord[]> {
+    const db = DatabaseManager.getCurrentDatabase();
+    if (!db) throw new Error('No active database');
+
+    if (!pageId) return [];
+
+    const all = await db.events
+      .where('operation')
+      .equals(EventType.NOTE_ADDED)
+      .and(e => e.data?.pageId === pageId)
+      .toArray();
+
+    // sort by timestamp desc and limit
+    return all.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
   }
 }
 

@@ -4,7 +4,7 @@ import { useBackgroundSearch } from '../hooks/useBackgroundSearch';
 import { SearchResult } from '../types';
 import Favicon from '../utils/faviconUtils';
 import { SEARCH_CONFIG } from '../config';
-import './NewTabSearchBar.css';
+import '../styles/components/NewTabSearchBar.css';
 
 /** Small Dory logo component */
 const DoryLogo = ({ size = 24 }: { size?: number }) => (
@@ -18,12 +18,32 @@ const DoryLogo = ({ size = 24 }: { size?: number }) => (
 
 interface NewTabSearchBarProps {
   onSearchStateChange?: (isSearchActive: boolean) => void;
+  /**
+   * Optional initial value for the input (e.g. "@dory ")
+   */
+  defaultValue?: string;
+  /**
+   * Callback fired when the user submits a note via Cmd/Ctrl+Enter.
+   * Receives the note text (without the leading "@dory").
+   */
+  onSubmitNote?: (noteText: string) => void;
+  /** True if we are currently in note‑taking mode */
+  noteMode?: boolean;
 }
 
-const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }) => {
+const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({
+  onSearchStateChange,
+  defaultValue = '',
+  onSubmitNote,
+  noteMode = false,
+}) => {
   const { searchLocal, trackResultClick } = useBackgroundSearch();
 
-  const [inputValue, setInputValue] = useState('');
+  const initialText = noteMode && defaultValue.startsWith('@dory')
+    ? defaultValue.slice(6).trimStart()
+    : defaultValue;
+
+  const [inputValue, setInputValue] = useState<string>(initialText);
   const [isSearching, setIsSearching] = useState(false);
   const [localResults, setLocalResults] = useState<SearchResult[]>([]);
   
@@ -83,6 +103,8 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
+
+    if (noteMode) return; // No search suggestions while taking a note
 
     if (value.trim().length >= 2) {
       setIsSearching(true);
@@ -147,6 +169,21 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
 
   // Handle user hitting Enter, Escape, or arrow keys in the input
   const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    // Cmd/Ctrl+Enter → submit note (only if starts with @dory and handler provided)
+    if (
+      noteMode &&
+      (e.key === 'Enter' || e.key === 'Return') &&
+      (e.metaKey || e.ctrlKey) &&
+      onSubmitNote
+    ) {
+      e.preventDefault();
+      const noteText = inputValue.trim();
+      if (noteText.length) {
+        onSubmitNote(noteText);
+      }
+      return; // Prevent further handling
+    }
+
     const length = localResults.length;
     if (e.key === 'ArrowDown' && length > 0) {
       e.preventDefault();
@@ -195,16 +232,19 @@ const NewTabSearchBar: React.FC<NewTabSearchBarProps> = ({ onSearchStateChange }
   const showNoResults = isSearchActive && localResults.length === 0 && !isSearching && debounceElapsed;
 
   return (
-    <div className="search-container">
+    <div className="search-container u-surface--hover">
       <div className="search-bar-inner-container">
         <div className="icon-wrapper" title="Dory">
           <DoryLogo size={22} />
         </div>
+        {noteMode && (
+          <span className="dory-prefix">@dory</span>
+        )}
         <input
           ref={searchInputRef}
           type="text"
           className="search-input"
-          placeholder="Find what you forgot..."
+          placeholder={noteMode ? 'Add a note...' : 'Find what you forgot...'}
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={onInputKeyDown}

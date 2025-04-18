@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 // Use HashRouter for extension contexts
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'; 
 
-import './src/pages/styles/global.css';
+import './src/styles/index.css';
 // darkmode.css is no longer needed as it's consolidated into theme.css, which is imported in global.css
 
 // Import Layout Components

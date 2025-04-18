@@ -1,7 +1,6 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import ThemeToggle from './ThemeToggle'; 
 import { useAuth } from '../services/AuthContext'; 
-import '../components/LoginPage.css'; 
 
 const LoginPage: React.FC = () => {
   // Get the login function from the auth hook
@@ -22,7 +21,7 @@ const LoginPage: React.FC = () => {
           </div>
           <div className="google-button-container">
             <button
-              className="google-sign-in-button"
+              className="google-sign-in-button u-surface--hover"
               onClick={() => {
                 const clickId = Math.random();
                 console.log(`[LoginPage] onClick triggered. ID: ${clickId}`);

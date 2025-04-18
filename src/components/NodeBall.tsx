@@ -11,8 +11,12 @@ import {
   useFrame,
   useThree,
 } from '@react-three/fiber';
+import { useCursor } from '@react-three/drei';
 import * as THREE from 'three';
 import { BALL_CONFIG } from '../config';
+import NodeTooltip from './NodeTooltip';
+import { PageData } from '../types/graph';
+import { useTheme } from '../theme';
 
 /**
  * NodeBall – Interactive, draggable sphere.
@@ -26,8 +30,12 @@ type Props = Omit<MeshProps, 'position'> & {
   onDragStateChange?: (dragging: boolean) => void;
   fixedY?: boolean;
   allowDrag?: boolean;
-  isDarkMode: boolean;
+  pageData?: PageData;
+  isDarkMode?: boolean;
 };
+
+/** Tooltip is visible when either hovered *or* the user clicked the ball */
+type TooltipState = 'none' | 'hover' | 'pinned';
 
 const ENTRY_DURATION = 0.4; // s
 
@@ -38,9 +46,20 @@ const NodeBall: React.FC<Props> = ({
   onDragStateChange,
   fixedY = false,
   allowDrag = true,
-  isDarkMode,
+  pageData,
+  isDarkMode: propIsDarkMode,
   ...meshProps
 }) => {
+  // Get theme from context
+  const { colors, isDarkMode: contextIsDarkMode } = useTheme();
+  // Use prop if provided, otherwise fall back to context
+  const isDarkMode = propIsDarkMode !== undefined ? propIsDarkMode : contextIsDarkMode;
+  // Force colors based on theme state to avoid context issues
+  const effectiveColors = {
+    text: isDarkMode ? '#e8eaed' : '#202124',
+    // add other needed colors here
+  };
+
   /* ─────────── Refs & local state ─────────── */
   const mesh   = useRef<THREE.Mesh>(null!);
   const mat    = useRef<THREE.MeshStandardMaterial>(null!);
@@ -52,18 +71,10 @@ const NodeBall: React.FC<Props> = ({
   const { camera } = useThree();
 
   const [entryDone, setEntryDone] = useState(false);
-  const [hover,     setHover]     = useState(false);
-  const [click,     setClick]     = useState(false);
-  const [drag,      setDrag]      = useState(false);
-
-  /* ─────────── Theme colours ─────────── */
-  const theme = useMemo(
-    () => ({
-      base:     isDarkMode ? '#c7c7c7' : '#000000',
-      emissive: isDarkMode ? '#c7c7c7' : '#000000',
-    }),
-    [isDarkMode],
-  );
+  const [click, setClick] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const [tooltip, setTooltip] = useState<TooltipState>('none');
+  useCursor(tooltip !== 'none');
 
   /* ─────────── Sync external position prop ─────────── */
   useEffect(() => {
@@ -90,84 +101,89 @@ const NodeBall: React.FC<Props> = ({
 
     /* hover / click pulse */
     const pulse =
-      hover || click
-        ? 1 + 0.03 * Math.sin(clock.elapsedTime * 1.8) * (click ? 1.2 : 1)
+      tooltip !== 'none'
+        ? 1 + 0.012 * Math.sin(clock.elapsedTime * 1.8) * (tooltip === 'pinned' ? 1.08 : 1)
         : 1;
     mesh.current.scale.setScalar(pulse);
 
-    mat.current.color.set(theme.base);
-    mat.current.emissive.set(theme.emissive);
-    mat.current.emissiveIntensity = hover || click ? 0.25 : 1.05;
+    // Apply theme color directly in useFrame to ensure updates
+    mat.current.color.set(effectiveColors.text);
+    mat.current.emissive.set(effectiveColors.text);
+    mat.current.emissiveIntensity = tooltip !== 'none' ? 0.25 : 1.05;
   });
 
   /* ─────────── helpers ─────────── */
   const emitPos = (v: THREE.Vector3) => onPositionChange?.(v.clone());
-  const setCursor = (c: 'default' | 'grab' | 'grabbing') =>
-    (document.body.style.cursor = c);
 
   /* ─────────── Pointer events ─────────── */
-  const over = useCallback((e: ThreeEvent<PointerEvent>) => {
+  const handlePointerOver = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    setHover(true);
-    if (!drag) setCursor('grab');
-  }, [drag]);
+    if (tooltip === 'none') setTooltip('hover');
+  };
 
-  const out = useCallback((e: ThreeEvent<PointerEvent>) => {
+  const handlePointerOut = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    setHover(false);
-    if (!drag) setCursor('default');
-  }, [drag]);
+    if (tooltip === 'hover') setTooltip('none');
+  };
 
-  const down = useCallback((e: ThreeEvent<PointerEvent>) => {
+  const handleClick = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    setTooltip((prev) => (prev === 'pinned' ? 'hover' : 'pinned'));
+  };
+
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
     if (!allowDrag) return;
     e.stopPropagation();
-    setClick(true);
     setDrag(true);
     onDragStateChange?.(true);
-
-    offset.current.copy(mesh.current.position).sub(e.point);
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    // Use world-space position as reference
+    const worldPos = new THREE.Vector3();
+    mesh.current.getWorldPosition(worldPos);
+    offset.current.copy(worldPos).sub(e.point);
 
     const n = new THREE.Vector3();
     camera.getWorldDirection(n);
-    plane.current.setFromNormalAndCoplanarPoint(n, mesh.current.position);
+    plane.current.setFromNormalAndCoplanarPoint(n, worldPos);
+  };
 
-    setCursor('grabbing');
-  }, [allowDrag, camera, onDragStateChange]);
-
-  const move = useCallback((e: ThreeEvent<PointerEvent>) => {
+  const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
     if (!drag) return;
     e.stopPropagation();
     const hit = new THREE.Vector3();
     if (e.ray.intersectPlane(plane.current, hit)) {
       const next = hit.add(offset.current);
       if (fixedY) next.y = curr.current.y;
-      dest.current.copy(next);
-      curr.current.copy(next);
+      // Convert world-space next to local coordinates of parent (brain group)
+      const localNext = mesh.current.parent
+        ? mesh.current.parent.worldToLocal(next.clone())
+        : next.clone();
+
+      dest.current.copy(localNext);
+      curr.current.copy(localNext);
       emitPos(next);
     }
-  }, [drag, fixedY]);
+  };
 
-  const up = useCallback((e: ThreeEvent<PointerEvent>) => {
+  const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+    if (!allowDrag) return;
     e.stopPropagation();
-    setClick(false);
     setDrag(false);
     onDragStateChange?.(false);
-
-    setCursor(hover ? 'grab' : 'default');
     (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-  }, [hover, onDragStateChange]);
+  };
 
   /* ─────────── Render ─────────── */
   return (
     <mesh
       ref={mesh}
       position={position}
-      onPointerOver={over}
-      onPointerOut={out}
-      onPointerDown={down}
-      onPointerMove={move}
-      onPointerUp={up}
+      onPointerOver={handlePointerOver}
+      onPointerOut={handlePointerOut}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onClick={handleClick}
       {...meshProps}
     >
       <sphereGeometry args={[radius, 64, 64]} />
@@ -178,8 +194,11 @@ const NodeBall: React.FC<Props> = ({
         opacity={0}
         transparent
       />
+      {tooltip !== 'none' && pageData && (
+        <NodeTooltip title={pageData.title} url={pageData.url} radius={radius} />
+      )}
     </mesh>
   );
 };
 
-export default React.memo(NodeBall);
+export default NodeBall;

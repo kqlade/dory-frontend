@@ -28,6 +28,7 @@ export const COLD_STORAGE_ENDPOINTS = {
   SESSIONS: '/api/cold-storage/sessions',
   SEARCH_CLICKS: '/api/cold-storage/search-clicks',
   SEARCH_QUERIES: '/api/cold-storage/search-queries',
+  NOTES: '/api/cold-storage/notes',
 };
 
 export const SEARCH_ENDPOINTS = {
@@ -185,13 +186,14 @@ export const BALL_CONFIG = {
   SIDEBAR_SNAP_MARGIN: 8, // px
   SEARCH_SNAP_MARGIN: 16, // px
   SNAP_MS: 200, // ms
-  NODE_RADIUS: 0.3,
-  ANCHOR_RADIUS: 0.5,
+  NODE_RADIUS: 0.27,
+  ANCHOR_RADIUS: 0.45,
   SPRING: {
     tension: 240,
     friction: 9,
   },
-  BRAIN_NODE_COUNT: 12
+  BRAIN_NODE_COUNT: 12,
+  BRAIN_BASE_RADIUS: 2.12
 };
 
 

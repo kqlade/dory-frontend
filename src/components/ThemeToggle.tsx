@@ -1,11 +1,10 @@
 import React, { memo } from 'react';
 import { FiSun, FiMoon } from 'react-icons/fi';
 import useBackgroundPreferences from '../hooks/useBackgroundPreferences';
-import './ThemeToggle.css';
 
 /**
  * ThemeToggle – clickable icon button that flips the colour scheme.
- * Pointer‑events rely on CSS, so keep this element at z‑index 11.
+ * Pointer‑events rely on CSS, so keep this element at z‑index 11.
  */
 const ThemeToggle: React.FC = () => {
   const { isDarkMode, toggleTheme } = useBackgroundPreferences();

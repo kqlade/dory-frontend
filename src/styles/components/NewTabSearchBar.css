@@ -19,10 +19,6 @@
   }
   
   /* Hover & focus states */
-  .search-container:hover {
-    border-color: var(--border-hover-color);
-    box-shadow: 0 0 20px var(--shadow-color);
-  }
   .search-container:focus-within {
     border-color: var(--border-focus-color);
     box-shadow: 0 0 25px var(--shadow-focus-color);
@@ -223,4 +219,12 @@
     font-size: 12px; /* Reduced font size */
     font-style: italic;
     color: var(--text-secondary);
+  }
+
+  .dory-prefix {
+    color: #74d6ff; /* same blue as the fish logo */
+    font-weight: 600;
+    font-size: 16px;
+    margin-right: 4px;
+    user-select: none;
   }

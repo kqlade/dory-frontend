@@ -16,7 +16,7 @@
   border: 4px solid rgba(0,0,0,0.1);
   border-top: 4px solid var(--text-color, #000000);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 2s linear infinite;
   margin-bottom: 16px;
   background: none;
 }
@@ -45,4 +45,11 @@ html.dark-mode .loading-container {
 html.dark-mode .loading-spinner {
   border: 4px solid rgba(255,255,255,0.1);
   border-top: 4px solid var(--text-color, #ffffff);
+}
+
+.loading-inline-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
 }

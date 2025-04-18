@@ -1,7 +1,6 @@
 import React, { useState, ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { ChevronRight, MoreHorizontal, Plus, ChevronDown, Settings, CornerDownRight, UserPlus, ChevronsLeft } from 'lucide-react';
-import './Sidebar.css';
 
 interface SidebarItem {
   label: string;
@@ -175,19 +174,18 @@ const Sidebar = ({
   return (
     <aside className={`sidebar ${isOpen ? 'open' : ''} ${isExpanded ? 'expanded' : 'collapsed'}`}>
       <div 
-        className="sidebar-content"
-        onClick={(e) => {
-          // Only handle click if sidebar is collapsed and not clicking on the settings icon
-          if (!isExpanded && !(e.target as Element).closest('.settings-icon-link')) {
-            onToggleExpand();
-          }
-        }}
+        className="sidebar-content u-flex-col u-surface--hover"
       >
         <div className="sidebar-header">
           <button 
             className="sidebar-collapse-button" 
             aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
-            onClick={onToggleExpand}
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent click from bubbling to parent div
+              onToggleExpand();
+              const sb = (e.currentTarget.closest('.sidebar') as HTMLElement | null);
+              sb?.classList.remove('collapsed');
+            }}
           >
             <ChevronsLeft size={18} />
           </button>

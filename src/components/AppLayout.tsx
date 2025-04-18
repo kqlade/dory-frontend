@@ -1,6 +1,5 @@
 import { useState, ReactNode, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
-import './AppLayout.css';
 import Sidebar from './Sidebar';
 import ThemeToggle from './ThemeToggle';
 import { useAuth } from '../services/AuthContext';
@@ -70,15 +69,7 @@ const AppLayout = () => {
           { label: 'Project Beta', href: '/app/beta' }
         ]
       },
-      {
-        label: 'Teams',
-        icon: <Users size={18} />, 
-        children: [
-          { label: 'Marketing Team', href: '/app/teams/marketing' },
-          { label: 'Engineering Team', href: '/app/teams/engineering' }
-        ]
-      },
-      { label: 'Invite Others', icon: <UserPlus size={18} />, href: '/app/invite' }
+      { label: 'Share', icon: <UserPlus size={18} />, href: '/app/invite' }
     ]
   }];
 

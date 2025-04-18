@@ -114,6 +114,19 @@ export const backgroundApi = {
      */
     trackNavigationEvent: (fromUrl: string, toUrl: string, properties?: any) =>
       eventService.trackSearchPerformed(`Navigation: ${fromUrl} → ${toUrl}`, 0, 'local'),
+
+    /**
+     * Track a note added to a page.
+     */
+    trackNote: (
+      pageId: string,
+      url: string,
+      selectionText: string,
+      noteText: string
+    ) => eventService.trackNote(pageId, url, selectionText, noteText),
+
+    /** Fetch recent notes for a page */
+    getNotesForPage: (pageId: string, limit = 20) => eventService.getNotesForPage(pageId, limit),
   },
 
   /**

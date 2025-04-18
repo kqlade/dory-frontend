@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../../background/queryClient';
 import SidePanel from './SidePanel';
-import './sidepanel.css';
+import '../../styles/pages/sidepanel.css';
 
 console.log('[DORY] Side panel initializing...');
 

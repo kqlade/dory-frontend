@@ -244,6 +244,6 @@ body.dark-mode .google-sign-in-button {
   }
 }
 
-body.dark-mode .dory-text {
+body.dark-mode .sidepanel-container .dory-text {
   color: var(--dory-text-dark);
 } 

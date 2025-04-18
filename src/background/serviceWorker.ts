@@ -514,6 +514,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     console.log('[Background] Initiating cold storage sync task.');
     const syncer = createColdStorageSyncer(SYNC_SOURCE.ALARM);
     await syncer.performSync();
+
+    // Broadcast message to all extension contexts to refresh recent concepts
+    try {
+      chrome.runtime.sendMessage({ type: 'COLD_STORAGE_SYNC_COMPLETE' });
+      console.log('[Background] Notified extension pages of cold storage sync completion.');
+    } catch (err) {
+      console.warn('[Background] Failed to send cold storage sync completion message:', err);
+    }
   }
 });
 
